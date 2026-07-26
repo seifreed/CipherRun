@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod outcome;
 /// Distinctive 16-byte Session ID sent in the resumption ClientHello.
 ///
 /// A Ticketbleed-vulnerable F5 BIG-IP echoes a full 32-byte Session ID in its
@@ -26,6 +27,9 @@ use tokio::time::timeout;
 /// so the leak check below cannot false-positive.
 mod server_hello;
 mod session_ticket;
+
+use outcome::TicketbleedProbeOutcome;
+pub use outcome::TicketbleedTestResult;
 
 const TICKETBLEED_SESSION_ID_MARKER: [u8; 16] = [
     0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
@@ -65,16 +69,6 @@ pub struct TicketbleedTester {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     test_all_ips: bool,
-}
-
-/// Internal verdict from `test_session_ticket_leak` that separates conclusive
-/// results from probe failures. V1 fix: a connection/timeout failure must be
-/// reported as inconclusive rather than "not vulnerable".
-#[derive(Debug)]
-enum TicketbleedProbeOutcome {
-    Vulnerable,
-    NotVulnerable(&'static str),
-    Inconclusive(&'static str),
 }
 
 impl TicketbleedTester {
@@ -124,22 +118,6 @@ impl TicketbleedTester {
         }
     }
 
-    fn merge_probe_outcome(
-        current: TicketbleedProbeOutcome,
-        next: TicketbleedProbeOutcome,
-    ) -> TicketbleedProbeOutcome {
-        match (current, next) {
-            (TicketbleedProbeOutcome::Vulnerable, _) | (_, TicketbleedProbeOutcome::Vulnerable) => {
-                TicketbleedProbeOutcome::Vulnerable
-            }
-            (TicketbleedProbeOutcome::Inconclusive(reason), _)
-            | (_, TicketbleedProbeOutcome::Inconclusive(reason)) => {
-                TicketbleedProbeOutcome::Inconclusive(reason)
-            }
-            (clean, _) => clean,
-        }
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -162,40 +140,16 @@ impl TicketbleedTester {
 
     /// Test for Ticketbleed vulnerability
     pub async fn test(&self) -> Result<TicketbleedTestResult> {
-        let outcome = self.test_session_ticket_leak().await?;
-
-        let (vulnerable, inconclusive, details) = match outcome {
-            TicketbleedProbeOutcome::Vulnerable => (
-                true,
-                false,
-                "Vulnerable to Ticketbleed (CVE-2016-9244) - Server leaks memory in session ticket responses".to_string(),
-            ),
-            TicketbleedProbeOutcome::NotVulnerable(reason) => (
-                false,
-                false,
-                format!("Not vulnerable - {}", reason),
-            ),
-            TicketbleedProbeOutcome::Inconclusive(reason) => (
-                false,
-                true,
-                format!("Inconclusive - {}", reason),
-            ),
-        };
-
-        Ok(TicketbleedTestResult {
-            vulnerable,
-            inconclusive,
-            details,
-        })
+        Ok(self.test_session_ticket_leak().await?.into_test_result())
     }
 
     /// Test for session ticket memory leak
     async fn test_session_ticket_leak(&self) -> Result<TicketbleedProbeOutcome> {
-        let mut outcome = None;
+        let mut outcome: Option<TicketbleedProbeOutcome> = None;
         for addr in self.probe_addrs()? {
             let next = self.test_session_ticket_leak_addr(addr).await?;
             outcome = Some(match outcome {
-                Some(current) => Self::merge_probe_outcome(current, next),
+                Some(current) => current.merge(next),
                 None => next,
             });
             if matches!(outcome, Some(TicketbleedProbeOutcome::Vulnerable)) {
@@ -412,17 +366,6 @@ impl TicketbleedTester {
     }
 }
 
-/// Ticketbleed test result
-#[derive(Debug, Clone)]
-pub struct TicketbleedTestResult {
-    pub vulnerable: bool,
-    /// True when the probe could not reach a conclusive verdict (e.g., TCP
-    /// connect failed, handshake timed out, follow-up ClientHello produced no
-    /// response). Callers must not treat inconclusive results as "clean".
-    pub inconclusive: bool,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,10 +406,8 @@ mod tests {
 
     #[test]
     fn test_ticketbleed_merge_keeps_inconclusive_over_clean() {
-        let merged = TicketbleedTester::merge_probe_outcome(
-            TicketbleedProbeOutcome::NotVulnerable("clean"),
-            TicketbleedProbeOutcome::Inconclusive("timeout"),
-        );
+        let merged = TicketbleedProbeOutcome::NotVulnerable("clean")
+            .merge(TicketbleedProbeOutcome::Inconclusive("timeout"));
 
         assert!(matches!(
             merged,
