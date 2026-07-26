@@ -1,10 +1,12 @@
 // JSON Schema for CipherRun output
 // Validates and provides schema for structured output
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod model;
 mod validation;
+
+pub use model::ValidationResult;
 
 /// JSON Schema for CipherRun scan results
 pub struct CipherRunSchema;
@@ -364,29 +366,6 @@ impl CipherRunSchema {
         let schema_str = serde_json::to_string_pretty(&schema)?;
         std::fs::write(path, schema_str)?;
         Ok(())
-    }
-}
-
-/// Schema validation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidationResult {
-    pub valid: bool,
-    pub errors: Vec<String>,
-}
-
-impl ValidationResult {
-    pub fn success() -> Self {
-        Self {
-            valid: true,
-            errors: Vec::new(),
-        }
-    }
-
-    pub fn failure(errors: Vec<String>) -> Self {
-        Self {
-            valid: false,
-            errors,
-        }
     }
 }
 
