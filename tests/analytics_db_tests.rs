@@ -272,6 +272,16 @@ async fn corrupt_certificate_san_domains(db: &CipherRunDatabase, cert_id: i64) {
         .expect("test assertion should succeed");
 }
 
+fn default_inventory_query() -> CertificateInventoryQuery {
+    CertificateInventoryQuery {
+        limit: 10,
+        offset: 0,
+        sort: CertificateInventorySort::ExpiryAsc,
+        hostname: None,
+        expiring_within_days: None,
+    }
+}
+
 #[tokio::test]
 async fn test_certificate_inventory_rejects_invalid_certificate_row() {
     let db = setup_db().await;
@@ -288,13 +298,7 @@ async fn test_certificate_inventory_rejects_invalid_certificate_row() {
     .await;
     corrupt_certificate_not_after(&db, cert_id).await;
 
-    let query = CertificateInventoryQuery {
-        limit: 10,
-        offset: 0,
-        sort: CertificateInventorySort::ExpiryAsc,
-        hostname: None,
-        expiring_within_days: None,
-    };
+    let query = default_inventory_query();
     let list_err = list_certificate_inventory(db.pool(), &query)
         .await
         .expect_err("invalid certificate timestamp should fail inventory listing");
@@ -330,13 +334,7 @@ async fn test_certificate_inventory_rejects_invalid_optional_certificate_row() {
     .await;
     corrupt_certificate_san_domains(&db, cert_id).await;
 
-    let query = CertificateInventoryQuery {
-        limit: 10,
-        offset: 0,
-        sort: CertificateInventorySort::ExpiryAsc,
-        hostname: None,
-        expiring_within_days: None,
-    };
+    let query = default_inventory_query();
     let list_err = list_certificate_inventory(db.pool(), &query)
         .await
         .expect_err("invalid optional certificate field should fail inventory listing");
