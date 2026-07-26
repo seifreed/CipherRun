@@ -57,15 +57,10 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
-    fn test_sieve_negotiator_creation() {
-        let negotiator = SieveNegotiator::new();
-        assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
-    }
-
-    #[test]
-    fn test_sieve_negotiator_default() {
-        let negotiator = SieveNegotiator;
-        assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
+    fn test_sieve_negotiator_constructors() {
+        for negotiator in [SieveNegotiator::new(), SieveNegotiator] {
+            assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
+        }
     }
 
     async fn run_sieve_server(lines: &[&str], starttls_response: &str) -> u16 {
