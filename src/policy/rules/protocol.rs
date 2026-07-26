@@ -138,6 +138,21 @@ mod tests {
     use crate::policy::PolicyAction;
     use crate::protocols::Protocol;
 
+    fn protocol_result(protocol: Protocol, supported: bool) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported,
+            inconclusive: false,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            ciphers_count: 0,
+            preferred: false,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
     #[test]
     fn test_required_protocol_rejects_invalid_name() {
         let policy = ProtocolPolicy {
@@ -186,18 +201,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS12, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
         let violations = rule
@@ -216,18 +220,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS10,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS10, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS10]);
         let violations = rule
@@ -246,18 +239,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS10,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS10, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[]);
         let violations = rule
@@ -276,18 +258,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS12, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
         let violations = rule
@@ -305,18 +276,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS12, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
         let violations = rule
@@ -335,18 +295,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS12, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
         let violations = rule
@@ -364,18 +313,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS12, true)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS12]);
         let violations = rule
@@ -394,18 +332,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: false,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS13, false)];
 
         let rule = ProtocolRule::new(&policy, &results, &[]);
         let violations = rule
@@ -423,18 +350,7 @@ mod tests {
             action: PolicyAction::Fail,
         };
 
-        let results = vec![ProtocolTestResult {
-            protocol: Protocol::TLS10,
-            supported: false,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        let results = vec![protocol_result(Protocol::TLS10, false)];
 
         let rule = ProtocolRule::new(&policy, &results, &[Protocol::TLS10]);
         let violations = rule
