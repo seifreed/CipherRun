@@ -59,6 +59,32 @@ async fn insert_scan(
         .expect("test assertion should succeed")
 }
 
+async fn insert_default_scan_pair(
+    db: &CipherRunDatabase,
+    hostname: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (i64, i64) {
+    let scan1 = insert_scan(
+        db,
+        hostname,
+        443,
+        now - Duration::days(2),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let scan2 = insert_scan(
+        db,
+        hostname,
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    (scan1, scan2)
+}
+
 async fn insert_protocol(
     db: &CipherRunDatabase,
     scan_id: i64,
@@ -358,24 +384,7 @@ async fn test_certificate_inventory_rejects_invalid_optional_certificate_row() {
 async fn test_certificate_analytics_rejects_invalid_optional_certificate_row() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "analytics-corrupt.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "analytics-corrupt.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "analytics-corrupt.test", now).await;
     let cert1 = insert_certificate(
         &db,
         "analytics_corrupt_fp1",
@@ -425,24 +434,7 @@ async fn test_certificate_analytics_rejects_invalid_optional_certificate_row() {
 async fn test_scan_comparator_rejects_invalid_scan_port() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "invalid-port.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "invalid-port.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "invalid-port.test", now).await;
 
     db.pool()
         .execute(
@@ -464,24 +456,7 @@ async fn test_scan_comparator_rejects_invalid_scan_port() {
 async fn test_scan_comparator_formats_missing_certificate_key_size_as_unknown() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "missing-key-size.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "missing-key-size.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "missing-key-size.test", now).await;
     let cert1 = insert_certificate(
         &db,
         "missing_key_size_fp1",
@@ -647,24 +622,7 @@ async fn test_scan_comparator_compare_scans() {
 async fn test_scan_comparator_rejects_invalid_certificate_row() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "corrupt-cert.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "corrupt-cert.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "corrupt-cert.test", now).await;
 
     let cert1 = insert_certificate(
         &db,
@@ -706,24 +664,8 @@ async fn test_scan_comparator_rejects_invalid_certificate_row() {
 async fn test_scan_comparator_does_not_report_protocol_changes_for_name_format_variants() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "comparator-protocol-format.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "comparator-protocol-format.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "comparator-protocol-format.test", now).await;
 
     insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
     insert_protocol(&db, scan1, "TLS 1.2", true, false).await;
@@ -748,24 +690,7 @@ async fn test_scan_comparator_renders_component_rating_changes_without_overall_c
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "rating-components.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "rating-components.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "rating-components.test", now).await;
 
     insert_rating(&db, scan1, "certificate", 90, Some("A")).await;
     insert_rating(&db, scan2, "certificate", 90, Some("A")).await;
@@ -836,24 +761,7 @@ async fn test_scan_comparator_marks_rating_grade_and_rationale_changes_as_change
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "rating-metadata-change.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "rating-metadata-change.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "rating-metadata-change.test", now).await;
 
     insert_rating_with_rationale(
         &db,
@@ -915,24 +823,7 @@ async fn test_scan_comparator_renders_preferred_only_protocol_changes() {
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "preferred-change.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "preferred-change.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "preferred-change.test", now).await;
 
     insert_protocol(&db, scan1, "TLS 1.2", true, true).await;
     insert_protocol(&db, scan1, "TLS 1.3", true, false).await;
@@ -1122,24 +1013,7 @@ async fn test_scan_comparator_marks_vulnerability_severity_changes_as_changed() 
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "severity-change.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "severity-change.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "severity-change.test", now).await;
 
     insert_vulnerability(&db, scan1, "SeverityFlip", "high").await;
     insert_vulnerability(&db, scan2, "SeverityFlip", "critical").await;
@@ -1174,24 +1048,7 @@ async fn test_scan_comparator_does_not_pair_unrelated_same_type_vulnerabilities(
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "unrelated-vulns.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "unrelated-vulns.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "unrelated-vulns.test", now).await;
 
     insert_vulnerability(&db, scan1, "GenericIssue", "critical").await;
     insert_vulnerability(&db, scan1, "GenericIssue", "high").await;
@@ -1275,24 +1132,7 @@ async fn test_scan_comparator_ipv6_terminal_format() {
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "2001:db8::1",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "2001:db8::1",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "2001:db8::1", now).await;
 
     let comparator = ScanComparator::new(Arc::clone(&db));
     let comparison = comparator
@@ -1410,24 +1250,7 @@ async fn test_change_tracker_detect_changes_and_report() {
 async fn test_change_tracker_rejects_invalid_certificate_row() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "corrupt-tracker.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "corrupt-tracker.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "corrupt-tracker.test", now).await;
 
     let cert1 = insert_certificate(
         &db,
@@ -1469,24 +1292,7 @@ async fn test_change_tracker_rejects_invalid_certificate_row() {
 async fn test_change_tracker_does_not_report_protocol_changes_for_name_format_variants() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "protocol-format-change.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "protocol-format-change.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "protocol-format-change.test", now).await;
 
     insert_protocol(&db, scan1, "TLS 1.3", true, true).await;
     insert_protocol(&db, scan1, "TLS 1.2", true, false).await;
@@ -1512,24 +1318,7 @@ async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "change-tracker-severity.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "change-tracker-severity.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "change-tracker-severity.test", now).await;
 
     insert_vulnerability(&db, scan1, "SeverityFlip", "high").await;
     insert_vulnerability(&db, scan2, "SeverityFlip", "critical").await;
@@ -1569,24 +1358,8 @@ async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
 async fn test_change_tracker_normalizes_vulnerability_severity_labels() {
     let db = setup_db().await;
     let now = Utc::now();
-    let scan1 = insert_scan(
-        &db,
-        "change-tracker-severity-label.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "change-tracker-severity-label.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "change-tracker-severity-label.test", now).await;
 
     insert_vulnerability(&db, scan2, "UppercaseSeverity", "Critical").await;
 
@@ -1609,24 +1382,7 @@ async fn test_change_tracker_does_not_pair_unrelated_same_type_vulnerabilities()
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "change-tracker-unrelated.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "change-tracker-unrelated.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "change-tracker-unrelated.test", now).await;
 
     insert_vulnerability(&db, scan1, "GenericIssue", "critical").await;
     insert_vulnerability(&db, scan1, "GenericIssue", "high").await;
@@ -1677,24 +1433,7 @@ async fn test_change_tracker_detects_cipher_protocol_and_attribute_changes() {
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "change-tracker-cipher.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "change-tracker-cipher.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "change-tracker-cipher.test", now).await;
 
     insert_cipher(&db, scan1, "TLS 1.2", "CIPHER_SHARED", "strong", true).await;
     insert_cipher(&db, scan2, "TLS 1.3", "CIPHER_SHARED", "strong", true).await;
@@ -1785,24 +1524,8 @@ async fn test_change_tracker_does_not_report_cipher_changes_for_protocol_name_fo
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "change-tracker-cipher-format.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "change-tracker-cipher-format.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "change-tracker-cipher-format.test", now).await;
 
     insert_cipher(&db, scan1, "TLS 1.2", "CIPHER_STABLE", "strong", true).await;
     insert_cipher(&db, scan2, "TLSv1.2", "CIPHER_STABLE", "strong", true).await;
@@ -1826,24 +1549,7 @@ async fn test_change_tracker_detects_component_rating_changes_without_overall_ch
     let db = setup_db().await;
     let now = Utc::now();
 
-    let scan1 = insert_scan(
-        &db,
-        "rating-components.test",
-        443,
-        now - Duration::days(2),
-        Some("A"),
-        Some(90),
-    )
-    .await;
-    let scan2 = insert_scan(
-        &db,
-        "rating-components.test",
-        443,
-        now - Duration::days(1),
-        Some("A"),
-        Some(90),
-    )
-    .await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "rating-components.test", now).await;
 
     insert_rating(&db, scan1, "protocol", 90, Some("A")).await;
     insert_rating(&db, scan2, "protocol", 70, Some("B")).await;
