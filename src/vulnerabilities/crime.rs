@@ -5,17 +5,16 @@
 // by observing changes in compression ratios when injecting known data.
 
 use crate::Result;
-use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
-};
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 mod outcome;
+mod read_io;
 mod server_hello;
 
 use outcome::CompressionProbeStatus;
@@ -167,7 +166,7 @@ impl<'a> CrimeTester<'a> {
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         match timeout(
             Duration::from_secs(3),
-            Self::read_complete_tls_record(&mut stream, &mut buffer),
+            read_io::complete_tls_record(&mut stream, &mut buffer),
         )
         .await
         {
@@ -225,7 +224,7 @@ impl<'a> CrimeTester<'a> {
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
         match timeout(
             Duration::from_secs(3),
-            Self::read_complete_tls_record(&mut stream, &mut buffer),
+            read_io::complete_tls_record(&mut stream, &mut buffer),
         )
         .await
         {
@@ -248,67 +247,6 @@ impl<'a> CrimeTester<'a> {
             .add_npn(); // Add NPN extension for SPDY
         builder.build()
     }
-
-    async fn read_complete_tls_record(
-        stream: &mut tokio::net::TcpStream,
-        buffer: &mut [u8],
-    ) -> std::io::Result<usize> {
-        use std::io::ErrorKind;
-        use tokio::time::timeout;
-
-        let mut total = 0;
-        while total < buffer.len() {
-            match timeout(Duration::from_secs(3), stream.read(&mut buffer[total..])).await {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => {
-                    total += n;
-                    if total >= TLS_RECORD_HEADER_SIZE {
-                        let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                        let record_total = TLS_RECORD_HEADER_SIZE
-                            .checked_add(record_len)
-                            .ok_or_else(|| {
-                                std::io::Error::new(
-                                    ErrorKind::InvalidData,
-                                    "CRIME TLS record length overflow",
-                                )
-                            })?;
-                        if record_total > buffer.len() {
-                            return Err(std::io::Error::new(
-                                ErrorKind::InvalidData,
-                                "CRIME TLS record length exceeds buffer",
-                            ));
-                        }
-                        if total >= record_total {
-                            break;
-                        }
-                    }
-                }
-                Ok(Err(err))
-                    if total == 0
-                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
-                {
-                    return Ok(0);
-                }
-                Ok(Err(err))
-                    if total > 0
-                        && matches!(
-                            err.kind(),
-                            ErrorKind::TimedOut
-                                | ErrorKind::WouldBlock
-                                | ErrorKind::UnexpectedEof
-                                | ErrorKind::ConnectionReset
-                        ) =>
-                {
-                    break;
-                }
-                Ok(Err(err)) => return Err(err),
-                Err(_) if total > 0 => break,
-                Err(_) => return Ok(0),
-            }
-        }
-
-        Ok(total)
-    }
 }
 
 #[cfg(test)]
@@ -317,7 +255,7 @@ mod tests {
     use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
     use std::io::ErrorKind;
     use std::net::TcpListener;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::{Duration, sleep};
 
     #[test]
@@ -375,7 +313,7 @@ mod tests {
             .await
             .expect("connect should succeed");
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-        let n = CrimeTester::read_complete_tls_record(&mut stream, &mut buffer)
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer)
             .await
             .expect("record should read");
 
@@ -403,7 +341,7 @@ mod tests {
             .await
             .expect("connect should succeed");
         let mut buffer = [0u8; 16];
-        let err = CrimeTester::read_complete_tls_record(&mut stream, &mut buffer)
+        let err = read_io::complete_tls_record(&mut stream, &mut buffer)
             .await
             .expect_err("oversized record should fail");
 
