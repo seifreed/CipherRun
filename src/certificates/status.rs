@@ -297,9 +297,7 @@ mod tests {
         let status = CertificateStatus {
             is_expired: true,
             is_self_signed: true,
-            is_mismatched: false,
-            is_revoked: false,
-            is_untrusted: false,
+            ..Default::default()
         };
 
         let filters = CertificateFilters::default();
@@ -333,10 +331,7 @@ mod tests {
     fn test_matches_filter_expired_filter() {
         let status = CertificateStatus {
             is_expired: true,
-            is_self_signed: false,
-            is_mismatched: false,
-            is_revoked: false,
-            is_untrusted: false,
+            ..Default::default()
         };
 
         let filters = CertificateFilters {
@@ -364,11 +359,8 @@ mod tests {
     #[test]
     fn test_matches_filter_multiple_filters() {
         let status = CertificateStatus {
-            is_expired: false,
             is_self_signed: true,
-            is_mismatched: false,
-            is_revoked: false,
-            is_untrusted: false,
+            ..Default::default()
         };
 
         let filters = CertificateFilters {
