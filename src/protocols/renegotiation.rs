@@ -10,9 +10,12 @@ use tokio::time::timeout;
 
 mod bytes;
 mod client_hello;
+mod model;
 mod record;
 mod result_analysis;
 mod server_hello;
+
+pub use model::{InsecureRenegotiationResult, RenegotiationSupport, RenegotiationTestResult};
 
 /// Renegotiation tester
 pub struct RenegotiationTester<'a> {
@@ -21,27 +24,6 @@ pub struct RenegotiationTester<'a> {
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
     test_all_ips: bool,
-}
-
-/// Result of insecure renegotiation detection
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum InsecureRenegotiationResult {
-    /// Server appears vulnerable to insecure renegotiation
-    Detected,
-    /// Server responded without renegotiation_info extension - inconclusive
-    /// Manual verification needed to determine if CVE-2009-3555 vulnerable
-    Inconclusive,
-    /// Server properly rejected or has secure renegotiation
-    NotDetected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RenegotiationSupport {
-    SecureRenegotiation,     // RFC 5746 supported
-    InsecureRenegotiation,   // Renegotiation without RFC 5746
-    ClientInitiatedDisabled, // Server doesn't allow client-initiated
-    NotSupported,            // Renegotiation not supported
-    Inconclusive,            // Transport/handshake failure prevented a conclusion
 }
 
 impl<'a> RenegotiationTester<'a> {
@@ -410,22 +392,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
     (hostname, sni_hostname.is_some())
-}
-
-/// Renegotiation test result
-#[derive(Debug, Clone)]
-pub struct RenegotiationTestResult {
-    pub support: RenegotiationSupport,
-    pub secure_extension: bool,
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    /// Indicates the test result is inconclusive and requires manual verification.
-    /// This is set when the server does not include renegotiation_info extension,
-    /// which could mean either:
-    /// - The server is vulnerable to CVE-2009-3555 (insecure renegotiation)
-    /// - The server simply doesn't support renegotiation (modern, secure behavior)
-    pub needs_verification: bool,
-    pub details: String,
 }
 
 #[cfg(test)]
