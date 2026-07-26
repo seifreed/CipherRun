@@ -5,10 +5,7 @@
 // It affects TLS implementations that support RSA key exchange.
 
 use crate::Result;
-use crate::constants::{
-    CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE,
-    HANDSHAKE_TYPE_FINISHED, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
-};
+use crate::constants::{CONTENT_TYPE_CHANGE_CIPHER_SPEC, TLS_HANDSHAKE_TIMEOUT};
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,30 +14,12 @@ use tokio::time::timeout;
 mod alert_signal;
 mod certificate;
 mod client_hello;
+mod messages;
 mod oracle_analysis;
 mod parse;
 mod result;
 
 pub use result::{RobotStatus, RobotTestResult};
-
-fn length_error(context: &str) -> crate::TlsError {
-    crate::TlsError::InvalidInput {
-        message: format!("{context} exceeds maximum length"),
-    }
-}
-
-fn u16_len(len: usize, context: &str) -> Result<u16> {
-    u16::try_from(len).map_err(|_| length_error(context))
-}
-
-fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-    let len = u32::try_from(len).map_err(|_| length_error(context))?;
-    if len > 0x00ff_ffff {
-        return Err(length_error(context));
-    }
-    let bytes = len.to_be_bytes();
-    Ok([bytes[1], bytes[2], bytes[3]])
-}
 
 /// ROBOT vulnerability tester
 pub struct RobotTester {
@@ -237,7 +216,7 @@ impl RobotTester {
         let rsa_key_len = certificate::extract_rsa_key_len(&buffer)?;
 
         // Send ClientKeyExchange with invalid padding
-        let client_key_exchange = self.build_invalid_client_key_exchange(variant, rsa_key_len)?;
+        let client_key_exchange = messages::invalid_client_key_exchange(variant, rsa_key_len)?;
         stream.write_all(&client_key_exchange).await?;
 
         // Send ChangeCipherSpec
@@ -252,94 +231,11 @@ impl RobotTester {
         stream.write_all(&ccs).await?;
 
         // Send Finished (will be invalid)
-        let finished = self.build_finished();
+        let finished = messages::finished();
         stream.write_all(&finished).await?;
 
         self.read_first_response_record(&mut stream, Duration::from_secs(2))
             .await
-    }
-
-    /// Build ClientKeyExchange with invalid RSA padding, sized for the server's actual key length.
-    fn build_invalid_client_key_exchange(&self, variant: u8, key_len: usize) -> Result<Vec<u8>> {
-        // record_body = handshake_header(4) + encrypted_pms_len_field(2) + encrypted_pms(key_len)
-        let record_body_len =
-            key_len
-                .checked_add(6)
-                .ok_or_else(|| crate::TlsError::InvalidInput {
-                    message: "ROBOT ClientKeyExchange record length exceeds maximum".to_string(),
-                })?;
-        let handshake_body_len =
-            key_len
-                .checked_add(2)
-                .ok_or_else(|| crate::TlsError::InvalidInput {
-                    message: "ROBOT ClientKeyExchange handshake length exceeds maximum".to_string(),
-                })?; // encrypted_pms_len_field + encrypted_pms
-        let record_body_len = u16_len(record_body_len, "ROBOT ClientKeyExchange record")?;
-        let handshake_body_len = u24_len(handshake_body_len, "ROBOT ClientKeyExchange handshake")?;
-        let key_len = u16_len(key_len, "ROBOT RSA ciphertext")?;
-        let key_len_usize = usize::from(key_len);
-
-        let mut msg = Vec::new();
-        msg.push(CONTENT_TYPE_HANDSHAKE); // TLS Record: Handshake (0x16)
-        msg.extend_from_slice(&VERSION_TLS_1_0.to_be_bytes());
-        msg.extend_from_slice(&record_body_len.to_be_bytes());
-        msg.push(HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE); // ClientKeyExchange (0x10)
-        msg.extend_from_slice(&handshake_body_len);
-        msg.extend_from_slice(&key_len.to_be_bytes());
-
-        // Invalid RSA ciphertext (different variants for oracle detection)
-        match variant {
-            0 => msg.extend(std::iter::repeat_n(0x00u8, key_len_usize)),
-            1 => msg.extend(std::iter::repeat_n(0xffu8, key_len_usize)),
-            2 => {
-                let mut byte = 0_u8;
-                for _ in 0..key_len_usize {
-                    msg.push(byte);
-                    byte = byte.wrapping_add(1);
-                }
-            }
-            3 => {
-                for i in 0..key_len_usize {
-                    msg.push(if i % 2 == 0 { 0xAA } else { 0x55 });
-                }
-            }
-            _ => {
-                let mut byte = variant.wrapping_mul(37);
-                for _ in 0..key_len_usize {
-                    msg.push(byte);
-                    byte = byte.wrapping_add(179);
-                }
-            }
-        }
-
-        Ok(msg)
-    }
-
-    /// Build Finished message
-    fn build_finished(&self) -> Vec<u8> {
-        vec![
-            CONTENT_TYPE_HANDSHAKE,           // Record header (0x16)
-            VERSION_TLS_1_0.to_be_bytes()[0], // 0x03
-            VERSION_TLS_1_0.to_be_bytes()[1], // 0x01
-            0x00,
-            0x10,                    // Length
-            HANDSHAKE_TYPE_FINISHED, // Finished (0x14)
-            0x00,
-            0x00,
-            0x0c, // Length
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00, // Verify data (invalid)
-        ]
     }
 
     async fn read_first_response_record(
@@ -371,6 +267,7 @@ impl RobotTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_FINISHED};
     use openssl::asn1::Asn1Time;
     use openssl::hash::MessageDigest;
     use openssl::pkey::PKey;
@@ -415,23 +312,12 @@ mod tests {
 
     #[test]
     fn test_build_invalid_client_key_exchange_variants() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
-        let tester = RobotTester::new(target);
-
-        let msg0 = tester
-            .build_invalid_client_key_exchange(0, 256)
-            .expect("ClientKeyExchange should build");
-        let msg1 = tester
-            .build_invalid_client_key_exchange(1, 256)
-            .expect("ClientKeyExchange should build");
-        let msg2 = tester
-            .build_invalid_client_key_exchange(2, 256)
-            .expect("ClientKeyExchange should build");
+        let msg0 =
+            messages::invalid_client_key_exchange(0, 256).expect("ClientKeyExchange should build");
+        let msg1 =
+            messages::invalid_client_key_exchange(1, 256).expect("ClientKeyExchange should build");
+        let msg2 =
+            messages::invalid_client_key_exchange(2, 256).expect("ClientKeyExchange should build");
 
         assert_eq!(msg0.len(), msg1.len());
         assert_eq!(msg1.len(), msg2.len());
@@ -441,14 +327,7 @@ mod tests {
 
     #[test]
     fn test_build_finished_structure() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
-        let tester = RobotTester::new(target);
-        let msg = tester.build_finished();
+        let msg = messages::finished();
         assert_eq!(msg.first(), Some(&CONTENT_TYPE_HANDSHAKE));
         assert_eq!(msg.get(5), Some(&HANDSHAKE_TYPE_FINISHED));
     }
@@ -462,23 +341,12 @@ mod tests {
 
     #[test]
     fn test_invalid_client_key_exchange_payload_patterns() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
-        let tester = RobotTester::new(target);
-
-        let msg0 = tester
-            .build_invalid_client_key_exchange(0, 128)
-            .expect("ClientKeyExchange should build");
-        let msg1 = tester
-            .build_invalid_client_key_exchange(1, 128)
-            .expect("ClientKeyExchange should build");
-        let msg2 = tester
-            .build_invalid_client_key_exchange(2, 128)
-            .expect("ClientKeyExchange should build");
+        let msg0 =
+            messages::invalid_client_key_exchange(0, 128).expect("ClientKeyExchange should build");
+        let msg1 =
+            messages::invalid_client_key_exchange(1, 128).expect("ClientKeyExchange should build");
+        let msg2 =
+            messages::invalid_client_key_exchange(2, 128).expect("ClientKeyExchange should build");
 
         let payload0 = msg0
             .get(msg0.len() - 128..)
