@@ -370,6 +370,10 @@ impl<'a> PolicyLoader<'a> {
 mod tests {
     use super::*;
 
+    fn assert_policy_err(yaml: &str) {
+        assert!(PolicyLoader::load_from_string(yaml).is_err());
+    }
+
     #[test]
     fn test_parse_basic_policy() {
         let yaml = r#"
@@ -403,8 +407,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -418,8 +421,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -433,8 +435,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -448,8 +449,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -487,8 +487,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -502,8 +501,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -517,8 +515,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -532,8 +529,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -547,8 +543,7 @@ policy:
     action: FAIL
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -565,8 +560,7 @@ policy:
       approved_by: "Admin"
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -577,8 +571,7 @@ policy:
   version: "1.0"
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -589,8 +582,7 @@ policy:
   version: "1.0"
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
@@ -601,8 +593,7 @@ policy:
   version: "   "
 "#;
 
-        let result = PolicyLoader::load_from_string(yaml);
-        assert!(result.is_err());
+        assert_policy_err(yaml);
     }
 
     #[test]
