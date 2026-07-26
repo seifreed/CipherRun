@@ -423,6 +423,21 @@ mod tests {
     use crate::policy::*;
     use crate::protocols::{Protocol, ProtocolTestResult};
 
+    fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            heartbeat_enabled: None,
+            handshake_time_ms: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
     #[test]
     fn test_evaluator_with_violations() {
         let policy = Policy {
@@ -449,18 +464,7 @@ mod tests {
             target: "example.com:443".to_string(),
             ..Default::default()
         };
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        results.protocols = vec![protocol_result(Protocol::TLS12)];
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -497,18 +501,7 @@ mod tests {
             target: "example.com:443".to_string(),
             ..Default::default()
         };
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        results.protocols = vec![protocol_result(Protocol::TLS12)];
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -555,18 +548,7 @@ mod tests {
             target: "example.com:443".to_string(),
             ..Default::default()
         };
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        results.protocols = vec![protocol_result(Protocol::TLS12)];
 
         let evaluator = PolicyEvaluator::new(policy);
         let result = evaluator
@@ -705,18 +687,7 @@ mod tests {
             target: "example.com:443".to_string(),
             ..Default::default()
         };
-        results.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::SSLv2,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        results.protocols = vec![protocol_result(Protocol::SSLv2)];
         results
     }
 
