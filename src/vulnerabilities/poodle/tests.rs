@@ -25,19 +25,6 @@ fn server_response(
 }
 
 #[test]
-fn test_poodle_result() {
-    let result = PoodleTestResult {
-        vulnerable: true,
-        ssl3_supported: Some(true),
-        tls_poodle: Some(false),
-        details: "Test".to_string(),
-        variants: Vec::new(),
-    };
-    assert!(result.vulnerable);
-    assert_eq!(result.ssl3_supported, Some(true));
-}
-
-#[test]
 fn test_poodle_variant_names() {
     assert_eq!(PoodleVariant::SslV3.name(), "POODLE (SSLv3)");
     assert_eq!(PoodleVariant::Tls.name(), "POODLE (TLS)");
