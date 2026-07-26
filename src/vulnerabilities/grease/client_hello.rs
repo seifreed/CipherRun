@@ -10,6 +10,38 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{Duration, timeout};
 
 impl GreaseTester {
+    fn add_sni(&self, builder: &mut ClientHelloBuilder) -> crate::Result<()> {
+        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        ) {
+            builder.add_sni(&hostname)?;
+        }
+        Ok(())
+    }
+
+    fn add_common_tls12_extensions(builder: &mut ClientHelloBuilder) -> crate::Result<()> {
+        builder.add_signature_algorithms(&[
+            (0x04, 0x03),
+            (0x05, 0x03),
+            (0x06, 0x03),
+            (0x08, 0x04),
+            (0x08, 0x05),
+            (0x08, 0x06),
+        ])?;
+        builder.add_ec_point_formats();
+        builder.add_renegotiation_info();
+        builder.add_extended_master_secret();
+        builder.add_session_ticket();
+        Ok(())
+    }
+
+    fn build_grease_client_hello(builder: ClientHelloBuilder) -> crate::Result<Vec<u8>> {
+        builder
+            .build()
+            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
+    }
+
     /// Send raw TLS ClientHello and check server response
     pub(super) async fn send_client_hello(&self, client_hello: &[u8]) -> Result<GreaseTestOutcome> {
         let mut best = GreaseTestOutcome::Tolerated;
@@ -92,29 +124,11 @@ impl GreaseTester {
             }
         }
 
-        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        ) {
-            builder.add_sni(&hostname)?;
-        }
+        self.add_sni(&mut builder)?;
         builder.add_supported_groups(&[0x001d, 0x0017, 0x0018])?;
-        builder.add_signature_algorithms(&[
-            (0x04, 0x03),
-            (0x05, 0x03),
-            (0x06, 0x03),
-            (0x08, 0x04),
-            (0x08, 0x05),
-            (0x08, 0x06),
-        ])?;
-        builder.add_ec_point_formats();
-        builder.add_renegotiation_info();
-        builder.add_extended_master_secret();
-        builder.add_session_ticket();
+        Self::add_common_tls12_extensions(&mut builder)?;
 
-        builder
-            .build()
-            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
+        Self::build_grease_client_hello(builder)
     }
 
     /// Build ClientHello with GREASE extensions
@@ -122,25 +136,9 @@ impl GreaseTester {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
-        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        ) {
-            builder.add_sni(&hostname)?;
-        }
+        self.add_sni(&mut builder)?;
         builder.add_supported_groups(&[0x001d, 0x0017, 0x0018])?;
-        builder.add_signature_algorithms(&[
-            (0x04, 0x03),
-            (0x05, 0x03),
-            (0x06, 0x03),
-            (0x08, 0x04),
-            (0x08, 0x05),
-            (0x08, 0x06),
-        ])?;
-        builder.add_ec_point_formats();
-        builder.add_renegotiation_info();
-        builder.add_extended_master_secret();
-        builder.add_session_ticket();
+        Self::add_common_tls12_extensions(&mut builder)?;
 
         // Add GREASE extensions per RFC 8701
         for grease_ext in GREASE_EXTENSIONS.iter().take(5) {
@@ -155,9 +153,7 @@ impl GreaseTester {
             ));
         }
 
-        builder
-            .build()
-            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
+        Self::build_grease_client_hello(builder)
     }
 
     /// Build ClientHello with GREASE supported groups
@@ -165,12 +161,7 @@ impl GreaseTester {
         let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
 
         builder.add_ciphers(&[0xc02f, 0xc030, 0xc02b, 0xc02c, 0x009e, 0x009f]);
-        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        ) {
-            builder.add_sni(&hostname)?;
-        }
+        self.add_sni(&mut builder)?;
 
         // Add valid supported groups interleaved with GREASE values per RFC 8701
         let valid_groups = [0x001d, 0x0017, 0x0018];
@@ -182,22 +173,9 @@ impl GreaseTester {
         }
         builder.add_supported_groups(&groups)?;
 
-        builder.add_signature_algorithms(&[
-            (0x04, 0x03),
-            (0x05, 0x03),
-            (0x06, 0x03),
-            (0x08, 0x04),
-            (0x08, 0x05),
-            (0x08, 0x06),
-        ])?;
-        builder.add_ec_point_formats();
-        builder.add_renegotiation_info();
-        builder.add_extended_master_secret();
-        builder.add_session_ticket();
+        Self::add_common_tls12_extensions(&mut builder)?;
 
-        builder
-            .build()
-            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
+        Self::build_grease_client_hello(builder)
     }
 
     /// Build ClientHello with all GREASE values combined
@@ -213,12 +191,7 @@ impl GreaseTester {
             }
         }
 
-        if let Some(hostname) = crate::utils::network::sni_hostname_for_target(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        ) {
-            builder.add_sni(&hostname)?;
-        }
+        self.add_sni(&mut builder)?;
 
         // Add supported groups with GREASE
         let mut groups = vec![0x001d, 0x0017];
@@ -239,9 +212,7 @@ impl GreaseTester {
             ));
         }
 
-        builder
-            .build()
-            .map_err(|e| crate::TlsError::Other(format!("GREASE ClientHello build failed: {}", e)))
+        Self::build_grease_client_hello(builder)
     }
 
     async fn read_complete_response(
