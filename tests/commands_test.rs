@@ -30,6 +30,10 @@ fn route_name(args: Args) -> String {
     CommandRouter::route(args).unwrap().name().to_string()
 }
 
+fn assert_route_name(args: Args, expected: &str) {
+    assert_eq!(route_name(args), expected);
+}
+
 fn route_command(args: Args) -> Box<dyn Command> {
     CommandRouter::route(args).unwrap()
 }
@@ -124,97 +128,89 @@ fn test_mx_test_command_creation_and_name() {
 
 #[test]
 fn test_router_priority_1_api_server() {
-    assert_eq!(
-        route_name(build_args(|args| args.api_server.enable = true)),
-        "ApiServerCommand"
+    assert_route_name(
+        build_args(|args| args.api_server.enable = true),
+        "ApiServerCommand",
     );
 }
 
 #[test]
 fn test_router_priority_2_monitor_with_enable() {
-    assert_eq!(
-        route_name(build_args(|args| args.monitoring.enable = true)),
-        "MonitorCommand"
+    assert_route_name(
+        build_args(|args| args.monitoring.enable = true),
+        "MonitorCommand",
     );
 }
 
 #[test]
 fn test_router_priority_2_monitor_with_test_alert() {
-    assert_eq!(
-        route_name(build_args(|args| args.monitoring.test_alert = true)),
-        "MonitorCommand"
+    assert_route_name(
+        build_args(|args| args.monitoring.test_alert = true),
+        "MonitorCommand",
     );
 }
 
 #[test]
 fn test_router_priority_3_ct_logs() {
-    assert_eq!(
-        route_name(build_args(|args| args.ct_logs.enable = true)),
-        "CtLogsCommand"
+    assert_route_name(
+        build_args(|args| args.ct_logs.enable = true),
+        "CtLogsCommand",
     );
 }
 
 #[test]
 fn test_router_priority_4_analytics_compare() {
-    assert_eq!(
-        route_name(build_args(|args| args.compare = Some("1:2".to_string()))),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.compare = Some("1:2".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_priority_4_analytics_changes() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.changes = Some("example.com:443:30".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.changes = Some("example.com:443:30".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_priority_4_analytics_trends() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.trends = Some("example.com:443:30".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.trends = Some("example.com:443:30".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_priority_4_analytics_dashboard() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.dashboard = Some("example.com:443:30".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.dashboard = Some("example.com:443:30".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_priority_5_database_init_only() {
-    assert_eq!(
-        route_name(build_args(|args| args.database.init = true)),
-        "DatabaseCommand"
+    assert_route_name(
+        build_args(|args| args.database.init = true),
+        "DatabaseCommand",
     );
 }
 
 #[test]
 fn test_router_priority_5_database_cleanup_only() {
-    assert_eq!(
-        route_name(build_args(|args| args.database.cleanup_days = Some(30))),
-        "DatabaseCommand"
+    assert_route_name(
+        build_args(|args| args.database.cleanup_days = Some(30)),
+        "DatabaseCommand",
     );
 }
 
 #[test]
 fn test_router_priority_5_database_history_only() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.database.history = Some("example.com:443".to_string())
-        })),
-        "DatabaseCommand"
+    assert_route_name(
+        build_args(|args| args.database.history = Some("example.com:443".to_string())),
+        "DatabaseCommand",
     );
 }
 
@@ -229,31 +225,25 @@ fn test_router_rejects_database_action_with_target() {
 
 #[test]
 fn test_router_priority_6_mx_test() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.mx_domain = Some("example.com".to_string())
-        })),
-        "MxTestCommand"
+    assert_route_name(
+        build_args(|args| args.mx_domain = Some("example.com".to_string())),
+        "MxTestCommand",
     );
 }
 
 #[test]
 fn test_router_priority_7_mass_scan() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.input_file = Some(PathBuf::from("targets.txt"))
-        })),
-        "MassScanCommand"
+    assert_route_name(
+        build_args(|args| args.input_file = Some(PathBuf::from("targets.txt"))),
+        "MassScanCommand",
     );
 }
 
 #[test]
 fn test_router_priority_8_scan_with_target() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.target = Some("example.com:443".to_string())
-        })),
-        "ScanCommand"
+    assert_route_name(
+        build_args(|args| args.target = Some("example.com:443".to_string())),
+        "ScanCommand",
     );
 }
 
@@ -534,39 +524,33 @@ fn test_validate_empty_args() {
 
 #[test]
 fn test_router_analytics_compare_format_validation() {
-    assert_eq!(
-        route_name(build_args(|args| args.compare = Some("1:2".to_string()))),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.compare = Some("1:2".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_analytics_changes_format_validation() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.changes = Some("example.com:443:30".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.changes = Some("example.com:443:30".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_analytics_trends_format_validation() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.trends = Some("example.com:443:7".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.trends = Some("example.com:443:7".to_string())),
+        "AnalyticsCommand",
     );
 }
 
 #[test]
 fn test_router_analytics_dashboard_format_validation() {
-    assert_eq!(
-        route_name(build_args(|args| {
-            args.dashboard = Some("example.com:443:90".to_string())
-        })),
-        "AnalyticsCommand"
+    assert_route_name(
+        build_args(|args| args.dashboard = Some("example.com:443:90".to_string())),
+        "AnalyticsCommand",
     );
 }
 
@@ -674,34 +658,34 @@ fn test_validate_all_analytics_options_together() {
 
 #[test]
 fn test_router_with_port_override() {
-    assert_eq!(
-        route_name(build_args(|args| {
+    assert_route_name(
+        build_args(|args| {
             args.target = Some("example.com".to_string());
             args.port = Some(8443);
-        })),
-        "ScanCommand"
+        }),
+        "ScanCommand",
     );
 }
 
 #[test]
 fn test_router_with_ip_override() {
-    assert_eq!(
-        route_name(build_args(|args| {
+    assert_route_name(
+        build_args(|args| {
             args.target = Some("example.com:443".to_string());
             args.ip = Some("192.168.1.1".to_string());
-        })),
-        "ScanCommand"
+        }),
+        "ScanCommand",
     );
 }
 
 #[test]
 fn test_router_with_parallel_flag() {
-    assert_eq!(
-        route_name(build_args(|args| {
+    assert_route_name(
+        build_args(|args| {
             args.input_file = Some(PathBuf::from("targets.txt"));
             args.network.parallel = true;
-        })),
-        "MassScanCommand"
+        }),
+        "MassScanCommand",
     );
 }
 
