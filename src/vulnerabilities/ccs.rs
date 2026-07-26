@@ -16,6 +16,7 @@ use tokio::time::timeout;
 
 mod client_hello;
 mod read_io;
+mod record_analysis;
 mod result;
 
 pub use result::{CcsTestResult, TestStatus};
@@ -221,7 +222,10 @@ impl CcsInjectionTester {
                                 if record_type == CONTENT_TYPE_ALERT {
                                     result = Some(
                                         if accumulated.get(offset..).is_some_and(|record| {
-                                            alert_record_is_complete(record, 5 + record_len)
+                                            record_analysis::alert_is_complete(
+                                                record,
+                                                5 + record_len,
+                                            )
                                         }) {
                                             TestStatus::NotVulnerable
                                         } else {
@@ -240,7 +244,9 @@ impl CcsInjectionTester {
                                     // stapling servers fall through to Inconclusive
                                     // instead of a conclusive not-vulnerable verdict.
                                     if accumulated.get(offset..record_end).is_some_and(|record| {
-                                        handshake_record_is_normal_continuation(record, record_len)
+                                        record_analysis::handshake_is_normal_continuation(
+                                            record, record_len,
+                                        )
                                     }) {
                                         // Normal handshake continuation — skip this record
                                         reads_remaining = reads_remaining.saturating_sub(1);
@@ -290,34 +296,6 @@ impl CcsInjectionTester {
             }
         }
     }
-}
-
-fn alert_record_is_complete(buffer: &[u8], n: usize) -> bool {
-    if n < 7 || buffer.first() != Some(&CONTENT_TYPE_ALERT) {
-        return false;
-    }
-    let Some(alert_record_len) = buffer
-        .get(3..5)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map(u16::from_be_bytes)
-        .map(usize::from)
-    else {
-        return false;
-    };
-    alert_record_len == 2 && n == 5 + alert_record_len
-}
-
-fn handshake_record_is_normal_continuation(record: &[u8], record_len: usize) -> bool {
-    if record.first() != Some(&CONTENT_TYPE_HANDSHAKE) || record.len() != 5 + record_len {
-        return false;
-    }
-    if record_len < 4 {
-        return false;
-    }
-    matches!(
-        record.get(5).copied(),
-        Some(0x02 | 0x0B | 0x0C | 0x0D | 0x0E | 0x16)
-    )
 }
 
 #[cfg(test)]
@@ -440,13 +418,15 @@ mod tests {
     #[test]
     fn test_alert_record_is_complete_rejects_trailing_bytes() {
         let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
-        assert!(!alert_record_is_complete(&alert, alert.len()));
+        assert!(!record_analysis::alert_is_complete(&alert, alert.len()));
     }
 
     #[test]
     fn test_handshake_continuation_rejects_empty_record() {
         let record = [CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x00];
-        assert!(!handshake_record_is_normal_continuation(&record, 0));
+        assert!(!record_analysis::handshake_is_normal_continuation(
+            &record, 0
+        ));
     }
 
     #[test]
@@ -462,7 +442,9 @@ mod tests {
             0x00,
             0x00,
         ];
-        assert!(handshake_record_is_normal_continuation(&record, 4));
+        assert!(record_analysis::handshake_is_normal_continuation(
+            &record, 4
+        ));
     }
 
     #[tokio::test]
