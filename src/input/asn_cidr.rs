@@ -349,6 +349,17 @@ impl ExpandedInput {
 mod tests {
     use super::*;
 
+    fn expand_cidr(cidr: &str) -> CidrExpansion {
+        AsnCidrParser::expand_cidr(cidr).expect("test assertion should succeed")
+    }
+
+    fn expanded_asn(networks: Vec<IpNetwork>) -> ExpandedInput {
+        ExpandedInput::Asn {
+            asn: "AS64496".to_string(),
+            networks,
+        }
+    }
+
     #[test]
     fn test_parse_asn_number() {
         assert_eq!(AsnCidrParser::parse_asn_number("1449").unwrap(), 1449);
@@ -486,8 +497,7 @@ mod tests {
 
     #[test]
     fn test_expand_cidr_small() {
-        let expansion =
-            AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
+        let expansion = expand_cidr("192.0.2.0/30");
 
         match expansion {
             CidrExpansion::FullList { ips, total, .. } => {
@@ -509,8 +519,7 @@ mod tests {
 
     #[test]
     fn test_expand_cidr_large() {
-        let expansion =
-            AsnCidrParser::expand_cidr("10.0.0.0/8").expect("test assertion should succeed");
+        let expansion = expand_cidr("10.0.0.0/8");
 
         match expansion {
             CidrExpansion::Network { total, .. } => {
@@ -522,15 +531,13 @@ mod tests {
 
     #[test]
     fn test_expand_cidr_ipv6_large() {
-        let expansion =
-            AsnCidrParser::expand_cidr("2001:db8::/64").expect("test assertion should succeed");
+        let expansion = expand_cidr("2001:db8::/64");
         assert_eq!(expansion.total_ips(), u64::MAX);
     }
 
     #[test]
     fn test_cidr_expansion_iter() {
-        let expansion =
-            AsnCidrParser::expand_cidr("192.0.2.0/30").expect("test assertion should succeed");
+        let expansion = expand_cidr("192.0.2.0/30");
         let ips: Vec<IpAddr> = expansion.iter().collect();
 
         assert_eq!(ips.len(), 4);
@@ -541,10 +548,7 @@ mod tests {
     #[test]
     fn test_expanded_input_target_count_ipv6_large() {
         let network: IpNetwork = "2001:db8::/64".parse().expect("valid network");
-        let expanded = ExpandedInput::Asn {
-            asn: "AS64496".to_string(),
-            networks: vec![network],
-        };
+        let expanded = expanded_asn(vec![network]);
         assert_eq!(expanded.target_count(), u64::MAX);
     }
 
@@ -555,10 +559,7 @@ mod tests {
         // debug builds; the saturated sum must stay at u64::MAX instead.
         let net1: IpNetwork = "2001:db8::/64".parse().expect("valid network");
         let net2: IpNetwork = "2001:db9::/64".parse().expect("valid network");
-        let expanded = ExpandedInput::Asn {
-            asn: "AS64496".to_string(),
-            networks: vec![net1, net2],
-        };
+        let expanded = expanded_asn(vec![net1, net2]);
         assert_eq!(expanded.target_count(), u64::MAX);
     }
 
@@ -568,17 +569,13 @@ mod tests {
         // u64::MAX, not overflow.
         let big: IpNetwork = "2001:db8::/64".parse().expect("valid network");
         let small: IpNetwork = "2001:db8:1::/120".parse().expect("valid network");
-        let expanded = ExpandedInput::Asn {
-            asn: "AS64496".to_string(),
-            networks: vec![big, small],
-        };
+        let expanded = expanded_asn(vec![big, small]);
         assert_eq!(expanded.target_count(), u64::MAX);
     }
 
     #[test]
     fn test_expand_cidr_single_host() {
-        let expansion =
-            AsnCidrParser::expand_cidr("198.51.100.42/32").expect("test assertion should succeed");
+        let expansion = expand_cidr("198.51.100.42/32");
         match expansion {
             CidrExpansion::FullList { ips, total, .. } => {
                 assert_eq!(total, 1);
