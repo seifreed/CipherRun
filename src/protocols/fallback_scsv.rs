@@ -147,6 +147,13 @@ mod tests {
         .unwrap()
     }
 
+    fn example_client_hello(include_scsv: bool) -> Vec<u8> {
+        let target = example_target();
+        FallbackScsvTester::new(&target)
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, include_scsv)
+            .expect("ClientHello should build")
+    }
+
     #[test]
     fn test_fallback_scsv_result() {
         let result = FallbackScsvTestResult {
@@ -334,45 +341,22 @@ mod tests {
     }
 
     #[test]
-    fn test_client_hello_length_fields_with_scsv() {
-        let target = example_target();
+    fn test_client_hello_length_fields() {
+        for include_scsv in [true, false] {
+            let hello = example_client_hello(include_scsv);
 
-        let tester = FallbackScsvTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_scsv(VERSION_TLS_1_2, true)
-            .expect("ClientHello should build");
+            let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
+            assert_eq!(record_len, hello.len() - 5);
 
-        let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
-        assert_eq!(record_len, hello.len() - 5);
-
-        let hs_len = ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
-        assert_eq!(hs_len, hello.len() - 9);
-    }
-
-    #[test]
-    fn test_client_hello_length_fields_without_scsv() {
-        let target = example_target();
-
-        let tester = FallbackScsvTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_scsv(VERSION_TLS_1_2, false)
-            .expect("ClientHello should build");
-
-        let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
-        assert_eq!(record_len, hello.len() - 5);
-
-        let hs_len = ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
-        assert_eq!(hs_len, hello.len() - 9);
+            let hs_len =
+                ((hello[6] as usize) << 16) | ((hello[7] as usize) << 8) | (hello[8] as usize);
+            assert_eq!(hs_len, hello.len() - 9);
+        }
     }
 
     #[test]
     fn test_client_hello_includes_null_compression() {
-        let target = example_target();
-
-        let tester = FallbackScsvTester::new(&target);
-        let hello = tester
-            .build_client_hello_with_scsv(VERSION_TLS_1_2, true)
-            .expect("ClientHello should build");
+        let hello = example_client_hello(true);
         assert!(hello.contains(&COMPRESSION_NULL));
     }
 
