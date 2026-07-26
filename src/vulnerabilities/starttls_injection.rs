@@ -9,6 +9,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
+mod imap_probe;
 mod pop3_probe;
 mod response_analysis;
 mod result_analysis;
@@ -152,69 +153,7 @@ impl StarttlsInjectionTester {
             return Ok(StarttlsInjectionStatus::Inconclusive);
         };
 
-        self.test_command_injection_imap(stream).await
-    }
-
-    /// Test command injection in IMAP STARTTLS
-    async fn test_command_injection_imap(
-        &self,
-        mut stream: TcpStream,
-    ) -> Result<StarttlsInjectionStatus> {
-        // Read server greeting
-        let mut reader = BufReader::new(&mut stream);
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-        {
-            Ok(Ok(line)) if !line.is_empty() => line,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-
-        if !response.starts_with("* OK") {
-            return Ok(StarttlsInjectionStatus::NotVulnerable);
-        }
-
-        // Send CAPABILITY to check STARTTLS support
-        reader.get_mut().write_all(b"a001 CAPABILITY\r\n").await?;
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-        {
-            Ok(Ok(line)) if !line.is_empty() => line,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-
-        if !response_analysis::has_ascii_token(&response, "STARTTLS") {
-            return Ok(StarttlsInjectionStatus::NotVulnerable);
-        }
-
-        // Attempt injection: STARTTLS followed by LOGIN command
-        let injection_payload = b"a002 STARTTLS\r\na003 LOGIN test test\r\n";
-        reader.get_mut().write_all(injection_payload).await?;
-
-        let mut response = String::new();
-        for _ in 0..4 {
-            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-            {
-                Ok(Ok(line)) if !line.is_empty() => line,
-                Ok(Err(_)) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Ok(Err(_)) => break,
-                Err(_) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Err(_) => break,
-                _ => break,
-            };
-            response.push_str(&line);
-        }
-
-        // Vulnerable if server processes LOGIN before TLS upgrade
-        // IMAP responses are tagged with the command tag at the start of the line
-        // Format: "a003 STATUS message" - we check for this at line start to avoid
-        // false positives from the tag appearing in other parts of the response
-        if response_analysis::has_code_at_line_start(&response, "a003") {
-            return Ok(StarttlsInjectionStatus::Vulnerable);
-        }
-
-        Ok(StarttlsInjectionStatus::NotVulnerable)
+        imap_probe::test_command_injection(stream).await
     }
 
     /// Test POP3 STARTTLS injection
