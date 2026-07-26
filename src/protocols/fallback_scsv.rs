@@ -129,6 +129,24 @@ mod tests {
     use crate::constants::{COMPRESSION_NULL, CONTENT_TYPE_ALERT, VERSION_TLS_1_2};
     use crate::protocols::Protocol;
 
+    fn example_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
+    fn localhost_target() -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_fallback_scsv_result() {
         let result = FallbackScsvTestResult {
@@ -146,12 +164,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_scsv() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let hello = tester
@@ -165,12 +178,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_without_scsv() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let hello = tester
@@ -183,12 +191,7 @@ mod tests {
 
     #[test]
     fn test_with_test_all_ips_sets_flag() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target).with_test_all_ips(true);
         assert!(tester.test_all_ips);
@@ -196,12 +199,7 @@ mod tests {
 
     #[test]
     fn test_format_protocol_list_and_select_fallback() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let list = tester.format_protocol_list(&[Protocol::TLS12, Protocol::TLS13]);
@@ -218,12 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rejects_inappropriate_fallback_early_returns() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let mut tester = FallbackScsvTester::new(&target);
         tester.max_supported_protocol = Some(Protocol::SSLv3);
@@ -253,12 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_supported_protocol_result_is_inconclusive() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let mut tester = FallbackScsvTester::new(&target);
         tester.max_supported_protocol = Some(Protocol::TLS12);
@@ -274,12 +262,7 @@ mod tests {
 
     #[test]
     fn test_select_fallback_protocol() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target();
         let tester = FallbackScsvTester::new(&target);
         let supported = vec![Protocol::TLS10, Protocol::TLS11, Protocol::TLS12];
         let fallback = tester.select_fallback_protocol(&supported, Protocol::TLS12);
@@ -288,12 +271,7 @@ mod tests {
 
     #[test]
     fn test_format_protocol_list() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target();
         let tester = FallbackScsvTester::new(&target);
         let protocols = vec![Protocol::TLS10, Protocol::TLS12];
         let formatted = tester.format_protocol_list(&protocols);
@@ -303,12 +281,7 @@ mod tests {
 
     #[test]
     fn test_format_protocol_list_empty() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target();
         let tester = FallbackScsvTester::new(&target);
         let formatted = tester.format_protocol_list(&[]);
         assert!(formatted.is_empty());
@@ -347,12 +320,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_logic() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target();
         let tester = FallbackScsvTester::new(&target);
 
         let mut buffer = [0u8; 8];
@@ -367,12 +335,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_length_fields_with_scsv() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let hello = tester
@@ -388,12 +351,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_length_fields_without_scsv() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let hello = tester
@@ -409,12 +367,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_includes_null_compression() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
 
         let tester = FallbackScsvTester::new(&target);
         let hello = tester
