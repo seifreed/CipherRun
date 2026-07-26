@@ -297,20 +297,6 @@ mod tests {
     }
 
     #[test]
-    fn test_drown_result_not_vulnerable() {
-        let result = DrownTestResult {
-            vulnerable: false,
-            sslv2_supported: false,
-            sslv2_export_ciphers: false,
-            sslv2_export_status: None,
-            sslv2_status: Some(Sslv2Status::NotSupported),
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(!result.sslv2_supported);
-    }
-
-    #[test]
     fn test_detailed_status_omits_inconclusive() {
         assert_eq!(Sslv2Status::Inconclusive.detailed(), None);
         assert_eq!(
@@ -321,34 +307,6 @@ mod tests {
             Sslv2Status::Confirmed.detailed(),
             Some(Sslv2Status::Confirmed)
         );
-    }
-
-    #[test]
-    fn test_drown_result_vulnerable() {
-        let result = DrownTestResult {
-            vulnerable: true,
-            sslv2_supported: true,
-            sslv2_export_ciphers: false,
-            sslv2_export_status: None,
-            sslv2_status: Some(Sslv2Status::Confirmed),
-            details: "Vulnerable".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert!(result.sslv2_supported);
-    }
-
-    #[test]
-    fn test_drown_result_probable() {
-        let result = DrownTestResult {
-            vulnerable: true,
-            sslv2_supported: true,
-            sslv2_export_ciphers: false,
-            sslv2_export_status: None,
-            sslv2_status: Some(Sslv2Status::Probable),
-            details: "Potentially vulnerable".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert!(result.sslv2_supported);
     }
 
     #[test]
