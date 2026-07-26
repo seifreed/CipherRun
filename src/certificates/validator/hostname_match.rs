@@ -206,23 +206,19 @@ mod tests {
     }
 
     #[test]
-    fn test_hostname_matches_cn_before_next_dn_attribute_without_space() {
-        let cert = test_cert("CN=example.com,O=Test", &[]);
-        let validator = CertificateValidator::new("example.com".to_string());
-        let mut issues = Vec::new();
+    fn test_hostname_matches_cn_variants() {
+        for subject in [
+            "CN=example.com,O=Test",
+            "C=US, O=Test, CN = example.com",
+            "CN=example.com/O=Test",
+        ] {
+            let cert = test_cert(subject, &[]);
+            let validator = CertificateValidator::new("example.com".to_string());
+            let mut issues = Vec::new();
 
-        assert!(validator.check_hostname(&cert, &mut issues));
-        assert!(issues.is_empty());
-    }
-
-    #[test]
-    fn test_hostname_matches_cn_with_spaces_around_equals() {
-        let cert = test_cert("C=US, O=Test, CN = example.com", &[]);
-        let validator = CertificateValidator::new("example.com".to_string());
-        let mut issues = Vec::new();
-
-        assert!(validator.check_hostname(&cert, &mut issues));
-        assert!(issues.is_empty());
+            assert!(validator.check_hostname(&cert, &mut issues));
+            assert!(issues.is_empty());
+        }
     }
 
     #[test]
@@ -234,15 +230,5 @@ mod tests {
 
         assert!(!validator.check_hostname(&cert, &mut issues));
         assert!(!issues.is_empty());
-    }
-
-    #[test]
-    fn test_hostname_matches_cn_before_slash_delimited_attribute() {
-        let cert = test_cert("CN=example.com/O=Test", &[]);
-        let validator = CertificateValidator::new("example.com".to_string());
-        let mut issues = Vec::new();
-
-        assert!(validator.check_hostname(&cert, &mut issues));
-        assert!(issues.is_empty());
     }
 }
