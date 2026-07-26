@@ -6,6 +6,13 @@ use std::ffi::OsString;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 
+fn assert_common_error_contains(request: ScanRequest, expected: &str) {
+    let err = request
+        .validate_common()
+        .expect_err("request should fail validation");
+    assert!(err.to_string().contains(expected));
+}
+
 #[test]
 fn maps_full_scan_options_into_internal_request() {
     let request = ScanRequest {
@@ -154,10 +161,7 @@ fn rejects_private_ip_override() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("private --ip should fail validation");
-    assert!(err.to_string().contains("Invalid IP override"));
+    assert_common_error_contains(request, "Invalid IP override");
 }
 
 #[test]
@@ -167,10 +171,7 @@ fn rejects_malformed_ip_override() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("malformed --ip should fail validation");
-    assert!(err.to_string().contains("Invalid IP override"));
+    assert_common_error_contains(request, "Invalid IP override");
 }
 
 #[test]
@@ -229,10 +230,7 @@ fn rejects_zero_max_concurrent_ciphers() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("zero max_concurrent_ciphers should be rejected");
-    assert!(err.to_string().contains("Max concurrent cipher"));
+    assert_common_error_contains(request, "Max concurrent cipher");
 }
 
 #[test]
@@ -298,10 +296,7 @@ fn rejects_malformed_sni_name() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("malformed SNI should fail validation");
-    assert!(err.to_string().contains("Invalid SNI hostname"));
+    assert_common_error_contains(request, "Invalid SNI hostname");
 }
 
 #[test]
@@ -314,10 +309,7 @@ fn rejects_rooted_fqdn_sni_name() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("SNI override with trailing dot should fail validation");
-    assert!(err.to_string().contains("trailing dot"));
+    assert_common_error_contains(request, "trailing dot");
 }
 
 #[test]
@@ -331,10 +323,7 @@ fn rejects_rooted_fqdn_xmpphost() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("XMPP hostname override with trailing dot should fail validation");
-    assert!(err.to_string().contains("trailing dot"));
+    assert_common_error_contains(request, "trailing dot");
 }
 
 #[test]
@@ -347,10 +336,7 @@ fn rejects_ip_literal_sni_name() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("SNI override with IP literal should fail validation");
-    assert!(err.to_string().contains("not an IP address"));
+    assert_common_error_contains(request, "not an IP address");
 }
 
 #[test]
@@ -363,10 +349,7 @@ fn rejects_private_local_sni_name() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("private SNI override should fail validation");
-    assert!(err.to_string().contains("private/local hostnames"));
+    assert_common_error_contains(request, "private/local hostnames");
 }
 
 #[test]
@@ -402,10 +385,7 @@ fn rejects_conflicting_mtls_modes() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("conflicting mTLS modes should fail validation");
-    assert!(err.to_string().contains("Cannot combine --mtls"));
+    assert_common_error_contains(request, "Cannot combine --mtls");
 }
 
 #[test]
@@ -418,10 +398,7 @@ fn rejects_mtls_key_password_without_key() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("--pkpass without --pk should fail validation");
-    assert!(err.to_string().contains("--pkpass requires --pk"));
+    assert_common_error_contains(request, "--pkpass requires --pk");
 }
 
 #[test]
@@ -434,10 +411,7 @@ fn rejects_invalid_export_hello_format() {
         ..Default::default()
     };
 
-    let err = request
-        .validate_common()
-        .expect_err("invalid export format should fail validation");
-    assert!(err.to_string().contains("Unknown --export-hello format"));
+    assert_common_error_contains(request, "Unknown --export-hello format");
 }
 
 #[test]
