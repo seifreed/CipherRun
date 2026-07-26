@@ -404,14 +404,17 @@ mod tests {
         }
     }
 
-    fn test_context() -> ScanContext {
-        let target = Target::with_ips(
+    fn test_target() -> Target {
+        Target::with_ips(
             "example.com".to_string(),
             443,
             vec!["127.0.0.1".parse().unwrap()],
         )
-        .expect("test assertion should succeed");
-        ScanContext::new(target, Arc::new(ScanRequest::default()), None, None)
+        .expect("test assertion should succeed")
+    }
+
+    fn test_context() -> ScanContext {
+        ScanContext::new(test_target(), Arc::new(ScanRequest::default()), None, None)
     }
 
     /// Test reporter that counts calls
@@ -503,14 +506,8 @@ mod tests {
 
     #[test]
     fn test_scan_context_initializes_target_string() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
         let args = Arc::new(ScanRequest::default());
-        let context = ScanContext::new(target, args, None, None);
+        let context = ScanContext::new(test_target(), args, None, None);
         assert_eq!(context.results.target, "example.com:443");
     }
 
