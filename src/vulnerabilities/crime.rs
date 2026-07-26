@@ -209,6 +209,15 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::{Duration, sleep};
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_crime_probe_addrs_honors_all_ips() {
         let target = Target::with_ips(
@@ -390,12 +399,7 @@ mod tests {
             socket.write_all(&response).await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
 
         let status = tester
@@ -441,12 +445,7 @@ mod tests {
             socket.write_all(&response).await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
 
         let status = tester
@@ -493,12 +492,7 @@ mod tests {
             socket.write_all(&response).await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
 
         let status = tester
@@ -540,12 +534,7 @@ mod tests {
             let _ = socket.write_all(&response[split..]).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
 
         let status = tester
@@ -580,12 +569,7 @@ mod tests {
             socket.write_all(&response).await.unwrap();
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
 
         let status = tester
@@ -616,12 +600,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = CrimeTester::new(&target);
         let result = tester.test().await.unwrap();
