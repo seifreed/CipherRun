@@ -305,9 +305,8 @@ impl CipherComparisonFormatter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cipher_formatting() {
-        let cipher = CipherSuite {
+    fn tls12_aes256_gcm_cipher() -> CipherSuite {
+        CipherSuite {
             hexcode: "c030".to_string(),
             openssl_name: "ECDHE-RSA-AES256-GCM-SHA384".to_string(),
             iana_name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384".to_string(),
@@ -318,7 +317,27 @@ mod tests {
             mac: "SHA384".to_string(),
             bits: 256,
             export: false,
-        };
+        }
+    }
+
+    fn tls12_aes128_gcm_cipher() -> CipherSuite {
+        CipherSuite {
+            hexcode: "c02f".to_string(),
+            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
+            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES128-GCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        }
+    }
+
+    #[test]
+    fn test_cipher_formatting() {
+        let cipher = tls12_aes256_gcm_cipher();
 
         let formatted = CipherFormatter::format_cipher(&cipher, false);
         assert_eq!(formatted, "ECDHE-RSA-AES256-GCM-SHA384");
@@ -344,18 +363,7 @@ mod tests {
 
     #[test]
     fn test_csv_format() {
-        let cipher = CipherSuite {
-            hexcode: "c030".to_string(),
-            openssl_name: "ECDHE-RSA-AES256-GCM-SHA384".to_string(),
-            iana_name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384".to_string(),
-            protocol: "TLSv1.2".to_string(),
-            key_exchange: "ECDHE".to_string(),
-            authentication: "RSA".to_string(),
-            encryption: "AES256-GCM".to_string(),
-            mac: "SHA384".to_string(),
-            bits: 256,
-            export: false,
-        };
+        let cipher = tls12_aes256_gcm_cipher();
 
         let csv = CipherListFormatter::format_csv(&[cipher], Protocol::TLS12);
         assert!(csv.contains("Protocol,Hexcode"));
@@ -365,18 +373,7 @@ mod tests {
 
     #[test]
     fn test_format_list_markers() {
-        let cipher = CipherSuite {
-            hexcode: "c02f".to_string(),
-            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
-            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
-            protocol: "TLSv1.2".to_string(),
-            key_exchange: "ECDHE".to_string(),
-            authentication: "RSA".to_string(),
-            encryption: "AES128-GCM".to_string(),
-            mac: "AEAD".to_string(),
-            bits: 128,
-            export: false,
-        };
+        let cipher = tls12_aes128_gcm_cipher();
 
         let output = CipherListFormatter::format_list(&[cipher], Protocol::TLS12, false);
         assert!(output.contains("FS"));
@@ -385,18 +382,7 @@ mod tests {
 
     #[test]
     fn test_protocol_cipher_summary_display_server_preference() {
-        let cipher = CipherSuite {
-            hexcode: "c02f".to_string(),
-            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
-            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
-            protocol: "TLSv1.2".to_string(),
-            key_exchange: "ECDHE".to_string(),
-            authentication: "RSA".to_string(),
-            encryption: "AES128-GCM".to_string(),
-            mac: "AEAD".to_string(),
-            bits: 128,
-            export: false,
-        };
+        let cipher = tls12_aes128_gcm_cipher();
 
         let mut summary = ProtocolCipherSummary {
             protocol: Protocol::TLS12,
