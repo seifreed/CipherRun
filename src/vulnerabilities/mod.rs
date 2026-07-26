@@ -1,7 +1,6 @@
 // Vulnerabilities module - Vulnerability checks
 
 pub mod aggregation;
-pub(crate) mod bytes;
 pub(crate) mod handshake_read;
 
 pub use aggregation::merge_vulnerability_result;
@@ -163,9 +162,9 @@ pub mod poodle;
 pub mod robot;
 pub mod starttls_injection;
 pub mod sweet32;
-pub mod tester;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod tester;
 pub mod ticketbleed;
 pub mod winshock;
 

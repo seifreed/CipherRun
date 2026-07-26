@@ -1,6 +1,6 @@
 use crate::Result;
 use crate::constants::CONTENT_TYPE_HANDSHAKE;
-use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at};
+use crate::utils::byte_parse::{read_u16_at, read_u24_at};
 
 use super::client_hello::SESSION_ID_MARKER;
 

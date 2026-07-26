@@ -1,6 +1,6 @@
 use super::CompressionProbeStatus;
 use crate::constants::CONTENT_TYPE_HANDSHAKE;
-use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at, slice_range};
+use crate::utils::byte_parse::{read_u16_at, read_u24_at, slice_range};
 
 pub(super) fn tls_compression_status(response: &[u8]) -> CompressionProbeStatus {
     let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {

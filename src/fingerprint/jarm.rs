@@ -12,6 +12,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
+use crate::utils::byte_parse::{read_u16_at, slice_range};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -28,18 +29,6 @@ use fuzzy_hash::raw_hash_to_fuzzy_hash;
 
 fn read_u8_at(data: &[u8], offset: usize) -> Option<u8> {
     data.get(offset).copied()
-}
-
-fn read_u16_at(data: &[u8], offset: usize) -> Option<u16> {
-    let end = offset.checked_add(2)?;
-    let bytes = data
-        .get(offset..end)
-        .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())?;
-    Some(u16::from_be_bytes(bytes))
-}
-
-fn slice_range(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
-    data.get(start..start.checked_add(len)?)
 }
 
 /// JARM fingerprint result

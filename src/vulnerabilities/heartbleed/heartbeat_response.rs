@@ -1,5 +1,5 @@
 use crate::constants::CONTENT_TYPE_HEARTBEAT;
-use crate::vulnerabilities::bytes::read_u16_at;
+use crate::utils::byte_parse::read_u16_at;
 
 /// Validate that the response is a proper Heartbeat Response, not a TLS alert
 /// or unrelated record.

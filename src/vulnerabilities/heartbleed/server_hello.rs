@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at};
+use crate::utils::byte_parse::{read_u16_at, read_u24_at};
 
 pub(super) fn has_heartbeat_extension(data: &[u8]) -> Result<bool> {
     if data.len() < 44 {

@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::vulnerabilities::bytes::read_u24_at;
+use crate::utils::byte_parse::read_u24_at;
 use openssl::x509::X509;
 
 /// Parse the server handshake buffer to find the Certificate message and return the RSA
