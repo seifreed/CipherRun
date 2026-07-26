@@ -1,11 +1,11 @@
 // HSTS Preload List Checker - Verify if domain is in browser preload lists
 
+use crate::constants::HTTP_REQUEST_TIMEOUT;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::validate_hostname;
-use std::net::IpAddr;
-use crate::constants::HTTP_REQUEST_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
@@ -593,18 +593,22 @@ mod tests {
         assert!(!is_in_static_list("example.com"));
     }
 
-    #[tokio::test]
-    async fn test_cache() {
-        let checker = HstsPreloadChecker::new();
-
-        let status = PreloadStatus {
+    fn preloaded_api_status() -> PreloadStatus {
+        PreloadStatus {
             in_chrome: true,
             in_firefox: true,
             in_edge: true,
             in_safari: true,
             chromium_status: Some("preloaded".to_string()),
             source: PreloadSource::Api,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cache() {
+        let checker = HstsPreloadChecker::new();
+
+        let status = preloaded_api_status();
 
         checker
             .cache_status("example.com", status)
@@ -641,14 +645,7 @@ mod tests {
     fn test_cache_stats() {
         let checker = HstsPreloadChecker::new();
 
-        let status = PreloadStatus {
-            in_chrome: true,
-            in_firefox: true,
-            in_edge: true,
-            in_safari: true,
-            chromium_status: Some("preloaded".to_string()),
-            source: PreloadSource::Api,
-        };
+        let status = preloaded_api_status();
 
         checker
             .cache_status("example1.com", status.clone())
