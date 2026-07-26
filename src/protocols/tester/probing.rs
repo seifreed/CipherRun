@@ -452,8 +452,10 @@ impl ProtocolTester {
         let std_stream = crate::utils::network::into_blocking_std_stream(stream, socket_timeout)?;
 
         let enable_bugs_mode = self.enable_bugs_mode;
-        let (sni_host, use_sni) =
-            openssl_tls12::hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
+        let (sni_host, use_sni) = crate::utils::network::openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
         tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             builder.set_verify(SslVerifyMode::NONE);
@@ -602,13 +604,6 @@ mod legacy_probe_tests {
             legacy_tls::record_total_len(&header).expect("length should parse"),
             Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
         );
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_tls12::hostname_and_sni("93.184.216.34", None);
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
     }
 
     /// Build a minimal ServerHello record advertising `version` in the legacy
