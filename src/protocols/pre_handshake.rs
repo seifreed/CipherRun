@@ -184,6 +184,29 @@ mod tests {
         build_handshake_message(0x0b, &body)
     }
 
+    async fn read_server_hello_done_from_port(port: u16) -> usize {
+        let target = loopback_target(port);
+        let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
+        let mut client = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("client should connect");
+        let client_hello = PreHandshakeScanner::new(target)
+            .build_client_hello()
+            .expect("client hello should build");
+        client
+            .write_all(&client_hello)
+            .await
+            .expect("client should write hello");
+
+        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
+        handshake_read::read_until_server_hello_done(
+            &mut client,
+            &mut response_buffer,
+            Duration::from_secs(2),
+        )
+        .await
+    }
+
     /// Build an RFC-compliant ServerHello body: version(2) + random(32) +
     /// session_id_len(1) + session_id(sid_len) + cipher(2) + compression(1).
     /// Takes `session_id_len` to let tests exercise non-zero IDs as well.
@@ -438,26 +461,7 @@ mod tests {
             }
         });
 
-        let target = loopback_target(port);
-        let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
-        let mut client = tokio::net::TcpStream::connect(addr)
-            .await
-            .expect("client should connect");
-        let client_hello = PreHandshakeScanner::new(target)
-            .build_client_hello()
-            .expect("client hello should build");
-        client
-            .write_all(&client_hello)
-            .await
-            .expect("client should write hello");
-
-        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
-        let bytes_read = handshake_read::read_until_server_hello_done(
-            &mut client,
-            &mut response_buffer,
-            Duration::from_secs(2),
-        )
-        .await;
+        let bytes_read = read_server_hello_done_from_port(port).await;
 
         assert!(bytes_read > split);
 
@@ -501,26 +505,7 @@ mod tests {
             }
         });
 
-        let target = loopback_target(port);
-        let addr = std::net::SocketAddr::new("127.0.0.1".parse().expect("valid IP"), target.port);
-        let mut client = tokio::net::TcpStream::connect(addr)
-            .await
-            .expect("client should connect");
-        let client_hello = PreHandshakeScanner::new(target)
-            .build_client_hello()
-            .expect("client hello should build");
-        client
-            .write_all(&client_hello)
-            .await
-            .expect("client should write hello");
-
-        let mut response_buffer = vec![0u8; PRE_HANDSHAKE_RESPONSE_BUFFER_SIZE];
-        let bytes_read = handshake_read::read_until_server_hello_done(
-            &mut client,
-            &mut response_buffer,
-            Duration::from_secs(2),
-        )
-        .await;
+        let bytes_read = read_server_hello_done_from_port(port).await;
 
         assert!(bytes_read > 16 * 1024);
         assert_eq!(bytes_read, expected_len);
