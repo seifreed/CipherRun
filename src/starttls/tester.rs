@@ -146,14 +146,27 @@ mod tests {
     use std::net::IpAddr;
     use tokio::net::TcpListener;
 
-    #[test]
-    fn test_tester_creation() {
-        let target = Target::with_ips(
+    fn example_target(port: u16) -> Target {
+        Target::with_ips(
             "example.com".to_string(),
-            25,
+            port,
             vec!["93.184.216.34".parse().unwrap()],
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn loopback_target(hostname: &str, port: u16) -> Target {
+        Target::with_ips(
+            hostname.to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_tester_creation() {
+        let target = example_target(25);
         let tester = StarttlsTester::new(target);
         assert_eq!(tester.connect_timeout, Duration::from_secs(10));
         assert!(!tester.server_mode);
@@ -161,24 +174,14 @@ mod tests {
 
     #[test]
     fn test_tester_default_timeouts() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            110,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target(110);
         let tester = StarttlsTester::new(target);
         assert!(tester.connect_timeout.as_secs() > 0);
     }
 
     #[tokio::test]
     async fn test_protocol_implicit_tls_returns_error() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            993,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("example.com", 993);
         let tester = StarttlsTester::new(target);
         let result = tester.test_protocol(StarttlsProtocol::IMAPS).await;
         assert!(!result.starttls_supported);
@@ -191,12 +194,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("example.com", port);
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
@@ -210,12 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_irc_resolves_default_port() {
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            6667,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("127.0.0.1", 6667);
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
@@ -228,12 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_respects_explicit_443_port() {
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("127.0.0.1", 443);
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
@@ -248,12 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_implicit_tls_uses_default_port() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            465,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("example.com", 465);
         let tester = StarttlsTester::new(target);
         let result = tester.test_protocol(StarttlsProtocol::SMTPS).await;
         assert!(!result.starttls_supported);
@@ -262,12 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protocol_connection_failure_sets_error() {
-        let target = Target::with_ips(
-            "127.0.0.1".to_string(),
-            143,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = loopback_target("127.0.0.1", 143);
         let tester = StarttlsTester {
             target,
             connect_timeout: Duration::from_millis(50),
