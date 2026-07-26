@@ -431,9 +431,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_from_file_rejects_zero_max_connections() {
-        let (_dir, path) = write_config(
-            r#"
+    fn test_config_from_file_rejects_invalid_values() {
+        for (contents, expected) in [
+            (
+                r#"
 [database]
 type = "postgres"
 host = "localhost"
@@ -443,11 +444,37 @@ username = "user"
 password = "pass"
 max_connections = 0
 "#,
-        );
+                "max_connections",
+            ),
+            (
+                r#"
+[database]
+type = "postgres"
+host = "localhost"
+port = 0
+database = "cipherrun"
+username = "user"
+password = "pass"
+"#,
+                "PostgreSQL port",
+            ),
+            (
+                r#"
+[database]
+type = "sqlite"
+path = ":memory:"
 
-        let err = DatabaseConfig::from_file(&path).expect_err("zero max_connections should fail");
+[retention]
+max_age_days = -1
+"#,
+                "max_age_days",
+            ),
+        ] {
+            let (_dir, path) = write_config(contents);
+            let err = DatabaseConfig::from_file(&path).expect_err("invalid config should fail");
 
-        assert!(err.to_string().contains("max_connections"));
+            assert!(err.to_string().contains(expected));
+        }
     }
 
     #[test]
@@ -460,42 +487,5 @@ max_connections = 0
 
         let err = DatabaseConfig::from_file(&path).expect_err("oversized config should fail");
         assert!(err.to_string().contains("Database config file too large"));
-    }
-
-    #[test]
-    fn test_config_from_file_rejects_zero_postgres_port() {
-        let (_dir, path) = write_config(
-            r#"
-[database]
-type = "postgres"
-host = "localhost"
-port = 0
-database = "cipherrun"
-username = "user"
-password = "pass"
-"#,
-        );
-
-        let err = DatabaseConfig::from_file(&path).expect_err("zero PostgreSQL port should fail");
-
-        assert!(err.to_string().contains("PostgreSQL port"));
-    }
-
-    #[test]
-    fn test_config_from_file_rejects_negative_retention() {
-        let (_dir, path) = write_config(
-            r#"
-[database]
-type = "sqlite"
-path = ":memory:"
-
-[retention]
-max_age_days = -1
-"#,
-        );
-
-        let err = DatabaseConfig::from_file(&path).expect_err("negative retention should fail");
-
-        assert!(err.to_string().contains("max_age_days"));
     }
 }
