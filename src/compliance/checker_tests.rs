@@ -83,12 +83,11 @@ fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
     }
 }
 
-#[test]
-fn test_check_protocols_denied() {
-    let rule = Rule {
-        rule_type: "ProtocolVersion".to_string(),
+fn base_rule(rule_type: &str) -> Rule {
+    Rule {
+        rule_type: rule_type.to_string(),
         allowed: vec![],
-        denied: vec!["SSLv2".to_string(), "SSLv3".to_string()],
+        denied: vec![],
         allowed_patterns: vec![],
         denied_patterns: vec![],
         preferred_patterns: vec![],
@@ -101,6 +100,14 @@ fn test_check_protocols_denied() {
         require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
+    }
+}
+
+#[test]
+fn test_check_protocols_denied() {
+    let rule = Rule {
+        denied: vec!["SSLv2".to_string(), "SSLv3".to_string()],
+        ..base_rule("ProtocolVersion")
     };
 
     let results = ScanAssessment {
@@ -120,21 +127,8 @@ fn test_check_protocols_denied() {
 #[test]
 fn test_check_protocols_allowed() {
     let rule = Rule {
-        rule_type: "ProtocolVersion".to_string(),
         allowed: vec!["TLS 1.2".to_string(), "TLS 1.3".to_string()],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("ProtocolVersion")
     };
 
     let results = ScanAssessment {
@@ -154,21 +148,8 @@ fn test_check_protocols_allowed() {
 #[test]
 fn test_check_protocols_allowed_names_are_normalized() {
     let rule = Rule {
-        rule_type: "ProtocolVersion".to_string(),
         allowed: vec![" tls 1.2 ".to_string()],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("ProtocolVersion")
     };
 
     let results = ScanAssessment {
@@ -184,21 +165,8 @@ fn test_check_protocols_allowed_names_are_normalized() {
 #[test]
 fn test_check_protocols_denied_names_are_normalized() {
     let rule = Rule {
-        rule_type: "ProtocolVersion".to_string(),
-        allowed: vec![],
         denied: vec!["sslv3".to_string()],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("ProtocolVersion")
     };
 
     let results = ScanAssessment {
@@ -215,21 +183,8 @@ fn test_check_protocols_denied_names_are_normalized() {
 #[test]
 fn test_check_key_size_flags_ec_public_key_algorithm() {
     let rule = Rule {
-        rule_type: "CertificateKeySize".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
         min_ecc_bits: Some(256),
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("CertificateKeySize")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
     let cert = &mut results
@@ -251,21 +206,8 @@ fn test_check_key_size_flags_ec_public_key_algorithm() {
 #[test]
 fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() {
     let rule = Rule {
-        rule_type: "ForwardSecrecy".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
         required: Some(true),
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("ForwardSecrecy")
     };
 
     let cipher = CipherSuite {
@@ -306,21 +248,8 @@ fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() 
 #[test]
 fn test_check_forward_secrecy_uses_protocol_bucket_for_tls13_ciphers() {
     let rule = Rule {
-        rule_type: "ForwardSecrecy".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
         required: Some(true),
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("ForwardSecrecy")
     };
 
     let cipher = CipherSuite {
@@ -391,42 +320,16 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
     };
 
     let allowed_rule = Rule {
-        rule_type: "CipherSuite".to_string(),
         allowed: vec!["tls_aes_128_gcm_sha256".to_string()],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("CipherSuite")
     };
     let violations = ComplianceChecker::check_ciphers(&allowed_rule, &results)
         .expect("test assertion should succeed");
     assert!(violations.is_empty(), "{violations:?}");
 
     let denied_rule = Rule {
-        rule_type: "CipherSuite".to_string(),
-        allowed: vec![],
         denied: vec!["tls_aes_128_gcm_sha256".to_string()],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("CipherSuite")
     };
     let violations = ComplianceChecker::check_ciphers(&denied_rule, &results)
         .expect("test assertion should succeed");
@@ -436,21 +339,8 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
 
 fn preferred_rule() -> Rule {
     Rule {
-        rule_type: "CipherSuite".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
         preferred_patterns: vec![".*_GCM.*".to_string(), ".*_CHACHA20_POLY1305.*".to_string()],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("CipherSuite")
     }
 }
 
@@ -515,21 +405,8 @@ fn test_check_ciphers_preferred_pattern_unmatched_yields_medium_warning() {
 #[test]
 fn test_check_signature_denied_matches_hyphenated_alias() {
     let rule = Rule {
-        rule_type: "SignatureAlgorithm".to_string(),
-        allowed: vec![],
         denied: vec!["SHA1".to_string()],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
     results
@@ -552,21 +429,8 @@ fn test_check_signature_denied_matches_hyphenated_alias() {
 #[test]
 fn test_check_signature_allowed_matches_separator_alias() {
     let rule = Rule {
-        rule_type: "SignatureAlgorithm".to_string(),
         allowed: vec!["SHA1-RSA".to_string()],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
     results
@@ -585,21 +449,8 @@ fn test_check_signature_allowed_matches_separator_alias() {
 #[test]
 fn test_check_signature_denied_rejects_partial_match() {
     let rule = Rule {
-        rule_type: "SignatureAlgorithm".to_string(),
-        allowed: vec![],
         denied: vec!["HA1".to_string()],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("SignatureAlgorithm")
     };
     let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
     results
@@ -618,21 +469,8 @@ fn test_check_signature_denied_rejects_partial_match() {
 #[test]
 fn test_check_cert_validation_requires_revocation_check() {
     let rule = Rule {
-        rule_type: "CertificateValidation".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
         require_revocation_check: Some(true),
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
+        ..base_rule("CertificateValidation")
     };
 
     let results = create_certificate_assessment_with_revocation(
@@ -657,21 +495,8 @@ fn test_check_cert_validation_requires_revocation_check() {
 #[test]
 fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() {
     let rule = Rule {
-        rule_type: "CertificateExpiration".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
         max_days_until_expiration: Some(30),
-        custom_params: HashMap::new(),
+        ..base_rule("CertificateExpiration")
     };
     let not_after = (Utc::now() - chrono::Duration::hours(1))
         .format("%Y-%m-%d %H:%M:%S %z")
@@ -685,23 +510,7 @@ fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() 
 
 #[test]
 fn test_check_vulnerabilities_maps_severity_and_evidence() {
-    let rule = Rule {
-        rule_type: "Vulnerability".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
-    };
+    let rule = base_rule("Vulnerability");
 
     let results = ScanAssessment {
         vulnerabilities: vec![
@@ -739,23 +548,7 @@ fn test_check_vulnerabilities_ignores_inconclusive_findings() {
     // An inconclusive (unconfirmed) finding must not produce a compliance
     // violation: it would hard-fail compliance on evidence the scanner could
     // not confirm, contradicting its "Inconclusive" status in the scan report.
-    let rule = Rule {
-        rule_type: "Vulnerability".to_string(),
-        allowed: vec![],
-        denied: vec![],
-        allowed_patterns: vec![],
-        denied_patterns: vec![],
-        preferred_patterns: vec![],
-        min_rsa_bits: None,
-        min_ecc_bits: None,
-        required: None,
-        require_valid_chain: None,
-        require_unexpired: None,
-        require_hostname_match: None,
-        require_revocation_check: None,
-        max_days_until_expiration: None,
-        custom_params: HashMap::new(),
-    };
+    let rule = base_rule("Vulnerability");
 
     let results = ScanAssessment {
         vulnerabilities: vec![VulnerabilityResult {
