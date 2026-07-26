@@ -2,13 +2,14 @@
 
 use crate::Result;
 use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
-use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
+use crate::protocols::Protocol;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+mod client_hello;
 mod heartbeat_probe;
 mod heartbeat_response;
 mod read_io;
@@ -171,19 +172,11 @@ impl<'a> HeartbleedTester<'a> {
             }
         };
 
-        // Build ClientHello with Heartbeat extension
-        let mut builder = ClientHelloBuilder::new(protocol);
-        builder.add_ciphers(&[0xc014, 0xc00a, 0x0039, 0x0038, 0x0035]);
-
-        // Add heartbeat extension (type 0x000f)
-        let heartbeat_ext = vec![0x01]; // peer_allowed_to_send
-        builder.add_extension(crate::protocols::Extension::new(0x000f, heartbeat_ext));
-
-        let sni_hostname = crate::utils::network::sni_hostname_for_target(
+        let client_hello = client_hello::with_heartbeat_extension(
+            protocol,
             &self.target.hostname,
             self.sni_hostname.as_deref(),
-        );
-        let client_hello = builder.build_with_defaults(sni_hostname.as_deref())?;
+        )?;
 
         // Send ClientHello
         let response = match timeout(self.read_timeout, async {
