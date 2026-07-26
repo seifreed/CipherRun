@@ -32,6 +32,20 @@ impl StarttlsInjectionTester {
         Self { target }
     }
 
+    async fn connect_for_probe(&self) -> Result<Option<TcpStream>> {
+        let addr = self
+            .target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)?;
+
+        match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await {
+            Ok(stream) => Ok(Some(stream)),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Test SMTP STARTTLS injection
     pub async fn test_smtp_injection(&self) -> Result<bool> {
         Ok(matches!(
@@ -41,21 +55,9 @@ impl StarttlsInjectionTester {
     }
 
     async fn test_smtp_injection_status(&self) -> Result<StarttlsInjectionStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
-        // Try to connect with timeout
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(StarttlsInjectionStatus::Inconclusive),
-            };
+        let Some(stream) = self.connect_for_probe().await? else {
+            return Ok(StarttlsInjectionStatus::Inconclusive);
+        };
 
         self.test_command_injection_smtp(stream).await
     }
@@ -145,20 +147,9 @@ impl StarttlsInjectionTester {
     }
 
     async fn test_imap_injection_status(&self) -> Result<StarttlsInjectionStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(StarttlsInjectionStatus::Inconclusive),
-            };
+        let Some(stream) = self.connect_for_probe().await? else {
+            return Ok(StarttlsInjectionStatus::Inconclusive);
+        };
 
         self.test_command_injection_imap(stream).await
     }
@@ -234,20 +225,9 @@ impl StarttlsInjectionTester {
     }
 
     async fn test_pop3_injection_status(&self) -> Result<StarttlsInjectionStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
-
-        let stream =
-            match crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None)
-                .await
-            {
-                Ok(s) => s,
-                Err(_) => return Ok(StarttlsInjectionStatus::Inconclusive),
-            };
+        let Some(stream) = self.connect_for_probe().await? else {
+            return Ok(StarttlsInjectionStatus::Inconclusive);
+        };
 
         self.test_command_injection_pop3(stream).await
     }
