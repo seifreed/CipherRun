@@ -214,6 +214,21 @@ mod tests {
         .unwrap()
     }
 
+    async fn local_listener() -> (tokio::net::TcpListener, u16) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("local addr").port();
+        (listener, port)
+    }
+
+    async fn test_ticketbleed_port(port: u16) -> TicketbleedTestResult {
+        TicketbleedTester::new(localhost_target(port))
+            .test()
+            .await
+            .unwrap()
+    }
+
     #[test]
     fn test_ticketbleed_result() {
         let result = TicketbleedTestResult {
@@ -505,10 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticketbleed_reads_past_first_record_for_new_session_ticket() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
+        let (listener, port) = local_listener().await;
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -528,9 +540,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read follow-up hello");
         });
 
-        let target = localhost_target(port);
-
-        let result = TicketbleedTester::new(target).test().await.unwrap();
+        let result = test_ticketbleed_port(port).await;
         server.await.expect("server task");
 
         assert!(!result.vulnerable);
@@ -543,10 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticketbleed_reads_past_max_size_record_for_new_session_ticket() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
+        let (listener, port) = local_listener().await;
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -569,9 +576,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read follow-up hello");
         });
 
-        let target = localhost_target(port);
-
-        let result = TicketbleedTester::new(target).test().await.unwrap();
+        let result = test_ticketbleed_port(port).await;
         server.await.expect("server task");
 
         assert!(!result.vulnerable);
@@ -585,10 +590,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticketbleed_reads_split_resumed_response_record() {
         use tokio::io::AsyncWriteExt;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
+        let (listener, port) = local_listener().await;
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -624,10 +626,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticketbleed_malformed_ticket_response_is_inconclusive() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
+        let (listener, port) = local_listener().await;
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -641,9 +640,7 @@ mod tests {
                 .expect("write malformed ticket");
         });
 
-        let target = localhost_target(port);
-
-        let result = TicketbleedTester::new(target).test().await.unwrap();
+        let result = test_ticketbleed_port(port).await;
         server.await.expect("server task");
 
         assert!(!result.vulnerable);
@@ -653,10 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticketbleed_fragmented_new_session_ticket_is_reassembled() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
+        let (listener, port) = local_listener().await;
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
@@ -684,9 +678,7 @@ mod tests {
                 .expect("write follow-up server hello");
         });
 
-        let target = localhost_target(port);
-
-        let result = TicketbleedTester::new(target).test().await.unwrap();
+        let result = test_ticketbleed_port(port).await;
         server.await.expect("server task");
 
         assert!(!result.vulnerable);
