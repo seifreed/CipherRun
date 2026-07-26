@@ -487,42 +487,7 @@ impl RevocationChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> CertificateInfo {
-        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
-        use openssl::hash::MessageDigest as OpensslMessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
-        let mut name = X509NameBuilder::new().unwrap();
-        name.append_entry_by_text("CN", "malformed-extension.example.com")
-            .unwrap();
-        let name = name.build();
-
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
-        builder.set_pubkey(&pkey).unwrap();
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
-            .unwrap();
-        builder
-            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
-            .unwrap();
-        let oid = Asn1Object::from_str(oid).unwrap();
-        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
-        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
-        builder.append_extension(extension).unwrap();
-        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
-
-        CertificateInfo {
-            der_bytes: builder.build().to_der().unwrap(),
-            ..Default::default()
-        }
-    }
+    use crate::certificates::revocation::cert_with_raw_extension_der;
 
     #[test]
     fn test_ocsp_stapling_empty_data() {
