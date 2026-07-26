@@ -179,6 +179,14 @@ impl DnsOnlyMode {
 mod tests {
     use super::*;
 
+    fn cert(subject: &str, san: &[&str]) -> CertificateInfo {
+        CertificateInfo {
+            subject: subject.to_string(),
+            san: san.iter().map(|entry| entry.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_normalize_domain() {
         // Basic normalization
@@ -260,15 +268,10 @@ mod tests {
 
     #[test]
     fn test_extract_domains_dedup_and_normalize() {
-        let cert = CertificateInfo {
-            subject: "CN=Example.com,O=Org,C=US".to_string(),
-            san: vec![
-                "DNS:*.example.com".to_string(),
-                "www.example.com".to_string(),
-                "EXAMPLE.com".to_string(),
-            ],
-            ..Default::default()
-        };
+        let cert = cert(
+            "CN=Example.com,O=Org,C=US",
+            &["DNS:*.example.com", "www.example.com", "EXAMPLE.com"],
+        );
 
         let mut domains = DnsOnlyMode::extract_domains(&cert);
         domains.sort();
@@ -280,16 +283,15 @@ mod tests {
 
     #[test]
     fn test_extract_domains_normalizes_absolute_fqdns() {
-        let cert = CertificateInfo {
-            subject: "CN=Example.com.,O=Org,C=US".to_string(),
-            san: vec![
-                "DNS:*.api.example.com.".to_string(),
-                "www.example.com.".to_string(),
-                ".".to_string(),
-                "example.com..".to_string(),
+        let cert = cert(
+            "CN=Example.com.,O=Org,C=US",
+            &[
+                "DNS:*.api.example.com.",
+                "www.example.com.",
+                ".",
+                "example.com..",
             ],
-            ..Default::default()
-        };
+        );
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
@@ -305,16 +307,10 @@ mod tests {
 
     #[test]
     fn test_extract_domains_skips_ip_sans_and_ip_cn() {
-        let cert = CertificateInfo {
-            subject: "CN=192.0.2.1,O=Org,C=US".to_string(),
-            san: vec![
-                "192.0.2.1".to_string(),
-                "2001:db8::1".to_string(),
-                "IP:0a000001".to_string(),
-                "DNS:example.com".to_string(),
-            ],
-            ..Default::default()
-        };
+        let cert = cert(
+            "CN=192.0.2.1,O=Org,C=US",
+            &["192.0.2.1", "2001:db8::1", "IP:0a000001", "DNS:example.com"],
+        );
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
@@ -323,16 +319,10 @@ mod tests {
 
     #[test]
     fn test_extract_domains_skips_obfuscated_ip_sans_and_ip_cn() {
-        let cert = CertificateInfo {
-            subject: "CN=127.1,O=Org,C=US".to_string(),
-            san: vec![
-                "127.1".to_string(),
-                "2130706433".to_string(),
-                "IP:0a000001".to_string(),
-                "DNS:example.com".to_string(),
-            ],
-            ..Default::default()
-        };
+        let cert = cert(
+            "CN=127.1,O=Org,C=US",
+            &["127.1", "2130706433", "IP:0a000001", "DNS:example.com"],
+        );
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
@@ -341,16 +331,15 @@ mod tests {
 
     #[test]
     fn test_extract_domains_skips_non_dns_values_with_dns_prefix() {
-        let cert = CertificateInfo {
-            subject: "CN=https://cn.example.com,O=Org,C=US".to_string(),
-            san: vec![
-                "DNS:https://example.com".to_string(),
-                "DNS:example.com:443".to_string(),
-                "DNS:example.com/path".to_string(),
-                "DNS:good.example.com".to_string(),
+        let cert = cert(
+            "CN=https://cn.example.com,O=Org,C=US",
+            &[
+                "DNS:https://example.com",
+                "DNS:example.com:443",
+                "DNS:example.com/path",
+                "DNS:good.example.com",
             ],
-            ..Default::default()
-        };
+        );
 
         let domains = DnsOnlyMode::extract_domains(&cert);
 
@@ -359,11 +348,7 @@ mod tests {
 
     #[test]
     fn test_format_output_multiple_domains() {
-        let cert = CertificateInfo {
-            subject: "CN=api.example.com,O=Org,C=US".to_string(),
-            san: vec!["www.example.com".to_string()],
-            ..Default::default()
-        };
+        let cert = cert("CN=api.example.com,O=Org,C=US", &["www.example.com"]);
 
         let output = DnsOnlyMode::format_output(&cert);
         let lines: Vec<&str> = output.lines().collect();
@@ -374,11 +359,7 @@ mod tests {
 
     #[test]
     fn test_extract_domains_from_san_only() {
-        let cert = CertificateInfo {
-            subject: "".to_string(),
-            san: vec!["DNS:EXAMPLE.COM".to_string()],
-            ..Default::default()
-        };
+        let cert = cert("", &["DNS:EXAMPLE.COM"]);
 
         let domains = DnsOnlyMode::extract_domains(&cert);
         assert_eq!(domains, vec!["example.com".to_string()]);
@@ -386,11 +367,10 @@ mod tests {
 
     #[test]
     fn test_extract_domains_sorted_output() {
-        let cert = CertificateInfo {
-            subject: "CN=c.example.com,O=Org".to_string(),
-            san: vec!["b.example.com".to_string(), "a.example.com".to_string()],
-            ..Default::default()
-        };
+        let cert = cert(
+            "CN=c.example.com,O=Org",
+            &["b.example.com", "a.example.com"],
+        );
 
         let domains = DnsOnlyMode::extract_domains(&cert);
         assert_eq!(
@@ -412,11 +392,7 @@ mod tests {
 
     #[test]
     fn test_format_scan_results_uses_leaf_certificate() {
-        let leaf = CertificateInfo {
-            subject: "CN=api.example.com".to_string(),
-            san: vec!["www.example.com".to_string()],
-            ..Default::default()
-        };
+        let leaf = cert("CN=api.example.com", &["www.example.com"]);
 
         let chain = crate::certificates::parser::CertificateChain {
             certificates: vec![leaf],
