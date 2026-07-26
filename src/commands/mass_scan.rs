@@ -278,6 +278,13 @@ impl Command for MassScanCommand {
 mod tests {
     use super::*;
 
+    async fn build_scanner(args: Args) -> (MassScanner, String) {
+        MassScanCommand::new(args)
+            .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
+            .await
+            .unwrap_or_else(|e| panic!("CIDR expansion should succeed: {e}"))
+    }
+
     #[test]
     fn test_mass_scan_command_name() {
         let cmd = MassScanCommand::new(Args::default());
@@ -316,15 +323,7 @@ mod tests {
             cidr: Some("192.0.2.0/30".to_string()),
             ..Default::default()
         };
-        let cmd = MassScanCommand::new(args);
-
-        let (scanner, source) = match cmd
-            .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
-            .await
-        {
-            Ok(built) => built,
-            Err(e) => panic!("CIDR expansion should succeed: {e}"),
-        };
+        let (scanner, source) = build_scanner(args).await;
 
         assert_eq!(source, "CIDR 192.0.2.0/30");
         assert_eq!(scanner.targets.len(), 4);
@@ -339,15 +338,7 @@ mod tests {
             port: Some(8443),
             ..Default::default()
         };
-        let cmd = MassScanCommand::new(args);
-
-        let (scanner, _) = match cmd
-            .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
-            .await
-        {
-            Ok(built) => built,
-            Err(e) => panic!("CIDR expansion should succeed: {e}"),
-        };
+        let (scanner, _) = build_scanner(args).await;
 
         assert_eq!(scanner.targets, vec!["198.51.100.5:8443".to_string()]);
     }
@@ -362,15 +353,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = MassScanCommand::new(args);
-
-        let (scanner, _) = match cmd
-            .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
-            .await
-        {
-            Ok(built) => built,
-            Err(e) => panic!("CIDR expansion should succeed: {e}"),
-        };
+        let (scanner, _) = build_scanner(args).await;
 
         assert_eq!(scanner.targets, vec!["198.51.100.5:25".to_string()]);
     }
