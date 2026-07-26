@@ -15,11 +15,11 @@ use crate::constants::{
     HANDSHAKE_TYPE_SERVER_HELLO, TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod client_hello;
 mod model;
 
 pub(crate) use model::{CipherProbeOptions, CipherProbeStatus};
@@ -146,11 +146,9 @@ async fn probe_cipher_at_protocol_on_addr(
         Err(_) => return CipherProbeStatus::Inconclusive,
     };
 
-    let mut builder = ClientHelloBuilder::new(protocol);
-    builder.add_cipher(hexcode);
     let sni =
         crate::utils::network::sni_hostname_for_target(&target.hostname, options.sni_override);
-    let client_hello = match builder.build_with_defaults(sni.as_deref()) {
+    let client_hello = match client_hello::single_cipher(protocol, hexcode, sni.as_deref()) {
         Ok(hello) => hello,
         Err(_) => return CipherProbeStatus::Inconclusive,
     };
