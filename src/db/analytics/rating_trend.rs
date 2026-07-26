@@ -62,26 +62,12 @@ impl TrendAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::super::trend_analyzer::TrendAnalyzer;
-    use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig};
+    use crate::db::{BindValue, CipherRunDatabase, DatabaseConfig, create_unique_test_db_path};
     use chrono::{Duration, Utc};
-    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn create_unique_db_path() -> PathBuf {
-        let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-        #[cfg(unix)]
-        let path = PathBuf::from(format!("/tmp/cipherrun-rating-trend-test{}.db", counter));
-        #[cfg(not(unix))]
-        let path = std::env::temp_dir().join(format!("cipherrun-rating-trend-test{}.db", counter));
-        let _ = std::fs::remove_file(&path);
-        path
-    }
 
     async fn setup_db() -> Arc<CipherRunDatabase> {
-        let config = DatabaseConfig::sqlite(create_unique_db_path());
+        let config = DatabaseConfig::sqlite(create_unique_test_db_path("rating-trend"));
         let db = CipherRunDatabase::new(&config)
             .await
             .expect("test assertion should succeed");

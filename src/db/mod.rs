@@ -32,6 +32,17 @@ use crate::application::ScanResultsStore;
 use async_trait::async_trait;
 use repositories::ScanRepositoryImpl;
 
+#[cfg(test)]
+pub(crate) fn create_unique_test_db_path(prefix: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let path = std::env::temp_dir().join(format!("cipherrun-{prefix}-test{counter}.db"));
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
 /// Main database struct
 pub struct CipherRunDatabase {
     pool: DatabasePool,

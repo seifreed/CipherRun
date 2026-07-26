@@ -101,26 +101,12 @@ mod tests {
     use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
     use crate::api::middleware::rate_limit::PerKeyRateLimiter;
     use crate::api::state::{ApiStats, AppState};
-    use crate::db::{DatabaseConfig, DatabasePool, run_migrations};
+    use crate::db::{DatabaseConfig, DatabasePool, create_unique_test_db_path, run_migrations};
     use axum::extract::State;
     use chrono::Utc;
-    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
     use tokio::sync::RwLock;
-
-    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn create_unique_db_path() -> PathBuf {
-        let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-        #[cfg(unix)]
-        let path = PathBuf::from(format!("/tmp/cipherrun-stats-test{}.db", counter));
-        #[cfg(not(unix))]
-        let path = std::env::temp_dir().join(format!("cipherrun-stats-test{}.db", counter));
-        let _ = std::fs::remove_file(&path);
-        path
-    }
 
     fn build_state() -> Arc<AppState> {
         let config = Arc::new(ApiConfig::default());
@@ -142,7 +128,7 @@ mod tests {
     }
 
     async fn build_state_with_db() -> Arc<AppState> {
-        let config = DatabaseConfig::sqlite(create_unique_db_path());
+        let config = DatabaseConfig::sqlite(create_unique_test_db_path("stats"));
         let pool = DatabasePool::new(&config)
             .await
             .expect("test assertion should succeed");
