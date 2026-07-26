@@ -188,11 +188,10 @@ fn list_contains_normalized(list: &[String], value: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_rule_allowed_list() {
-        let rule = Rule {
-            rule_type: "ProtocolVersion".to_string(),
-            allowed: vec!["TLS 1.2".to_string(), "TLS 1.3".to_string()],
+    fn base_rule(rule_type: &str) -> Rule {
+        Rule {
+            rule_type: rule_type.to_string(),
+            allowed: vec![],
             denied: vec![],
             allowed_patterns: vec![],
             denied_patterns: vec![],
@@ -206,6 +205,14 @@ mod tests {
             require_revocation_check: None,
             max_days_until_expiration: None,
             custom_params: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_rule_allowed_list() {
+        let rule = Rule {
+            allowed: vec!["TLS 1.2".to_string(), "TLS 1.3".to_string()],
+            ..base_rule("ProtocolVersion")
         };
 
         assert!(rule.is_allowed("TLS 1.2"));
@@ -216,21 +223,8 @@ mod tests {
     #[test]
     fn test_rule_denied_list() {
         let rule = Rule {
-            rule_type: "ProtocolVersion".to_string(),
-            allowed: vec![],
             denied: vec!["SSLv2".to_string(), "SSLv3".to_string()],
-            allowed_patterns: vec![],
-            denied_patterns: vec![],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("ProtocolVersion")
         };
 
         assert!(rule.is_denied("SSLv2"));
@@ -241,21 +235,8 @@ mod tests {
     #[test]
     fn test_rule_pattern_matching() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
-            allowed_patterns: vec![],
             denied_patterns: vec![".*_NULL_.*".to_string(), ".*_EXPORT_.*".to_string()],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_denied_pattern("TLS_RSA_WITH_NULL_SHA"));
@@ -266,21 +247,8 @@ mod tests {
     #[test]
     fn test_rule_denied_patterns_are_case_insensitive() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
-            allowed_patterns: vec![],
             denied_patterns: vec![".*_NULL_.*".to_string(), ".*_EXPORT_.*".to_string()],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_denied_pattern("tls_rsa_with_null_sha"));
@@ -290,21 +258,8 @@ mod tests {
     #[test]
     fn test_rule_allowed_patterns() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
             allowed_patterns: vec!["TLS_.*".to_string()],
-            denied_patterns: vec![],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
@@ -314,21 +269,8 @@ mod tests {
     #[test]
     fn test_rule_allowed_patterns_are_case_insensitive() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
             allowed_patterns: vec!["TLS_.*".to_string()],
-            denied_patterns: vec![],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_allowed_pattern("tls_aes_128_gcm_sha256"));
@@ -337,21 +279,8 @@ mod tests {
     #[test]
     fn test_rule_allowed_patterns_invalid_fails_closed() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
             allowed_patterns: vec!["[".to_string()],
-            denied_patterns: vec![],
-            preferred_patterns: vec![],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
@@ -360,21 +289,8 @@ mod tests {
     #[test]
     fn test_rule_preferred_pattern() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
-            allowed_patterns: vec![],
-            denied_patterns: vec![],
             preferred_patterns: vec!["TLS_AES_.*".to_string()],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_preferred_pattern("TLS_AES_128_GCM_SHA256"));
@@ -384,21 +300,8 @@ mod tests {
     #[test]
     fn test_rule_preferred_patterns_are_case_insensitive() {
         let rule = Rule {
-            rule_type: "CipherSuite".to_string(),
-            allowed: vec![],
-            denied: vec![],
-            allowed_patterns: vec![],
-            denied_patterns: vec![],
             preferred_patterns: vec!["TLS_AES_.*".to_string()],
-            min_rsa_bits: None,
-            min_ecc_bits: None,
-            required: None,
-            require_valid_chain: None,
-            require_unexpired: None,
-            require_hostname_match: None,
-            require_revocation_check: None,
-            max_days_until_expiration: None,
-            custom_params: HashMap::new(),
+            ..base_rule("CipherSuite")
         };
 
         assert!(rule.matches_preferred_pattern("tls_aes_128_gcm_sha256"));
