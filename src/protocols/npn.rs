@@ -346,51 +346,35 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_npn_response_rejects_truncated_extension_data() {
-        let response = npn_server_hello(&[0x33, 0x74, 0x00, 0x02, 0x01], None);
-
-        let err = parse_npn_response(&response).expect_err("truncated NPN extension should fail");
-        assert!(
-            err.to_string()
-                .contains("NPN extension data extends beyond declared length")
-        );
-    }
-
-    #[test]
-    fn test_parse_npn_response_rejects_truncated_extension_block() {
-        let response = npn_server_hello(
-            NPN_H2_HTTP11_EXTENSION,
-            Some(NPN_H2_HTTP11_EXTENSION.len() as u16 + 1),
-        );
-
-        let err = parse_npn_response(&response).expect_err("truncated extension block should fail");
-        assert!(
-            err.to_string()
-                .contains("NPN extension block extends beyond handshake length")
-        );
-    }
-
-    #[test]
-    fn test_parse_npn_response_rejects_extension_block_trailing_bytes() {
-        let response = npn_server_hello(&[0xff], Some(0));
-
-        let err = parse_npn_response(&response).expect_err("trailing extension bytes should fail");
-        assert!(
-            err.to_string()
-                .contains("NPN extension block contains trailing bytes")
-        );
-    }
-
-    #[test]
-    fn test_parse_npn_response_rejects_truncated_extension_header() {
-        let response = npn_server_hello(&[0x33, 0x74, 0x00], None);
-
-        let err =
-            parse_npn_response(&response).expect_err("truncated extension header should fail");
-        assert!(
-            err.to_string()
-                .contains("NPN extension block contains truncated header")
-        );
+    fn test_parse_npn_response_rejects_malformed_extensions() {
+        for (case, response, expected) in [
+            (
+                "truncated NPN extension",
+                npn_server_hello(&[0x33, 0x74, 0x00, 0x02, 0x01], None),
+                "NPN extension data extends beyond declared length",
+            ),
+            (
+                "truncated extension block",
+                npn_server_hello(
+                    NPN_H2_HTTP11_EXTENSION,
+                    Some(NPN_H2_HTTP11_EXTENSION.len() as u16 + 1),
+                ),
+                "NPN extension block extends beyond handshake length",
+            ),
+            (
+                "trailing extension bytes",
+                npn_server_hello(&[0xff], Some(0)),
+                "NPN extension block contains trailing bytes",
+            ),
+            (
+                "truncated extension header",
+                npn_server_hello(&[0x33, 0x74, 0x00], None),
+                "NPN extension block contains truncated header",
+            ),
+        ] {
+            let err = parse_npn_response(&response).expect_err(case);
+            assert!(err.to_string().contains(expected), "{case}");
+        }
     }
 
     #[test]
