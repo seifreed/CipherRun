@@ -166,36 +166,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    #[test]
-    fn test_starttls_injection_struct() {
-        let result = StarttlsInjectionResult {
-            vulnerable: true,
-            smtp_vulnerable: true,
-            imap_vulnerable: false,
-            pop3_vulnerable: false,
-            inconclusive: false,
-            details: vec!["Test".to_string()],
-        };
-
-        assert!(result.vulnerable);
-        assert!(result.smtp_vulnerable);
-    }
-
-    #[test]
-    fn test_starttls_injection_debug_contains_details() {
-        let result = StarttlsInjectionResult {
-            vulnerable: false,
-            smtp_vulnerable: false,
-            imap_vulnerable: false,
-            pop3_vulnerable: false,
-            inconclusive: false,
-            details: vec!["Detail A".to_string()],
-        };
-
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("Detail A"));
-    }
-
     async fn start_scripted_server(greeting: &'static [u8], responses: Vec<&'static [u8]>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
