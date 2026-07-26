@@ -675,15 +675,10 @@ mod tests {
     async fn test_early_data_inactive_target_is_inconclusive() {
         crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let addr = listener.local_addr().unwrap();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let result = tester.test().await.unwrap();
