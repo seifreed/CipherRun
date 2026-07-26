@@ -325,54 +325,34 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_alert_with_trailing_bytes_is_inconclusive() {
-        let response = vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
-        assert_eq!(
-            classify_probe_response(&response, response.len()),
-            CipherProbeStatus::Inconclusive
-        );
-    }
-
-    #[test]
-    fn test_classify_malformed_alert_is_inconclusive() {
-        let mut response = vec![0u8; 7];
-        set_byte(&mut response, 0, CONTENT_TYPE_ALERT);
-        set_u16_be(&mut response, 3, 3);
-        assert_eq!(
-            classify_probe_response(&response, response.len()),
-            CipherProbeStatus::Inconclusive
-        );
-    }
-
-    #[test]
-    fn test_classify_truncated_alert_is_inconclusive() {
-        let response = vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
-        assert_eq!(
-            classify_probe_response(&response, response.len()),
-            CipherProbeStatus::Inconclusive
-        );
-    }
-
-    #[test]
-    fn test_classify_handshake_without_serverhello_is_inconclusive() {
-        let mut response = vec![0u8; 16];
-        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
-        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO + 1);
-        assert_eq!(
-            classify_probe_response(&response, response.len()),
-            CipherProbeStatus::Inconclusive
-        );
-    }
-
-    #[test]
-    fn test_classify_truncated_serverhello_is_inconclusive() {
-        let mut response = vec![0u8; 16];
-        set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
-        set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
-        assert_eq!(
-            classify_probe_response(&response, response.len()),
-            CipherProbeStatus::Inconclusive
-        );
+    fn test_classify_malformed_responses_are_inconclusive() {
+        for response in [
+            vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00],
+            {
+                let mut response = vec![0u8; 7];
+                set_byte(&mut response, 0, CONTENT_TYPE_ALERT);
+                set_u16_be(&mut response, 3, 3);
+                response
+            },
+            vec![CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02],
+            {
+                let mut response = vec![0u8; 16];
+                set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+                set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO + 1);
+                response
+            },
+            {
+                let mut response = vec![0u8; 16];
+                set_byte(&mut response, 0, CONTENT_TYPE_HANDSHAKE);
+                set_byte(&mut response, 5, HANDSHAKE_TYPE_SERVER_HELLO);
+                response
+            },
+        ] {
+            assert_eq!(
+                classify_probe_response(&response, response.len()),
+                CipherProbeStatus::Inconclusive
+            );
+        }
     }
 
     #[test]
