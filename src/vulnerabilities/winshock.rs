@@ -62,6 +62,14 @@ impl WinshockTester {
         self
     }
 
+    fn first_addr(&self) -> Result<std::net::SocketAddr> {
+        self.target
+            .socket_addrs()
+            .first()
+            .copied()
+            .ok_or(crate::TlsError::NoSocketAddresses)
+    }
+
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -105,12 +113,7 @@ impl WinshockTester {
     async fn detect_schannel(&self) -> Result<SchannelDetectionStatus> {
         use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addr = self.first_addr()?;
 
         let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
@@ -172,12 +175,7 @@ impl WinshockTester {
 
     /// Test with malformed handshake that triggers Winshock
     async fn test_malformed_handshake(&self) -> Result<MalformedHandshakeStatus> {
-        let addr = self
-            .target
-            .socket_addrs()
-            .first()
-            .copied()
-            .ok_or(crate::TlsError::NoSocketAddresses)?;
+        let addr = self.first_addr()?;
 
         let mut stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(s) => s,
