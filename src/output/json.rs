@@ -55,6 +55,20 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    fn empty_aggregated_result() -> AggregatedScanResult {
+        AggregatedScanResult {
+            protocols: Vec::new(),
+            ciphers: HashMap::new(),
+            grade: ("F".to_string(), 0),
+            certificate_info: None,
+            certificate_consistent: true,
+            inconsistencies: Vec::new(),
+            alpn_protocols: Vec::new(),
+            session_resumption_caching: Some(false),
+            session_resumption_tickets: Some(false),
+        }
+    }
+
     #[test]
     fn test_json_generation() {
         let results = ScanResults {
@@ -163,17 +177,7 @@ mod tests {
             failed_scans: 0,
             total_duration_ms: 10,
             inconsistencies: Vec::new(),
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
         };
 
         let json = generate_multi_ip_json(&report, true).expect("test assertion should succeed");
@@ -236,17 +240,7 @@ mod tests {
                     ips_affected: vec![ip1, ip2],
                     details: InconsistencyDetails::Certificates { fingerprints },
                 }],
-                aggregated: AggregatedScanResult {
-                    protocols: Vec::new(),
-                    ciphers: HashMap::new(),
-                    grade: ("F".to_string(), 0),
-                    certificate_info: None,
-                    certificate_consistent: true,
-                    inconsistencies: Vec::new(),
-                    alpn_protocols: Vec::new(),
-                    session_resumption_caching: Some(false),
-                    session_resumption_tickets: Some(false),
-                },
+                aggregated: empty_aggregated_result(),
             }
         };
 
@@ -298,17 +292,7 @@ mod tests {
                     ips_affected: vec![ip1, ip2],
                     details: InconsistencyDetails::Certificates { fingerprints },
                 }],
-                aggregated: AggregatedScanResult {
-                    protocols: Vec::new(),
-                    ciphers: HashMap::new(),
-                    grade: ("F".to_string(), 0),
-                    certificate_info: None,
-                    certificate_consistent: true,
-                    inconsistencies: Vec::new(),
-                    alpn_protocols: Vec::new(),
-                    session_resumption_caching: Some(false),
-                    session_resumption_tickets: Some(false),
-                },
+                aggregated: empty_aggregated_result(),
             }
         };
 
@@ -394,17 +378,7 @@ mod tests {
                     ips_affected: vec![ip1, ip2],
                     details: InconsistencyDetails::Certificates { fingerprints },
                 }],
-                aggregated: AggregatedScanResult {
-                    protocols: Vec::new(),
-                    ciphers: HashMap::new(),
-                    grade: ("F".to_string(), 0),
-                    certificate_info: None,
-                    certificate_consistent: true,
-                    inconsistencies: Vec::new(),
-                    alpn_protocols: Vec::new(),
-                    session_resumption_caching: Some(false),
-                    session_resumption_tickets: Some(false),
-                },
+                aggregated: empty_aggregated_result(),
             }
         };
 
@@ -430,17 +404,7 @@ mod tests {
             failed_scans: 1,
             total_duration_ms: 1,
             inconsistencies: Vec::new(),
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
         };
 
         let json = generate_multi_ip_json(&report, false).expect("test assertion should succeed");
@@ -464,17 +428,7 @@ mod tests {
             failed_scans: 1,
             total_duration_ms: 1,
             inconsistencies: Vec::new(),
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
         };
 
         let path = temp_file_path(".multi.compact.json");
