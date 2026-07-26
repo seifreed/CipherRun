@@ -688,19 +688,26 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_rejects_protocols_not_array() {
-        let mut data = valid_scan_json();
-        data["protocols"] = json!("TLS12");
+    fn test_validation_rejects_wrong_result_group_shapes() {
+        for (field, value, expected) in [
+            ("protocols", json!("TLS12"), "protocols must be an array"),
+            (
+                "protocols",
+                json!(["TLS12"]),
+                "Protocol at index 0 must be an object",
+            ),
+            (
+                "vulnerabilities",
+                json!("Heartbleed"),
+                "vulnerabilities must be an array",
+            ),
+            ("ciphers", json!([]), "ciphers must be an object"),
+        ] {
+            let mut data = valid_scan_json();
+            data[field] = value;
 
-        assert_validation_error(data, "protocols must be an array");
-    }
-
-    #[test]
-    fn test_validation_rejects_protocol_item_not_object() {
-        let mut data = valid_scan_json();
-        data["protocols"] = json!(["TLS12"]);
-
-        assert_validation_error(data, "Protocol at index 0 must be an object");
+            assert_validation_error(data, expected);
+        }
     }
 
     #[test]
@@ -781,22 +788,6 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("Vulnerability at index 0 has invalid severity"))
         );
-    }
-
-    #[test]
-    fn test_validation_rejects_vulnerabilities_not_array() {
-        let mut data = valid_scan_json();
-        data["vulnerabilities"] = json!("Heartbleed");
-
-        assert_validation_error(data, "vulnerabilities must be an array");
-    }
-
-    #[test]
-    fn test_validation_rejects_ciphers_not_object() {
-        let mut data = valid_scan_json();
-        data["ciphers"] = json!([]);
-
-        assert_validation_error(data, "ciphers must be an object");
     }
 
     #[test]
