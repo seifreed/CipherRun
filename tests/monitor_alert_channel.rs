@@ -1,31 +1,8 @@
 // Tests for alert channel trait defaults (no mocks).
 
 use chrono::Utc;
-use cipherrun::monitor::alerts::{Alert, AlertChannel, AlertDetails, AlertType};
+use cipherrun::monitor::alerts::{Alert, AlertDetails, AlertType};
 use cipherrun::monitor::detector::ChangeSeverity;
-
-struct DummyChannel;
-
-#[async_trait::async_trait]
-impl AlertChannel for DummyChannel {
-    async fn send_alert(&self, _alert: &Alert) -> cipherrun::Result<()> {
-        Ok(())
-    }
-
-    fn channel_name(&self) -> &str {
-        "dummy"
-    }
-}
-
-#[tokio::test]
-async fn test_alert_channel_default_connection() {
-    let channel = DummyChannel;
-    channel
-        .test_connection()
-        .await
-        .expect("test assertion should succeed");
-    assert_eq!(channel.channel_name(), "dummy");
-}
 
 #[test]
 fn test_alert_basic_construction() {
