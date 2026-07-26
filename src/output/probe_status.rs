@@ -52,9 +52,13 @@ impl ProbeStatus {
         } else {
             symbol.red()
         };
+        let prefix = match target {
+            Some(target) => format!("{} {}", symbol_colored, target.cyan()),
+            None => symbol_colored.to_string(),
+        };
 
         if self.success {
-            if is_warning {
+            let details = if is_warning {
                 let warning_msg = self
                     .error
                     .as_ref()
@@ -62,51 +66,24 @@ impl ProbeStatus {
                     .unwrap_or_else(|| "warning".to_string());
 
                 if let Some(time_ms) = self.connection_time_ms {
-                    if let Some(target) = target {
-                        format!(
-                            "{} {} (connected in {}ms, warning: {})",
-                            symbol_colored,
-                            target.cyan(),
-                            time_ms,
-                            warning_msg.yellow()
-                        )
-                    } else {
-                        format!(
-                            "{} (connected in {}ms, warning: {})",
-                            symbol_colored,
-                            time_ms,
-                            warning_msg.yellow()
-                        )
-                    }
+                    Some(format!(
+                        "connected in {}ms, warning: {}",
+                        time_ms,
+                        warning_msg.yellow()
+                    ))
                 } else {
-                    if let Some(target) = target {
-                        format!(
-                            "{} {} (warning: {})",
-                            symbol_colored,
-                            target.cyan(),
-                            warning_msg.yellow()
-                        )
-                    } else {
-                        format!("{} (warning: {})", symbol_colored, warning_msg.yellow())
-                    }
+                    Some(format!("warning: {}", warning_msg.yellow()))
                 }
             } else if let Some(time_ms) = self.connection_time_ms {
-                if let Some(target) = target {
-                    format!(
-                        "{} {} (connected in {}ms)",
-                        symbol_colored,
-                        target.cyan(),
-                        time_ms
-                    )
-                } else {
-                    format!("{} (connected in {}ms)", symbol_colored, time_ms)
-                }
+                Some(format!("connected in {}ms", time_ms))
             } else {
-                if let Some(target) = target {
-                    format!("{} {}", symbol_colored, target.cyan())
-                } else {
-                    format!("{}", symbol_colored)
-                }
+                None
+            };
+
+            if let Some(details) = details {
+                format!("{} ({})", prefix, details)
+            } else {
+                prefix
             }
         } else {
             let error_msg = self
@@ -115,11 +92,7 @@ impl ProbeStatus {
                 .map(|e| simplify_error(e))
                 .unwrap_or_else(|| "unknown error".to_string());
 
-            if let Some(target) = target {
-                format!("{} {} ({})", symbol_colored, target.cyan(), error_msg.red())
-            } else {
-                format!("{} ({})", symbol_colored, error_msg.red())
-            }
+            format!("{} ({})", prefix, error_msg.red())
         }
     }
 }
