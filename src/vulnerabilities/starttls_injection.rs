@@ -233,6 +233,33 @@ mod tests {
         StarttlsInjectionTester::new(loopback_target(port))
     }
 
+    async fn assert_smtp_injection(responses: Vec<&'static [u8]>, expected: bool) {
+        let port = start_scripted_server(b"220 smtp.example\r\n", responses).await;
+        let vulnerable = loopback_tester(port)
+            .test_smtp_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(vulnerable, expected);
+    }
+
+    async fn assert_imap_injection(responses: Vec<&'static [u8]>, expected: bool) {
+        let port = start_scripted_server(b"* OK IMAP4rev1\r\n", responses).await;
+        let vulnerable = loopback_tester(port)
+            .test_imap_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(vulnerable, expected);
+    }
+
+    async fn assert_pop3_injection(responses: Vec<&'static [u8]>, expected: bool) {
+        let port = start_scripted_server(b"+OK POP3 server\r\n", responses).await;
+        let vulnerable = loopback_tester(port)
+            .test_pop3_injection()
+            .await
+            .expect("test assertion should succeed");
+        assert_eq!(vulnerable, expected);
+    }
+
     async fn inactive_loopback_port() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -242,22 +269,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_injection_vulnerable() {
-        let port = start_scripted_server(
-            b"220 smtp.example\r\n",
+        assert_smtp_injection(
             vec![
                 b"250-smtp.example\r\n250 STARTTLS\r\n",
                 b"220 Ready to start TLS\r\n250 OK\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_smtp_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
@@ -363,156 +382,92 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_injection_not_vulnerable() {
-        let port = start_scripted_server(
-            b"220 smtp.example\r\n",
+        assert_smtp_injection(
             vec![b"250-smtp.example\r\n250 STARTTLS\r\n", b"220 Ready\r\n"],
+            false,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_smtp_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(!vulnerable);
     }
 
     #[tokio::test]
     async fn test_imap_injection_vulnerable() {
-        let port = start_scripted_server(
-            b"* OK IMAP4rev1\r\n",
+        assert_imap_injection(
             vec![
                 b"* CAPABILITY IMAP4rev1 STARTTLS\r\na001 OK\r\n",
                 b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_imap_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
     async fn test_imap_starttls_capability_is_case_insensitive() {
-        let port = start_scripted_server(
-            b"* OK IMAP4rev1\r\n",
+        assert_imap_injection(
             vec![
                 b"* CAPABILITY IMAP4rev1 starttls\r\na001 OK\r\n",
                 b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_imap_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
     async fn test_pop3_injection_vulnerable() {
-        let port = start_scripted_server(
-            b"+OK POP3 server\r\n",
+        assert_pop3_injection(
             vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK STLS\r\n+OK USER\r\n"],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_pop3_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
     async fn test_pop3_injection_vulnerable_when_stls_response_omits_stls_token() {
-        let port = start_scripted_server(
-            b"+OK POP3 server\r\n",
+        assert_pop3_injection(
             vec![
                 b"+OK CAPA\r\nSTLS\r\n.\r\n",
                 b"+OK Begin TLS negotiation now\r\n+OK user accepted\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_pop3_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
     async fn test_pop3_injection_vulnerable_when_user_response_omits_keyword() {
-        let port = start_scripted_server(
-            b"+OK POP3 server\r\n",
+        assert_pop3_injection(
             vec![
                 b"+OK CAPA\r\nSTLS\r\n.\r\n",
                 b"+OK Begin TLS negotiation now\r\n+OK name is a valid mailbox\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_pop3_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
     async fn test_pop3_injection_ignores_user_substrings() {
-        let port = start_scripted_server(
-            b"+OK POP3 server\r\n",
+        assert_pop3_injection(
             vec![
                 b"+OK CAPA\r\nSTLS\r\n.\r\n",
                 b"+OK Begin TLS negotiation now\r\n-ERR superuser mode disabled\r\n",
             ],
+            false,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_pop3_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(!vulnerable);
     }
 
     #[tokio::test]
     async fn test_pop3_stls_capability_is_case_insensitive() {
-        let port = start_scripted_server(
-            b"+OK POP3 server\r\n",
+        assert_pop3_injection(
             vec![
                 b"+OK CAPA\r\nstls\r\n.\r\n",
                 b"+OK stls\r\n+OK user accepted\r\n",
             ],
+            true,
         )
         .await;
-
-        let tester = loopback_tester(port);
-
-        let vulnerable = tester
-            .test_pop3_injection()
-            .await
-            .expect("test assertion should succeed");
-        assert!(vulnerable);
     }
 
     #[tokio::test]
