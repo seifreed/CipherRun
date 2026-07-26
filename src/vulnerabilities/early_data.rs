@@ -656,21 +656,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_early_data_result() {
-        let result = EarlyDataTestResult {
-            vulnerable: false,
-            supports_early_data: true,
-            accepts_replayed_data: false,
-            max_early_data_size: Some(16384),
-            issues: vec![],
-            details: "Test".to_string(),
-            inconclusive: false,
-        };
-        assert!(!result.vulnerable);
-        assert!(result.supports_early_data);
-    }
-
     #[tokio::test]
     async fn test_early_data_inactive_target_is_inconclusive() {
         crate::utils::insecure_tls::ensure_ring_provider();
@@ -762,34 +747,6 @@ mod tests {
             .expect("test assertion should succeed");
         assert!(!info.tls13_supported);
         assert!(info.max_early_data_size.is_none());
-    }
-
-    #[test]
-    fn test_early_data_result_details() {
-        let result = EarlyDataTestResult {
-            supports_early_data: false,
-            vulnerable: false,
-            accepts_replayed_data: false,
-            max_early_data_size: None,
-            issues: vec![],
-            details: "Not supported".to_string(),
-            inconclusive: false,
-        };
-        assert!(result.details.contains("Not supported"));
-    }
-
-    #[test]
-    fn test_early_data_result_issues_length() {
-        let result = EarlyDataTestResult {
-            supports_early_data: true,
-            vulnerable: false,
-            accepts_replayed_data: false,
-            max_early_data_size: Some(1024),
-            issues: vec!["Issue one".to_string(), "Issue two".to_string()],
-            details: "Details".to_string(),
-            inconclusive: false,
-        };
-        assert_eq!(result.issues.len(), 2);
     }
 
     #[tokio::test]
