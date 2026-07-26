@@ -508,28 +508,25 @@ mod tests {
         builder.build().to_der().unwrap()
     }
 
-    #[test]
-    fn test_starttls_hostname_prefers_override() {
-        let target = Target::with_ips(
+    fn example_target() -> Target {
+        Target::with_ips(
             "example.com".to_string(),
             443,
             vec!["127.0.0.1".parse().unwrap()],
         )
-        .unwrap();
-        let parser = CertificateParser::new(target)
+        .unwrap()
+    }
+
+    #[test]
+    fn test_starttls_hostname_prefers_override() {
+        let parser = CertificateParser::new(example_target())
             .with_starttls_hostname(Some("xmpp.example.com".to_string()));
         assert_eq!(parser.starttls_hostname(), "xmpp.example.com");
     }
 
     #[test]
     fn test_starttls_hostname_falls_back_to_target() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let parser = CertificateParser::new(target);
+        let parser = CertificateParser::new(example_target());
         assert_eq!(parser.starttls_hostname(), "example.com");
     }
 
