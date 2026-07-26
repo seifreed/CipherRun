@@ -750,77 +750,45 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_certificate_rejects_malformed_basic_constraints() {
-        let der = cert_with_raw_extension_der("2.5.29.19", b"\x05\x00");
-        let error = CertificateParser::parse_certificate(&der)
-            .expect_err("malformed basic constraints should fail");
+    fn test_parse_certificate_rejects_malformed_extensions() {
+        for (oid, contents, expected) in [
+            (
+                "2.5.29.19",
+                b"\x05\x00".as_slice(),
+                "Invalid basic constraints extension",
+            ),
+            (
+                "2.5.29.17",
+                b"\x05\x00".as_slice(),
+                "Invalid subject alternative name extension",
+            ),
+            (
+                "2.5.29.17",
+                b"\x30\x07\x87\x05\x01\x02\x03\x04\x05".as_slice(),
+                "Invalid subject alternative name extension",
+            ),
+            (
+                "2.5.29.32",
+                b"\x05\x00".as_slice(),
+                "Invalid certificate policies extension",
+            ),
+            (
+                "1.3.6.1.5.5.7.1.1",
+                b"\x05\x00".as_slice(),
+                "Authority Information Access extension",
+            ),
+            (
+                "1.3.6.1.4.1.11129.2.4.2",
+                b"\x04\x82\x00".as_slice(),
+                "Malformed SCT extension",
+            ),
+        ] {
+            let der = cert_with_raw_extension_der(oid, contents);
+            let error = CertificateParser::parse_certificate(&der)
+                .expect_err("malformed extension should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid basic constraints extension")
-        );
-    }
-
-    #[test]
-    fn test_parse_certificate_rejects_malformed_subject_alt_name() {
-        let der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
-        let error =
-            CertificateParser::parse_certificate(&der).expect_err("malformed SAN should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid subject alternative name extension")
-        );
-    }
-
-    #[test]
-    fn test_parse_certificate_rejects_invalid_ip_san_length() {
-        let der = cert_with_raw_extension_der("2.5.29.17", b"\x30\x07\x87\x05\x01\x02\x03\x04\x05");
-        let error =
-            CertificateParser::parse_certificate(&der).expect_err("invalid IP SAN should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid subject alternative name extension")
-        );
-    }
-
-    #[test]
-    fn test_parse_certificate_rejects_malformed_certificate_policies() {
-        let der = cert_with_raw_extension_der("2.5.29.32", b"\x05\x00");
-        let error = CertificateParser::parse_certificate(&der)
-            .expect_err("malformed certificate policies should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid certificate policies extension")
-        );
-    }
-
-    #[test]
-    fn test_parse_certificate_rejects_malformed_aia() {
-        let der = cert_with_raw_extension_der("1.3.6.1.5.5.7.1.1", b"\x05\x00");
-        let error =
-            CertificateParser::parse_certificate(&der).expect_err("malformed AIA should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Authority Information Access extension")
-        );
-    }
-
-    #[test]
-    fn test_parse_certificate_rejects_malformed_sct_extension() {
-        let der = cert_with_raw_extension_der("1.3.6.1.4.1.11129.2.4.2", b"\x04\x82\x00");
-        let error = CertificateParser::parse_certificate(&der)
-            .expect_err("malformed SCT extension should fail");
-
-        assert!(error.to_string().contains("Malformed SCT extension"));
+            assert!(error.to_string().contains(expected));
+        }
     }
 
     #[test]
