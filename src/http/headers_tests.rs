@@ -1,24 +1,25 @@
 use super::*;
 
+fn headers(entries: &[(&str, &str)]) -> HashMap<String, String> {
+    entries
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect()
+}
+
 #[test]
 fn test_missing_hsts() {
     let headers = HashMap::new();
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
 
-    assert!(
-        issues
-            .iter()
-            .any(|i| i.header_name == "Strict-Transport-Security")
-    );
+    assert!(issues
+        .iter()
+        .any(|i| i.header_name == "Strict-Transport-Security"));
 }
 
 #[test]
 fn test_weak_hsts() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=3600".to_string(),
-    );
+    let headers = headers(&[("Strict-Transport-Security", "max-age=3600")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     let hsts_issues: Vec<_> = issues
@@ -26,20 +27,17 @@ fn test_weak_hsts() {
         .filter(|i| i.header_name == "Strict-Transport-Security")
         .collect();
 
-    assert!(
-        hsts_issues
-            .iter()
-            .any(|i| matches!(i.issue_type, IssueType::Weak))
-    );
+    assert!(hsts_issues
+        .iter()
+        .any(|i| matches!(i.issue_type, IssueType::Weak)));
 }
 
 #[test]
 fn test_unsafe_csp() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Content-Security-Policy".to_string(),
-        "default-src 'self' 'unsafe-inline'".to_string(),
-    );
+    let headers = headers(&[(
+        "Content-Security-Policy",
+        "default-src 'self' 'unsafe-inline'",
+    )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     let csp_issues: Vec<_> = issues
@@ -47,11 +45,9 @@ fn test_unsafe_csp() {
         .filter(|i| i.header_name == "Content-Security-Policy")
         .collect();
 
-    assert!(
-        csp_issues
-            .iter()
-            .any(|i| matches!(i.issue_type, IssueType::Insecure))
-    );
+    assert!(csp_issues
+        .iter()
+        .any(|i| matches!(i.issue_type, IssueType::Insecure)));
 }
 
 #[test]
@@ -70,11 +66,7 @@ fn test_extract_directive_missing() {
 
 #[test]
 fn test_csp_missing_directives() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Content-Security-Policy".to_string(),
-        "img-src 'self'".to_string(),
-    );
+    let headers = headers(&[("Content-Security-Policy", "img-src 'self'")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -84,8 +76,7 @@ fn test_csp_missing_directives() {
 
 #[test]
 fn test_invalid_x_frame_options() {
-    let mut headers = HashMap::new();
-    headers.insert("X-Frame-Options".to_string(), "ALLOWALL".to_string());
+    let headers = headers(&[("X-Frame-Options", "ALLOWALL")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -95,11 +86,7 @@ fn test_invalid_x_frame_options() {
 
 #[test]
 fn test_x_frame_options_allow_from_is_invalid() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "X-Frame-Options".to_string(),
-        "ALLOW-FROM https://example.com".to_string(),
-    );
+    let headers = headers(&[("X-Frame-Options", "ALLOW-FROM https://example.com")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -109,8 +96,7 @@ fn test_x_frame_options_allow_from_is_invalid() {
 
 #[test]
 fn test_x_content_type_options_invalid() {
-    let mut headers = HashMap::new();
-    headers.insert("X-Content-Type-Options".to_string(), "sniff".to_string());
+    let headers = headers(&[("X-Content-Type-Options", "sniff")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -122,8 +108,7 @@ fn test_x_content_type_options_invalid() {
 fn test_x_xss_protection_zero_is_not_flagged_insecure() {
     // X-XSS-Protection: 0 is the OWASP-recommended value (disable the removed,
     // XS-Leak-prone legacy auditor and rely on CSP); it must not be flagged.
-    let mut headers = HashMap::new();
-    headers.insert("X-XSS-Protection".to_string(), "0".to_string());
+    let headers = headers(&[("X-XSS-Protection", "0")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(!issues.iter().any(|i| {
@@ -135,8 +120,7 @@ fn test_x_xss_protection_zero_is_not_flagged_insecure() {
 fn test_x_xss_protection_enabling_value_is_flagged() {
     // Enabling the legacy auditor (1; mode=block) is the weak setting under
     // current guidance.
-    let mut headers = HashMap::new();
-    headers.insert("X-XSS-Protection".to_string(), "1; mode=block".to_string());
+    let headers = headers(&[("X-XSS-Protection", "1; mode=block")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -146,8 +130,7 @@ fn test_x_xss_protection_enabling_value_is_flagged() {
 
 #[test]
 fn test_x_xss_protection_zero_with_options_is_flagged() {
-    let mut headers = HashMap::new();
-    headers.insert("X-XSS-Protection".to_string(), "0; mode=block".to_string());
+    let headers = headers(&[("X-XSS-Protection", "0; mode=block")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -157,8 +140,7 @@ fn test_x_xss_protection_zero_with_options_is_flagged() {
 
 #[test]
 fn test_referrer_policy_weak() {
-    let mut headers = HashMap::new();
-    headers.insert("Referrer-Policy".to_string(), "unsafe-url".to_string());
+    let headers = headers(&[("Referrer-Policy", "unsafe-url")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -177,9 +159,7 @@ fn test_permissions_policy_missing() {
 
 #[test]
 fn test_expect_ct_and_expect_staple_deprecated() {
-    let mut headers = HashMap::new();
-    headers.insert("Expect-CT".to_string(), "max-age=0".to_string());
-    headers.insert("Expect-Staple".to_string(), "max-age=0".to_string());
+    let headers = headers(&[("Expect-CT", "max-age=0"), ("Expect-Staple", "max-age=0")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -192,12 +172,10 @@ fn test_expect_ct_and_expect_staple_deprecated() {
 
 #[test]
 fn test_cors_wildcard_with_credentials() {
-    let mut headers = HashMap::new();
-    headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
-    headers.insert(
-        "Access-Control-Allow-Credentials".to_string(),
-        "true".to_string(),
-    );
+    let headers = headers(&[
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Credentials", "true"),
+    ]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -208,8 +186,7 @@ fn test_cors_wildcard_with_credentials() {
 
 #[test]
 fn test_find_header_case_insensitive() {
-    let mut headers = HashMap::new();
-    headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
+    let headers = headers(&[("x-content-type-options", "nosniff")]);
 
     let found =
         SecurityHeaderChecker::find_header_case_insensitive(&headers, "X-Content-Type-Options");
@@ -233,11 +210,10 @@ fn test_extract_directive_strips_quotes() {
 #[test]
 fn test_hsts_quoted_max_age_is_not_invalid() {
     // A spec-valid quoted max-age must not be reported as invalid.
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=\"31536000\"; includeSubDomains; preload".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "max-age=\"31536000\"; includeSubDomains; preload",
+    )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(!issues.iter().any(|i| {
@@ -249,11 +225,7 @@ fn test_hsts_quoted_max_age_is_not_invalid() {
 fn test_hsts_max_age_zero_is_high_severity_disabled() {
     // max-age=0 disables HSTS (RFC 6797 §6.1.1) and must be flagged as serious,
     // not as a merely-weak short max-age.
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=0".to_string(),
-    );
+    let headers = headers(&[("Strict-Transport-Security", "max-age=0")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -265,11 +237,7 @@ fn test_hsts_max_age_zero_is_high_severity_disabled() {
 
 #[test]
 fn test_hsts_invalid_max_age() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=abc".to_string(),
-    );
+    let headers = headers(&[("Strict-Transport-Security", "max-age=abc")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -279,11 +247,7 @@ fn test_hsts_invalid_max_age() {
 
 #[test]
 fn test_hsts_missing_max_age() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "includeSubDomains".to_string(),
-    );
+    let headers = headers(&[("Strict-Transport-Security", "includeSubDomains")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -293,11 +257,7 @@ fn test_hsts_missing_max_age() {
 
 #[test]
 fn test_hsts_missing_include_subdomains() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=31536000".to_string(),
-    );
+    let headers = headers(&[("Strict-Transport-Security", "max-age=31536000")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -309,11 +269,10 @@ fn test_hsts_missing_include_subdomains() {
 
 #[test]
 fn test_hsts_missing_preload() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=31536000; includeSubDomains".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+    )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -327,11 +286,10 @@ fn test_hsts_missing_preload() {
 fn test_hsts_preload_missing_only_from_safari_is_reported() {
     use crate::http::hsts_preload::{PreloadSource, PreloadStatus};
 
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=31536000; includeSubDomains; preload".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains; preload",
+    )]);
 
     // Present in Chrome/Firefox/Edge, absent only from Safari: must still produce
     // a preload-list issue naming Safari (the trigger used to ignore Safari).
@@ -358,11 +316,10 @@ fn test_hsts_preload_missing_only_from_safari_is_reported() {
 fn test_hsts_preload_check_error_is_reported() {
     use crate::http::hsts_preload::{PreloadSource, PreloadStatus};
 
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=31536000; includeSubDomains; preload".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains; preload",
+    )]);
 
     let status = PreloadStatus {
         in_chrome: false,
@@ -387,11 +344,10 @@ fn test_hsts_preload_check_error_is_reported() {
 
 #[test]
 fn test_hsts_directives_match_exact_tokens() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "max-age=31536000; includeSubDomains=false; preload=false".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains=false; preload=false",
+    )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     let hsts_issues: Vec<_> = issues
@@ -410,24 +366,20 @@ fn test_hsts_directives_match_exact_tokens() {
 
 #[test]
 fn test_hsts_directives_are_case_insensitive() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Strict-Transport-Security".to_string(),
-        "Max-Age=31536000; IncludeSubDomains; Preload".to_string(),
-    );
+    let headers = headers(&[(
+        "Strict-Transport-Security",
+        "Max-Age=31536000; IncludeSubDomains; Preload",
+    )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
-    assert!(
-        !issues
-            .iter()
-            .any(|issue| issue.header_name == "Strict-Transport-Security")
-    );
+    assert!(!issues
+        .iter()
+        .any(|issue| issue.header_name == "Strict-Transport-Security"));
 }
 
 #[test]
 fn test_cors_wildcard_without_credentials_is_weak() {
-    let mut headers = HashMap::new();
-    headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+    let headers = headers(&[("Access-Control-Allow-Origin", "*")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|i| {
@@ -437,12 +389,10 @@ fn test_cors_wildcard_without_credentials_is_weak() {
 
 #[test]
 fn test_cors_wildcard_with_credentials_trims_values() {
-    let mut headers = HashMap::new();
-    headers.insert("Access-Control-Allow-Origin".to_string(), " * ".to_string());
-    headers.insert(
-        "Access-Control-Allow-Credentials".to_string(),
-        " TRUE ".to_string(),
-    );
+    let headers = headers(&[
+        ("Access-Control-Allow-Origin", " * "),
+        ("Access-Control-Allow-Credentials", " TRUE "),
+    ]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(issues.iter().any(|issue| {
@@ -453,11 +403,7 @@ fn test_cors_wildcard_with_credentials_trims_values() {
 
 #[test]
 fn test_csp_directive_names_are_case_insensitive() {
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Content-Security-Policy".to_string(),
-        "Default-Src 'self'".to_string(),
-    );
+    let headers = headers(&[("Content-Security-Policy", "Default-Src 'self'")]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
     assert!(!issues.iter().any(|issue| {
