@@ -170,32 +170,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_unknown_compliance_format() {
-        let args = ComplianceArgs {
-            format: "yaml".to_string(),
-            ..Default::default()
-        };
-
-        assert!(args.validate().is_err());
-    }
-
-    #[test]
-    fn test_validate_rejects_unknown_policy_format() {
-        let args = ComplianceArgs {
-            policy_format: "xml".to_string(),
-            ..Default::default()
-        };
-
-        assert!(args.validate().is_err());
-    }
-
-    #[test]
-    fn test_validate_rejects_unknown_severity() {
-        let args = ComplianceArgs {
-            severity: Some("info".to_string()),
-            ..Default::default()
-        };
-
-        assert!(args.validate().is_err());
+    fn test_validate_rejects_unknown_values() {
+        for args in [
+            ComplianceArgs {
+                format: "yaml".to_string(),
+                ..Default::default()
+            },
+            ComplianceArgs {
+                policy_format: "xml".to_string(),
+                ..Default::default()
+            },
+            ComplianceArgs {
+                severity: Some("info".to_string()),
+                ..Default::default()
+            },
+        ] {
+            assert!(args.validate().is_err());
+        }
     }
 }
