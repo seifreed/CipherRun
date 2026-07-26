@@ -9,6 +9,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
 
+mod pop3_probe;
 mod response_analysis;
 mod result_analysis;
 
@@ -229,93 +230,7 @@ impl StarttlsInjectionTester {
             return Ok(StarttlsInjectionStatus::Inconclusive);
         };
 
-        self.test_command_injection_pop3(stream).await
-    }
-
-    /// Test command injection in POP3 STARTTLS
-    async fn test_command_injection_pop3(
-        &self,
-        mut stream: TcpStream,
-    ) -> Result<StarttlsInjectionStatus> {
-        // Read server greeting
-        let mut reader = BufReader::new(&mut stream);
-        let response = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-        {
-            Ok(Ok(line)) if !line.is_empty() => line,
-            _ => return Ok(StarttlsInjectionStatus::Inconclusive),
-        };
-
-        if !response.starts_with("+OK") {
-            return Ok(StarttlsInjectionStatus::NotVulnerable);
-        }
-
-        // Check STLS support
-        reader.get_mut().write_all(b"CAPA\r\n").await?;
-        let mut response = String::new();
-        for _ in 0..8 {
-            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-            {
-                Ok(Ok(line)) if !line.is_empty() => line,
-                Ok(Err(_)) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Ok(Err(_)) => break,
-                Err(_) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Err(_) => break,
-                _ => break,
-            };
-            response.push_str(&line);
-            if line.trim() == "." {
-                break;
-            }
-        }
-
-        if !response_analysis::has_ascii_token(&response, "STLS") {
-            return Ok(StarttlsInjectionStatus::NotVulnerable);
-        }
-
-        // Attempt injection: STLS followed by USER command
-        let injection_payload = b"STLS\r\nUSER injection\r\n";
-        reader.get_mut().write_all(injection_payload).await?;
-
-        let mut response = String::new();
-        for _ in 0..4 {
-            let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await
-            {
-                Ok(Ok(line)) if !line.is_empty() => line,
-                Ok(Err(_)) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Ok(Err(_)) => break,
-                Err(_) if response.is_empty() => {
-                    return Ok(StarttlsInjectionStatus::Inconclusive);
-                }
-                Err(_) => break,
-                _ => break,
-            };
-            response.push_str(&line);
-        }
-
-        // Vulnerable if USER command is processed before TLS.
-        // A vulnerable server will respond to both STLS and the injected USER
-        // command with plaintext +OK responses.
-        // An invulnerable server will either:
-        // 1. Ignore the injection (only response to STLS)
-        // 2. Return an error about the unexpected command
-        // 3. Close the connection
-
-        // Count positive POP3 responses in the plaintext stream.
-        if response_analysis::has_multiple_pop3_ok_lines(&response) {
-            return Ok(StarttlsInjectionStatus::Vulnerable);
-        }
-
-        // With only one +OK and no clear evidence of command processing,
-        // we cannot confirm vulnerability. The server may have silently
-        // ignored the injection or closed the connection.
-        // Default to not vulnerable to avoid false positives.
-        Ok(StarttlsInjectionStatus::NotVulnerable)
+        pop3_probe::test_command_injection(stream).await
     }
 
     /// Test all STARTTLS injection vectors
