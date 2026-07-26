@@ -307,22 +307,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_new_session_ticket_inside_combined_record() {
+    fn test_new_session_ticket_inside_combined_record() {
         let response = handshake_record(&[
             handshake_message(0x0b, &[]),
             new_session_ticket_message(b"ticket"),
         ]);
 
         assert!(session_ticket::is_present(&response).unwrap());
-    }
-
-    #[test]
-    fn test_extract_session_ticket_inside_combined_record() {
-        let response = handshake_record(&[
-            handshake_message(0x0b, &[]),
-            new_session_ticket_message(b"ticket"),
-        ]);
-
         assert_eq!(
             session_ticket::extract(&response).unwrap().as_deref(),
             Some(&b"ticket"[..])
@@ -353,8 +344,7 @@ mod tests {
         handshake_message(0x04, &body)
     }
 
-    /// Build a ServerHello TLS record echoing `session_id`.
-    fn server_hello_record_with_session_id(session_id: &[u8]) -> Vec<u8> {
+    fn server_hello_message_with_session_id(session_id: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(&[0x03, 0x03]); // version TLS 1.2
         body.extend_from_slice(&[0u8; 32]); // random
@@ -362,6 +352,12 @@ mod tests {
         body.extend_from_slice(session_id);
         body.extend_from_slice(&[0xc0, 0x2f]); // cipher suite
         body.push(0x00); // compression method
+        body
+    }
+
+    /// Build a ServerHello TLS record echoing `session_id`.
+    fn server_hello_record_with_session_id(session_id: &[u8]) -> Vec<u8> {
+        let body = server_hello_message_with_session_id(session_id);
         handshake_record(&[handshake_message(0x02, &body)])
     }
 
@@ -380,16 +376,9 @@ mod tests {
         let mut session_id = client_hello::SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
 
-        let mut server_hello = Vec::new();
-        server_hello.extend_from_slice(&[0x03, 0x03]);
-        server_hello.extend_from_slice(&[0u8; 32]);
-        server_hello.push(session_id.len() as u8);
-        server_hello.extend_from_slice(&session_id);
-        server_hello.extend_from_slice(&[0xc0, 0x2f, 0x00]);
-
         let response = handshake_record(&[
             handshake_message(0x0b, &[]),
-            handshake_message(0x02, &server_hello),
+            handshake_message(0x02, &server_hello_message_with_session_id(&session_id)),
         ]);
 
         assert!(server_hello::detect_memory_leak(&response).unwrap());
