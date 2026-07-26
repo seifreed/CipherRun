@@ -69,6 +69,24 @@ mod tests {
         }
     }
 
+    fn single_ip_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .expect("test assertion should succeed")
+    }
+
+    fn two_ip_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
+        )
+        .expect("test assertion should succeed")
+    }
+
     #[test]
     fn test_json_generation() {
         let results = ScanResults {
@@ -150,12 +168,7 @@ mod tests {
 
     #[test]
     fn test_multi_ip_json_generation_and_write() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
+        let target = single_ip_target();
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let mut per_ip_results = HashMap::new();
@@ -193,12 +206,7 @@ mod tests {
     #[test]
     fn test_multi_ip_json_is_stable_for_map_insertion_order() {
         let report_a = {
-            let target = Target::with_ips(
-                "example.com".to_string(),
-                443,
-                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
-            )
-            .expect("test assertion should succeed");
+            let target = two_ip_target();
 
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
@@ -245,12 +253,7 @@ mod tests {
         };
 
         let report_b = {
-            let target = Target::with_ips(
-                "example.com".to_string(),
-                443,
-                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
-            )
-            .expect("test assertion should succeed");
+            let target = two_ip_target();
 
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
@@ -305,12 +308,7 @@ mod tests {
     #[test]
     fn test_multi_ip_json_is_stable_for_displayed_inconsistencies() {
         let build_report = |reverse: bool| {
-            let target = Target::with_ips(
-                "example.com".to_string(),
-                443,
-                vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
-            )
-            .expect("test assertion should succeed");
+            let target = two_ip_target();
 
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
@@ -389,12 +387,7 @@ mod tests {
 
     #[test]
     fn test_multi_ip_json_compact_has_no_newlines() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
+        let target = single_ip_target();
 
         let report = MultiIpScanReport {
             target,
@@ -413,12 +406,7 @@ mod tests {
 
     #[test]
     fn test_write_multi_ip_json_compact_file_has_no_newlines() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
+        let target = single_ip_target();
 
         let report = MultiIpScanReport {
             target,
