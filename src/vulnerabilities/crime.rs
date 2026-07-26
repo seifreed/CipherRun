@@ -218,6 +218,39 @@ mod tests {
         .unwrap()
     }
 
+    fn server_hello(compression: u8) -> Vec<u8> {
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
+        ];
+        response.extend_from_slice(&[0xAA; 32]);
+        response.push(0x00);
+        response.extend_from_slice(&[0x00, 0x9c]);
+        response.push(compression);
+        response.extend_from_slice(&[0x00, 0x00]);
+        response
+    }
+
+    fn finish_server_hello(response: &mut Vec<u8>) {
+        let rec_len = (response.len() - 5) as u16;
+        write_u16_at(response, 3, rec_len);
+        let hs_len = response.len() - 9;
+        write_u24_at(response, 6, hs_len);
+    }
+
+    async fn spawn_tls_response_server(response: Vec<u8>) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket.write_all(&response).await.unwrap();
+        });
+
+        (port, server)
+    }
+
     #[test]
     fn test_crime_probe_addrs_honors_all_ips() {
         let target = Target::with_ips(
@@ -372,32 +405,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_spdy_probe_rejects_truncated_npn_extension() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let mut response = server_hello(0x00);
+        let ext_len_pos = response.len() - 2;
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext header
+        response.push(0x01); // truncated protocol list
+        write_u16_at(&mut response, ext_len_pos, 6); // claims 6 bytes of extensions
+        finish_server_hello(&mut response);
 
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let _ = socket.read(&mut buf).await.unwrap();
-
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0xAA; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x06]); // claims 6 bytes of extensions
-            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x02]); // NPN ext header
-            response.push(0x01); // truncated protocol list
-
-            let rec_len = (response.len() - 5) as u16;
-            write_u16_at(&mut response, 3, rec_len);
-            let hs_len = response.len() - 9;
-            write_u24_at(&mut response, 6, hs_len);
-
-            socket.write_all(&response).await.unwrap();
-        });
+        let (port, server) = spawn_tls_response_server(response).await;
 
         let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
@@ -413,37 +428,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_spdy_probe_rejects_trailing_extension_after_spdy() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let mut response = server_hello(0x00);
+        let ext_len_pos = response.len() - 2;
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
+        response.push(0x06);
+        response.extend_from_slice(b"spdy/3");
+        response.push(0xff); // trailing partial extension header
+        let ext_len = (response.len() - ext_len_pos - 2) as u16;
+        write_u16_at(&mut response, ext_len_pos, ext_len);
+        finish_server_hello(&mut response);
 
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let _ = socket.read(&mut buf).await.unwrap();
-
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0xAA; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x00]);
-            let ext_len_pos = response.len() - 2;
-            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
-            response.push(0x06);
-            response.extend_from_slice(b"spdy/3");
-            response.push(0xff); // trailing partial extension header
-
-            let ext_len = (response.len() - ext_len_pos - 2) as u16;
-            write_u16_at(&mut response, ext_len_pos, ext_len);
-            let rec_len = (response.len() - 5) as u16;
-            write_u16_at(&mut response, 3, rec_len);
-            let hs_len = response.len() - 9;
-            write_u24_at(&mut response, 6, hs_len);
-
-            socket.write_all(&response).await.unwrap();
-        });
+        let (port, server) = spawn_tls_response_server(response).await;
 
         let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
@@ -459,38 +454,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_spdy_probe_detects_npn_in_combined_handshake_record() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let mut response = server_hello(0x00);
+        let ext_len_pos = response.len() - 2;
+        response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
+        response.push(0x06);
+        response.extend_from_slice(b"spdy/3");
+        let ext_len = (response.len() - ext_len_pos - 2) as u16;
+        write_u16_at(&mut response, ext_len_pos, ext_len);
+        let hs_len = response.len() - 9;
+        write_u24_at(&mut response, 6, hs_len);
+        response.extend_from_slice(&[0x0b, 0x00, 0x00, 0x00]);
+        let rec_len = (response.len() - 5) as u16;
+        write_u16_at(&mut response, 3, rec_len);
 
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let _ = socket.read(&mut buf).await.unwrap();
-
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0xAA; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x00]);
-            let ext_len_pos = response.len() - 2;
-            response.extend_from_slice(&[0x33, 0x74, 0x00, 0x07]);
-            response.push(0x06);
-            response.extend_from_slice(b"spdy/3");
-
-            let ext_len = (response.len() - ext_len_pos - 2) as u16;
-            write_u16_at(&mut response, ext_len_pos, ext_len);
-            let hs_len = response.len() - 9;
-            write_u24_at(&mut response, 6, hs_len);
-
-            response.extend_from_slice(&[0x0b, 0x00, 0x00, 0x00]);
-            let rec_len = (response.len() - 5) as u16;
-            write_u16_at(&mut response, 3, rec_len);
-
-            socket.write_all(&response).await.unwrap();
-        });
+        let (port, server) = spawn_tls_response_server(response).await;
 
         let target = localhost_target(port);
         let tester = CrimeTester::new(&target);
@@ -514,19 +491,8 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let _ = socket.read(&mut buf).await.unwrap();
 
-            let mut response = vec![
-                0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
-            ];
-            response.extend_from_slice(&[0xAA; 32]);
-            response.push(0x00);
-            response.extend_from_slice(&[0x00, 0x9c]);
-            response.push(0x01);
-            response.extend_from_slice(&[0x00, 0x00]);
-
-            let rec_len = (response.len() - 5) as u16;
-            write_u16_at(&mut response, 3, rec_len);
-            let hs_len = response.len() - 9;
-            write_u24_at(&mut response, 6, hs_len);
+            let mut response = server_hello(0x01);
+            finish_server_hello(&mut response);
 
             let split = response.len() / 2;
             let _ = socket.write_all(&response[..split]).await;
