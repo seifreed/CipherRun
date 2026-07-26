@@ -341,26 +341,7 @@ impl ExpandedInput {
 
     /// Calculate network size
     fn network_size(network: &IpNetwork) -> u64 {
-        match network {
-            IpNetwork::V4(v4) => {
-                let prefix = v4.prefix();
-                if prefix >= 32 {
-                    1
-                } else {
-                    2u64.pow(32 - prefix as u32)
-                }
-            }
-            IpNetwork::V6(v6) => {
-                let prefix = v6.prefix();
-                if prefix >= 128 {
-                    1
-                } else if prefix <= 64 {
-                    u64::MAX
-                } else {
-                    2u64.pow(128 - prefix as u32)
-                }
-            }
-        }
+        AsnCidrParser::calculate_ip_count(network)
     }
 }
 
