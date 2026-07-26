@@ -16,6 +16,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod result;
+
+pub use result::WinshockTestResult;
+
 /// Winshock vulnerability tester
 pub struct WinshockTester {
     target: Target,
@@ -84,14 +88,7 @@ impl WinshockTester {
     pub async fn test(&self) -> Result<WinshockTestResult> {
         let schannel_status = self.detect_schannel().await?;
         if schannel_status == SchannelDetectionStatus::Inconclusive {
-            return Ok(WinshockTestResult {
-                vulnerable: false,
-                schannel_detected: false,
-                inconclusive: true,
-                details:
-                    "Winshock test inconclusive - unable to connect to target to detect Schannel"
-                        .to_string(),
-            });
+            return Ok(WinshockTestResult::inconclusive_schannel_probe());
         }
 
         let malformed_status = if schannel_status == SchannelDetectionStatus::Detected {
@@ -100,39 +97,10 @@ impl WinshockTester {
             None
         };
 
-        Ok(Self::build_result(schannel_status, malformed_status))
-    }
-
-    fn build_result(
-        schannel_status: SchannelDetectionStatus,
-        malformed_status: Option<MalformedHandshakeStatus>,
-    ) -> WinshockTestResult {
-        let schannel_detected = schannel_status == SchannelDetectionStatus::Detected;
-
-        match (schannel_status, malformed_status) {
-            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Handled)) => {
-                WinshockTestResult {
-                    vulnerable: false,
-                    schannel_detected: true,
-                    inconclusive: false,
-                    details: "Schannel detected but Winshock test passed - Likely patched or protected".to_string(),
-                }
-            }
-            (SchannelDetectionStatus::Detected, Some(MalformedHandshakeStatus::Inconclusive)) => {
-                WinshockTestResult {
-                    vulnerable: false,
-                    schannel_detected: true,
-                    inconclusive: true,
-                    details: "Winshock test inconclusive - Schannel was detected, but malformed handshake probe did not produce conclusive evidence".to_string(),
-                }
-            }
-            _ => WinshockTestResult {
-                vulnerable: false,
-                schannel_detected,
-                inconclusive: false,
-                details: "Not vulnerable - Schannel not detected".to_string(),
-            },
-        }
+        Ok(WinshockTestResult::from_probe_status(
+            schannel_status,
+            malformed_status,
+        ))
     }
 
     /// Detect if server is using Microsoft Schannel
@@ -358,15 +326,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
     (hostname, sni_hostname.is_some())
 }
 
-/// Winshock test result
-#[derive(Debug, Clone)]
-pub struct WinshockTestResult {
-    pub vulnerable: bool,
-    pub schannel_detected: bool,
-    pub inconclusive: bool,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_winshock_schannel_probe_failure_is_inconclusive() {
-        let result = WinshockTester::build_result(
+        let result = WinshockTestResult::from_probe_status(
             SchannelDetectionStatus::Detected,
             Some(MalformedHandshakeStatus::Inconclusive),
         );
