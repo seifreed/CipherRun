@@ -12,6 +12,10 @@ use crate::Result;
 use crate::protocols::Protocol;
 use crate::utils::network::Target;
 
+mod result;
+
+pub use result::Sweet32TestResult;
+
 /// Sweet32 vulnerability tester
 pub struct Sweet32Tester {
     target: Target,
@@ -87,27 +91,10 @@ impl Sweet32Tester {
     pub async fn test(&self) -> Result<Sweet32TestResult> {
         let (des3_ciphers, des3_inconclusive) = self.test_3des_ciphers().await?;
 
-        let vulnerable = !des3_ciphers.is_empty();
-        let inconclusive = !vulnerable && des3_inconclusive;
-
-        let details = if vulnerable {
-            format!(
-                "Vulnerable to Sweet32 (CVE-2016-2183): {} 3DES cipher(s) supported: {}",
-                des3_ciphers.len(),
-                des3_ciphers.join(", ")
-            )
-        } else if inconclusive {
-            "SWEET32 test inconclusive - unable to determine 3DES cipher support".to_string()
-        } else {
-            "Not vulnerable - No 3DES (64-bit block) ciphers supported".to_string()
-        };
-
-        Ok(Sweet32TestResult {
-            vulnerable,
-            inconclusive,
+        Ok(Sweet32TestResult::from_des3_probe(
             des3_ciphers,
-            details,
-        })
+            des3_inconclusive,
+        ))
     }
 
     /// Test for 3DES cipher support.
@@ -141,15 +128,6 @@ impl Sweet32Tester {
 
         Ok((supported, inconclusive))
     }
-}
-
-/// Sweet32 test result
-#[derive(Debug, Clone)]
-pub struct Sweet32TestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub des3_ciphers: Vec<String>,
-    pub details: String,
 }
 
 #[cfg(test)]
