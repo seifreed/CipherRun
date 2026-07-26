@@ -92,6 +92,12 @@ fn create_mock_scan_result(
     }
 }
 
+fn certificate_filter(enable: impl FnOnce(&mut CertificateFilters)) -> CertificateFilters {
+    let mut filters = CertificateFilters::default();
+    enable(&mut filters);
+    filters
+}
+
 #[test]
 fn test_filter_expired_certificates() {
     // Create expired certificate
@@ -122,10 +128,7 @@ fn test_filter_expired_certificates() {
     );
 
     // Test filter matching
-    let filters = CertificateFilters {
-        expired: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.expired = true);
 
     assert!(
         cert_status.matches_filter(&filters),
@@ -163,10 +166,7 @@ fn test_filter_self_signed_certificates() {
     );
 
     // Test filter matching
-    let filters = CertificateFilters {
-        self_signed: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.self_signed = true);
 
     assert!(
         cert_status.matches_filter(&filters),
@@ -204,10 +204,7 @@ fn test_filter_mismatched_certificates() {
     );
 
     // Test filter matching
-    let filters = CertificateFilters {
-        mismatched: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.mismatched = true);
 
     assert!(
         cert_status.matches_filter(&filters),
@@ -244,10 +241,7 @@ fn test_filter_revoked_certificates() {
     );
 
     // Test filter matching
-    let filters = CertificateFilters {
-        revoked: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.revoked = true);
 
     assert!(
         cert_status.matches_filter(&filters),
@@ -284,10 +278,7 @@ fn test_filter_untrusted_certificates() {
     );
 
     // Test filter matching
-    let filters = CertificateFilters {
-        untrusted: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.untrusted = true);
 
     assert!(
         cert_status.matches_filter(&filters),
@@ -327,20 +318,14 @@ fn test_multiple_filters_or_logic() {
     let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     // Test with only expired filter
-    let filters = CertificateFilters {
-        expired: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.expired = true);
     assert!(
         cert_status.matches_filter(&filters),
         "Should match with expired filter"
     );
 
     // Test with only self-signed filter
-    let filters = CertificateFilters {
-        self_signed: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.self_signed = true);
     assert!(
         cert_status.matches_filter(&filters),
         "Should match with self-signed filter"
@@ -394,10 +379,7 @@ fn test_valid_certificate_filtered_out_when_filters_active() {
     let cert_status = CertificateStatus::from_validation_result(&validation, &cert, None);
 
     // When expired filter is active, valid cert should NOT match
-    let filters = CertificateFilters {
-        expired: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.expired = true);
 
     assert!(
         !cert_status.matches_filter(&filters),
@@ -438,10 +420,7 @@ fn test_mass_scanner_filtering() {
     let valid_result = create_mock_scan_result("valid.com:443", valid_cert, valid_validation, None);
 
     // Test filtering with expired filter
-    let filters = CertificateFilters {
-        expired: true,
-        ..Default::default()
-    };
+    let filters = certificate_filter(|filters| filters.expired = true);
 
     let results_with_filter = vec![
         ("expired.com:443".to_string(), Ok(expired_result.clone())),
@@ -470,43 +449,20 @@ fn test_mass_scanner_filtering() {
 
 #[test]
 fn test_has_certificate_filters() {
-    let mut args = Args::default();
     assert!(
-        !args.has_certificate_filters(),
+        !Args::default().has_certificate_filters(),
         "Default args should have no filters"
     );
 
-    args.cert_filters.filter_expired = true;
-    assert!(
-        args.has_certificate_filters(),
-        "Should detect expired filter"
-    );
-
-    args = Args::default();
-    args.cert_filters.filter_self_signed = true;
-    assert!(
-        args.has_certificate_filters(),
-        "Should detect self-signed filter"
-    );
-
-    args = Args::default();
-    args.cert_filters.filter_mismatched = true;
-    assert!(
-        args.has_certificate_filters(),
-        "Should detect mismatched filter"
-    );
-
-    args = Args::default();
-    args.cert_filters.filter_revoked = true;
-    assert!(
-        args.has_certificate_filters(),
-        "Should detect revoked filter"
-    );
-
-    args = Args::default();
-    args.cert_filters.filter_untrusted = true;
-    assert!(
-        args.has_certificate_filters(),
-        "Should detect untrusted filter"
-    );
+    for enable in [
+        |args: &mut Args| args.cert_filters.filter_expired = true,
+        |args: &mut Args| args.cert_filters.filter_self_signed = true,
+        |args: &mut Args| args.cert_filters.filter_mismatched = true,
+        |args: &mut Args| args.cert_filters.filter_revoked = true,
+        |args: &mut Args| args.cert_filters.filter_untrusted = true,
+    ] {
+        let mut args = Args::default();
+        enable(&mut args);
+        assert!(args.has_certificate_filters());
+    }
 }
