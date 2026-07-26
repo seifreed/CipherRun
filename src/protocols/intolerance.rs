@@ -134,6 +134,15 @@ mod tests {
         extensions
     }
 
+    fn example_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build")
+    }
+
     #[test]
     fn test_minimal_client_hello_has_no_extensions_additional() {
         let target = Target::with_ips(
@@ -171,12 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_minimal_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -189,12 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_extended_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -212,12 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_long_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -229,12 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_versioned_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -248,12 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_invalid_sni_client_hello() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -267,12 +251,7 @@ mod tests {
 
     #[test]
     fn test_minimal_client_hello_has_no_extensions() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -284,12 +263,7 @@ mod tests {
 
     #[test]
     fn test_extended_client_hello_includes_expected_extensions() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -308,12 +282,7 @@ mod tests {
 
     #[test]
     fn test_long_client_hello_includes_padding_extension() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
@@ -329,12 +298,7 @@ mod tests {
 
     #[test]
     fn test_invalid_sni_client_hello_contains_invalid_hostname() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = example_target();
 
         let tester = IntoleranceTester::new(target);
         let hello = tester
