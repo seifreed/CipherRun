@@ -488,30 +488,7 @@ mod tests {
 
     #[test]
     fn test_heartbeat_extension_check() {
-        // Build a minimal valid ServerHello with heartbeat extension (0x000f)
-        // Record: type=0x16, version=0x0303, length=TBD
-        // Handshake: type=0x02, length=TBD
-        // ServerHello: version=0x0303, random(32), sid_len=0, cipher=0x1301, compress=0x00
-        // Extensions: len=TBD, ext_type=0x000f, ext_len=1, ext_data=0x01
-        let mut data_with_ext = vec![
-            0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header (length placeholder)
-            0x02, 0x00, 0x00, 0x00, // Handshake header (length placeholder)
-            0x03, 0x03, // ServerHello version TLS 1.2
-        ];
-        data_with_ext.extend_from_slice(&[0xAA; 32]); // 32 bytes random
-        data_with_ext.push(0x00); // session_id_length = 0
-        data_with_ext.extend_from_slice(&[0x13, 0x01]); // cipher suite
-        data_with_ext.push(0x00); // compression method
-        // Extensions: total length=5, heartbeat ext (type=0x000f, len=1, data=0x01)
-        data_with_ext.extend_from_slice(&[0x00, 0x05]); // extensions total length
-        data_with_ext.extend_from_slice(&[0x00, 0x0f]); // ext type: heartbeat
-        data_with_ext.extend_from_slice(&[0x00, 0x01]); // ext length
-        data_with_ext.push(0x01); // heartbeat mode: peer_allowed_to_send
-        // Patch record and handshake lengths
-        let record_len = (data_with_ext.len() - 5) as u16;
-        write_u16_at(&mut data_with_ext, 3, record_len);
-        let hs_len = data_with_ext.len() - 9;
-        write_u24_at(&mut data_with_ext, 6, hs_len);
+        let data_with_ext = server_hello_with_heartbeat();
 
         assert!(server_hello::has_heartbeat_extension(&data_with_ext).unwrap());
 
