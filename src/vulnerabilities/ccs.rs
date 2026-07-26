@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod read_io;
 mod result;
 
 pub use result::{CcsTestResult, TestStatus};
@@ -116,7 +117,7 @@ impl CcsInjectionTester {
                 let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
                 let _n = match timeout(
                     Duration::from_secs(3),
-                    read_complete_tls_record(&mut stream, &mut buffer),
+                    read_io::read_complete_tls_record(&mut stream, &mut buffer),
                 )
                 .await
                 {
@@ -327,30 +328,6 @@ fn handshake_record_is_normal_continuation(record: &[u8], record_len: usize) -> 
     )
 }
 
-async fn read_complete_tls_record(
-    stream: &mut tokio::net::TcpStream,
-    buffer: &mut [u8],
-) -> Result<usize> {
-    let mut header = [0u8; 5];
-    stream.read_exact(&mut header).await?;
-
-    let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-    let total_len = 5usize
-        .checked_add(record_len)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: "CCS TLS record length overflow".to_string(),
-        })?;
-    if total_len > buffer.len() {
-        return Err(crate::TlsError::ParseError {
-            message: "CCS TLS record length exceeds buffer".to_string(),
-        });
-    }
-
-    buffer[..5].copy_from_slice(&header);
-    stream.read_exact(&mut buffer[5..total_len]).await?;
-    Ok(total_len)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,7 +520,7 @@ mod tests {
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let mut buffer = vec![0u8; 32];
-        let n = read_complete_tls_record(&mut stream, &mut buffer)
+        let n = read_io::read_complete_tls_record(&mut stream, &mut buffer)
             .await
             .unwrap();
 
@@ -580,7 +557,7 @@ mod tests {
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-        let n = read_complete_tls_record(&mut stream, &mut buffer)
+        let n = read_io::read_complete_tls_record(&mut stream, &mut buffer)
             .await
             .unwrap();
 
