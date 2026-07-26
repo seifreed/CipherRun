@@ -391,16 +391,24 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn test_logjam_result_not_vulnerable() {
-        let result = LogjamTestResult {
-            vulnerable: false,
+    fn logjam_result(
+        vulnerable: bool,
+        export_dh_supported: bool,
+        details: &str,
+    ) -> LogjamTestResult {
+        LogjamTestResult {
+            vulnerable,
             inconclusive: false,
-            export_dh_supported: false,
+            export_dh_supported,
             weak_dh_params: false,
             dhe_ciphers: vec![],
-            details: "Not vulnerable".to_string(),
-        };
+            details: details.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_logjam_result_not_vulnerable() {
+        let result = logjam_result(false, false, "Not vulnerable");
         assert!(!result.vulnerable);
         assert!(!result.export_dh_supported);
         assert!(!result.weak_dh_params);
@@ -422,14 +430,7 @@ mod tests {
 
     #[test]
     fn test_logjam_result_debug_contains_details() {
-        let result = LogjamTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            export_dh_supported: false,
-            weak_dh_params: false,
-            dhe_ciphers: vec![],
-            details: "Not vulnerable - DHE not supported".to_string(),
-        };
+        let result = logjam_result(false, false, "Not vulnerable - DHE not supported");
 
         let debug = format!("{:?}", result);
         assert!(debug.contains("Not vulnerable"));
@@ -437,14 +438,11 @@ mod tests {
 
     #[test]
     fn test_logjam_result_details_export_grade() {
-        let result = LogjamTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            export_dh_supported: true,
-            weak_dh_params: false,
-            dhe_ciphers: vec![],
-            details: "Vulnerable to LOGJAM (CVE-2015-4000): Export-grade DH supported".to_string(),
-        };
+        let result = logjam_result(
+            true,
+            true,
+            "Vulnerable to LOGJAM (CVE-2015-4000): Export-grade DH supported",
+        );
         assert!(result.vulnerable);
         assert!(result.details.contains("Export-grade"));
     }
