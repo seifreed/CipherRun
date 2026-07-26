@@ -161,7 +161,10 @@ fn test_with_starttls_sets_hostname_and_mode() {
         true,
     );
 
-    assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+    assert_eq!(
+        tester.starttls,
+        Some(crate::starttls::StarttlsProtocol::XMPP)
+    );
     assert_eq!(
         tester.starttls_hostname.as_deref(),
         Some("xmpp.example.com")
