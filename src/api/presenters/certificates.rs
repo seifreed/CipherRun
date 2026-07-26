@@ -148,12 +148,10 @@ mod tests {
         let now = Utc::now();
         let summary = present_certificate_summary(CertificateView {
             fingerprint: "expired".to_string(),
-            subject: "CN=expired.example".to_string(),
-            issuer: "Example CA".to_string(),
             not_before: now - chrono::Duration::days(90),
-            not_after: now - chrono::Duration::days(1),
             san_json: Some("[]".to_string()),
             hostnames: vec!["expired.example".to_string()],
+            ..view("CN=expired.example", now - chrono::Duration::days(1))
         })
         .expect("valid SAN JSON should present");
 
@@ -167,12 +165,13 @@ mod tests {
         let now = Utc::now();
         let summary = present_certificate_summary(CertificateView {
             fingerprint: "recently-expired".to_string(),
-            subject: "CN=recently-expired.example".to_string(),
-            issuer: "Example CA".to_string(),
             not_before: now - chrono::Duration::days(90),
-            not_after: now - chrono::Duration::hours(1),
             san_json: Some("[]".to_string()),
             hostnames: vec!["recently-expired.example".to_string()],
+            ..view(
+                "CN=recently-expired.example",
+                now - chrono::Duration::hours(1),
+            )
         })
         .expect("valid SAN JSON should present");
 
@@ -195,13 +194,9 @@ mod tests {
     fn summary_preserves_empty_hostname_entries_from_input() {
         let now = Utc::now();
         let summary = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: "CN=example.com".to_string(),
-            issuer: "Example CA".to_string(),
-            not_before: now,
-            not_after: now + chrono::Duration::days(120),
             san_json: Some("[\"example.com\"]".to_string()),
             hostnames: vec!["".to_string(), "example.com".to_string()],
+            ..view("CN=example.com", now + chrono::Duration::days(120))
         })
         .expect("valid SAN JSON should present");
 
