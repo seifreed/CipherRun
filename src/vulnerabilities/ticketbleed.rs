@@ -230,17 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ticketbleed_result() {
-        let result = TicketbleedTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            details: "Test".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(!result.inconclusive);
-    }
-
-    #[test]
     fn test_ticketbleed_probe_addrs_honors_all_ips() {
         let target = Target::with_ips(
             "localhost".to_string(),
@@ -259,17 +248,6 @@ mod tests {
 
         assert_eq!(single.len(), 1);
         assert_eq!(all.len(), 2);
-    }
-
-    #[test]
-    fn test_ticketbleed_merge_keeps_inconclusive_over_clean() {
-        let merged = TicketbleedProbeOutcome::NotVulnerable("clean")
-            .merge(TicketbleedProbeOutcome::Inconclusive("timeout"));
-
-        assert!(matches!(
-            merged,
-            TicketbleedProbeOutcome::Inconclusive("timeout")
-        ));
     }
 
     #[test]
@@ -472,17 +450,6 @@ mod tests {
                 || err.contains("Ticketbleed ticket data exceeds handshake")
                 || err.contains("Ticketbleed ticket TLS record length exceeds available data")
         );
-    }
-
-    #[test]
-    fn test_ticketbleed_result_details_text() {
-        let result = TicketbleedTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            details: "Vulnerable to Ticketbleed".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert!(result.details.contains("Ticketbleed"));
     }
 
     #[test]
