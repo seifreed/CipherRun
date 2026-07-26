@@ -236,6 +236,23 @@ mod tests {
         .unwrap()
     }
 
+    fn heartbeat_response(response_size: usize) -> Vec<u8> {
+        let payload_len = response_size.saturating_sub(3);
+        let record_len = 3 + payload_len;
+        let mut response = vec![
+            0x18,
+            0x03,
+            0x03,
+            (record_len >> 8) as u8,
+            (record_len & 0xff) as u8,
+            0x02,
+            (payload_len >> 8) as u8,
+            (payload_len & 0xff) as u8,
+        ];
+        response.extend(vec![0u8; payload_len]);
+        response
+    }
+
     async fn spawn_heartbeat_server(response_size: usize) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -245,36 +262,7 @@ mod tests {
                 let mut buffer = [0u8; 4096];
                 let _ = socket.read(&mut buffer).await;
 
-                // Build a valid TLS Heartbeat Response structure
-                // Content type: Heartbeat (0x18)
-                // Version: TLS 1.2 (0x0303)
-                // Length: response_size
-                // Heartbeat type: Response (0x02)
-                // Payload length: response_size - 3 (after type and length bytes)
-                // Payload: zeros
-
-                let mut response = Vec::new();
-                response.push(0x18); // Content type: Heartbeat
-                response.push(0x03); // Version TLS 1.2
-                response.push(0x03);
-
-                // Record length (2 bytes, big-endian)
-                // For heartbeat response: type(1) + length(2) + payload
-                let payload_len = response_size.saturating_sub(3);
-                let record_len = 3 + payload_len;
-                response.push((record_len >> 8) as u8);
-                response.push((record_len & 0xff) as u8);
-
-                // Heartbeat response type (0x02)
-                response.push(0x02);
-
-                // Payload length (2 bytes, big-endian)
-                response.push((payload_len >> 8) as u8);
-                response.push((payload_len & 0xff) as u8);
-
-                // Payload (zeros)
-                response.extend(vec![0u8; payload_len]);
-
+                let response = heartbeat_response(response_size);
                 let _ = socket.write_all(&response).await;
             }
         });
@@ -291,19 +279,7 @@ mod tests {
                 let mut buffer = [0u8; 4096];
                 let _ = socket.read(&mut buffer).await;
 
-                let payload_len = response_size.saturating_sub(3);
-                let record_len = 3 + payload_len;
-                let mut response = vec![
-                    0x18,
-                    0x03,
-                    0x03,
-                    (record_len >> 8) as u8,
-                    (record_len & 0xff) as u8,
-                    0x02,
-                    (payload_len >> 8) as u8,
-                    (payload_len & 0xff) as u8,
-                ];
-                response.extend(vec![0u8; payload_len]);
+                let response = heartbeat_response(response_size);
 
                 let split = first_chunk_len.min(response.len());
                 let _ = socket.write_all(&response[..split]).await;
@@ -342,19 +318,7 @@ mod tests {
                 let _ = socket.write_all(&server_hello_with_heartbeat()).await;
                 let _ = socket.read(&mut buffer).await;
 
-                let payload_len = response_size.saturating_sub(3);
-                let record_len = 3 + payload_len;
-                let mut response = vec![
-                    0x18,
-                    0x03,
-                    0x03,
-                    (record_len >> 8) as u8,
-                    (record_len & 0xff) as u8,
-                    0x02,
-                    (payload_len >> 8) as u8,
-                    (payload_len & 0xff) as u8,
-                ];
-                response.extend(vec![0u8; payload_len]);
+                let response = heartbeat_response(response_size);
                 let _ = socket.write_all(&response).await;
             }
         });
