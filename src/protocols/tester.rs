@@ -231,6 +231,12 @@ mod tests {
             .expect("target should build")
     }
 
+    fn timeout_tester(target: Target, millis: u64) -> ProtocolTester {
+        ProtocolTester::new(target)
+            .with_connect_timeout(Duration::from_millis(millis))
+            .with_read_timeout(Duration::from_millis(millis))
+    }
+
     fn heartbeat_server_hello_record() -> Vec<u8> {
         let mut hello = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
@@ -442,9 +448,7 @@ mod tests {
     async fn test_sslv2_protocol_success_with_dummy_server() {
         let addr = spawn_sslv2_dummy_server().await;
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = timeout_tester(target, 200);
 
         let result = tester
             .test_protocol(Protocol::SSLv2)
@@ -463,9 +467,7 @@ mod tests {
         // mirrors the legacy-TLS probe and keeps the result stable across runs.
         let addr = spawn_close_server().await;
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = timeout_tester(target, 200);
 
         let result = tester
             .test_protocol(Protocol::SSLv2)
@@ -488,10 +490,7 @@ mod tests {
             vec![addr.ip(), "127.0.0.2".parse().expect("valid IP")],
         )
         .expect("target should build");
-        let tester = ProtocolTester::new(target)
-            .with_test_all_ips(true)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100).with_test_all_ips(true);
 
         let result = tester
             .test_protocol(Protocol::SSLv2)
@@ -526,10 +525,7 @@ mod tests {
             ],
         )
         .expect("target should build");
-        let tester = ProtocolTester::new(target)
-            .with_test_all_ips(true)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100).with_test_all_ips(true);
 
         let result = tester
             .test_protocol(Protocol::SSLv3)
@@ -544,9 +540,7 @@ mod tests {
     async fn test_detect_heartbeat_extension_returns_none_on_close() {
         let addr = spawn_close_server().await;
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100);
 
         let supported = tester
             .detect_heartbeat_extension(Protocol::TLS12)
@@ -579,9 +573,7 @@ mod tests {
         });
 
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100);
 
         let result = tester
             .detect_heartbeat_extension(Protocol::TLS12)
@@ -618,9 +610,7 @@ mod tests {
         });
 
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100);
 
         let supported = tester
             .detect_heartbeat_extension(Protocol::TLS12)
@@ -661,9 +651,7 @@ mod tests {
         });
 
         let target = target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = timeout_tester(target, 100);
 
         let supported = tester
             .detect_heartbeat_extension(Protocol::TLS12)
