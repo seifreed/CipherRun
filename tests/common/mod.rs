@@ -1,5 +1,6 @@
 pub mod api;
 pub mod mock_scanner;
+pub mod output;
 pub mod sqlite;
 
 pub async fn create_target(host: &str, port: u16) -> cipherrun::utils::network::Target {
