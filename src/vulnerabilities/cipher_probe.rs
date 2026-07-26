@@ -20,6 +20,10 @@ use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod model;
+
+pub(crate) use model::{CipherProbeOptions, CipherProbeStatus};
+
 /// Connect timeout for a single cipher probe.
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -27,27 +31,6 @@ const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const PROBE_READ_TIMEOUT: Duration = Duration::from_secs(3);
 
 const MIN_SERVER_HELLO_LEN: usize = 43;
-
-/// Outcome of probing a server for support of a single cipher suite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CipherProbeStatus {
-    /// Server returned a ServerHello — the suite is supported.
-    Supported,
-    /// Server returned a TLS alert — the suite was conclusively rejected.
-    NotSupported,
-    /// No conclusive answer (no socket, transport error, truncated/non-TLS
-    /// response). Never treated as a clean pass.
-    Inconclusive,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct CipherProbeOptions<'a> {
-    pub(crate) starttls: Option<crate::starttls::StarttlsProtocol>,
-    pub(crate) sni_override: Option<&'a str>,
-    pub(crate) starttls_hostname: Option<&'a str>,
-    pub(crate) starttls_server_mode: bool,
-    pub(crate) test_all_ips: bool,
-}
 
 /// Probe a single cipher suite by its wire ID across the given protocol
 /// versions.
@@ -64,14 +47,7 @@ pub(crate) async fn probe_cipher_suite(
 ) -> CipherProbeStatus {
     let mut saw_inconclusive = false;
     for &protocol in protocols {
-        match probe_cipher_at_protocol(
-            target,
-            hexcode,
-            protocol,
-            options,
-        )
-        .await
-        {
+        match probe_cipher_at_protocol(target, hexcode, protocol, options).await {
             CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => saw_inconclusive = true,
@@ -104,14 +80,7 @@ pub(crate) async fn probe_supported_suites(
     let mut supported = Vec::new();
     let mut inconclusive = false;
     for (hexcode, name) in suites {
-        match probe_cipher_suite(
-            target,
-            *hexcode,
-            protocols,
-            options,
-        )
-        .await
-        {
+        match probe_cipher_suite(target, *hexcode, protocols, options).await {
             CipherProbeStatus::Supported => supported.push((*name).to_string()),
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => inconclusive = true,
@@ -138,15 +107,7 @@ async fn probe_cipher_at_protocol(
 
     let mut saw_inconclusive = false;
     for addr in addrs {
-        match probe_cipher_at_protocol_on_addr(
-            target,
-            addr,
-            hexcode,
-            protocol,
-            options,
-        )
-        .await
-        {
+        match probe_cipher_at_protocol_on_addr(target, addr, hexcode, protocol, options).await {
             CipherProbeStatus::Supported => return CipherProbeStatus::Supported,
             CipherProbeStatus::NotSupported => {}
             CipherProbeStatus::Inconclusive => saw_inconclusive = true,
@@ -169,7 +130,9 @@ async fn probe_cipher_at_protocol_on_addr(
 ) -> CipherProbeStatus {
     // STARTTLS negotiation hostname (e.g. XMPP stream `to=`, SMTP EHLO): honor
     // the explicit override (--xmpphost) when set, else the target hostname.
-    let starttls_host = options.starttls_hostname.unwrap_or(target.hostname.as_str());
+    let starttls_host = options
+        .starttls_hostname
+        .unwrap_or(target.hostname.as_str());
     let mut stream = match crate::utils::network::connect_with_starttls(
         addr,
         PROBE_CONNECT_TIMEOUT,
@@ -185,10 +148,8 @@ async fn probe_cipher_at_protocol_on_addr(
 
     let mut builder = ClientHelloBuilder::new(protocol);
     builder.add_cipher(hexcode);
-    let sni = crate::utils::network::sni_hostname_for_target(
-        &target.hostname,
-        options.sni_override,
-    );
+    let sni =
+        crate::utils::network::sni_hostname_for_target(&target.hostname, options.sni_override);
     let client_hello = match builder.build_with_defaults(sni.as_deref()) {
         Ok(hello) => hello,
         Err(_) => return CipherProbeStatus::Inconclusive,
