@@ -13,6 +13,10 @@ fn loopback_target() -> Target {
     .unwrap()
 }
 
+fn loopback_tester() -> GreaseTester {
+    GreaseTester::new(loopback_target())
+}
+
 fn grease_result(
     tolerates_grease: bool,
     inconclusive: bool,
@@ -97,8 +101,7 @@ fn test_grease_merge_preserves_bad_or_unclear_address() {
 
 #[test]
 fn test_generate_recommendations_variants() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let ok_result = grease_result(true, false, true, &[], &[], &[]);
     let ok_recs = tester.generate_recommendations(&ok_result);
@@ -158,8 +161,7 @@ fn test_grease_report_fields() {
 
 #[test]
 fn test_build_client_hello_with_grease_ciphers() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let hello = tester
         .build_client_hello_with_grease_ciphers()
@@ -177,8 +179,7 @@ fn test_build_client_hello_with_grease_ciphers() {
 
 #[test]
 fn test_build_client_hello_with_grease_extensions() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let hello = tester
         .build_client_hello_with_grease_extensions()
@@ -190,8 +191,7 @@ fn test_build_client_hello_with_grease_extensions() {
 
 #[test]
 fn test_build_client_hello_with_grease_groups() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let hello = tester
         .build_client_hello_with_grease_groups()
@@ -202,8 +202,7 @@ fn test_build_client_hello_with_grease_groups() {
 
 #[test]
 fn test_build_client_hello_combined_grease() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let hello = tester
         .build_client_hello_combined_grease()
@@ -306,8 +305,7 @@ fn test_grease_result_details_includes_issues() {
 
 #[test]
 fn test_recommendations_count_increases_with_issues() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
 
     let base_result = grease_result(false, true, false, &[], &[], &[]);
     let base_recs = tester.generate_recommendations(&base_result);
@@ -350,8 +348,7 @@ fn test_tolerates_grease_logic() {
 
 #[test]
 fn test_grease_partial_inconclusive_does_not_report_tolerant() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
     let mut result = grease_result(
         false,
         false,
@@ -384,8 +381,7 @@ fn test_grease_partial_inconclusive_does_not_report_tolerant() {
 
 #[test]
 fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
-    let target = loopback_target();
-    let tester = GreaseTester::new(target);
+    let tester = loopback_tester();
     let mut result = grease_result(
         false,
         false,
