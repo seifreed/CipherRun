@@ -310,14 +310,18 @@ mod tests {
         )
     }
 
+    fn scan_request(target: impl Into<String>, options: Option<ScanOptions>) -> ScanRequest {
+        ScanRequest {
+            target: target.into(),
+            options,
+            webhook_url: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_create_scan_empty_target() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "".to_string(),
-            options: Some(ScanOptions::default()),
-            webhook_url: None,
-        };
+        let request = scan_request("", Some(ScanOptions::default()));
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -328,11 +332,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_target_too_long() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "a".repeat(256),
-            options: Some(ScanOptions::default()),
-            webhook_url: None,
-        };
+        let request = scan_request("a".repeat(256), Some(ScanOptions::default()));
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -343,11 +343,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_allows_max_hostname_with_port() {
         let state = build_state();
-        let request = ScanRequest {
-            target: format!("{}:443", valid_hostname_253()),
-            options: Some(ScanOptions::full()),
-            webhook_url: None,
-        };
+        let request = scan_request(
+            format!("{}:443", valid_hostname_253()),
+            Some(ScanOptions::full()),
+        );
 
         let (_, Json(response)) = create_scan(State(state), Json(request))
             .await
@@ -358,11 +357,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_canonicalizes_ipv6_target_without_port() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "2001:4860:4860::8888".to_string(),
-            options: Some(ScanOptions::full()),
-            webhook_url: None,
-        };
+        let request = scan_request("2001:4860:4860::8888", Some(ScanOptions::full()));
 
         let (_, Json(response)) = create_scan(State(state), Json(request))
             .await
@@ -428,11 +423,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_defaults_missing_options_to_full_scan() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: None,
-            webhook_url: None,
-        };
+        let request = scan_request("example.com", None);
 
         let (_, Json(response)) = create_scan(State(state.clone()), Json(request))
             .await
@@ -451,11 +442,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_rejects_explicit_empty_options() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: Some(ScanOptions::default()),
-            webhook_url: None,
-        };
+        let request = scan_request("example.com", Some(ScanOptions::default()));
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -466,16 +453,15 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_rejects_conflicting_ip_family_options() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: Some(ScanOptions {
+        let request = scan_request(
+            "example.com",
+            Some(ScanOptions {
                 test_protocols: true,
                 ipv4_only: true,
                 ipv6_only: true,
                 ..Default::default()
             }),
-            webhook_url: None,
-        };
+        );
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -486,15 +472,14 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_rejects_zero_timeout() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: Some(ScanOptions {
+        let request = scan_request(
+            "example.com",
+            Some(ScanOptions {
                 test_protocols: true,
                 timeout_seconds: 0,
                 ..Default::default()
             }),
-            webhook_url: None,
-        };
+        );
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -505,15 +490,14 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_rejects_private_ip_override() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: Some(ScanOptions {
+        let request = scan_request(
+            "example.com",
+            Some(ScanOptions {
                 test_protocols: true,
                 ip: Some("127.0.0.1".to_string()),
                 ..Default::default()
             }),
-            webhook_url: None,
-        };
+        );
 
         let err = create_scan(State(state), Json(request))
             .await
@@ -524,15 +508,14 @@ mod tests {
     #[tokio::test]
     async fn test_create_scan_rejects_malformed_ip_override() {
         let state = build_state();
-        let request = ScanRequest {
-            target: "example.com".to_string(),
-            options: Some(ScanOptions {
+        let request = scan_request(
+            "example.com",
+            Some(ScanOptions {
                 test_protocols: true,
                 ip: Some("not-an-ip".to_string()),
                 ..Default::default()
             }),
-            webhook_url: None,
-        };
+        );
 
         let err = create_scan(State(state), Json(request))
             .await
