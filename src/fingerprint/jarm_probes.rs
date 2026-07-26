@@ -7,7 +7,8 @@
 // - Different ALPN configurations
 // - Different extension orders
 
-use crate::{Result, TlsError};
+use crate::Result;
+use crate::utils::invalid_input_length::{u8_len, u16_len, u16_len_plus, u24_len};
 use rand::RngExt;
 
 /// JARM probe options
@@ -670,34 +671,6 @@ fn random_grease() -> [u8; 2] {
 /// Convert u16 to big-endian bytes
 fn u16_to_bytes(val: u16) -> [u8; 2] {
     val.to_be_bytes()
-}
-
-fn length_error(context: &str) -> TlsError {
-    TlsError::InvalidInput {
-        message: format!("{context} exceeds maximum length"),
-    }
-}
-
-fn u8_len(len: usize, context: &str) -> Result<u8> {
-    u8::try_from(len).map_err(|_| length_error(context))
-}
-
-fn u16_len(len: usize, context: &str) -> Result<u16> {
-    u16::try_from(len).map_err(|_| length_error(context))
-}
-
-fn u16_len_plus(len: usize, add: usize, context: &str) -> Result<u16> {
-    let len = len.checked_add(add).ok_or_else(|| length_error(context))?;
-    u16_len(len, context)
-}
-
-fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-    let len = u32::try_from(len).map_err(|_| length_error(context))?;
-    if len > 0x00ff_ffff {
-        return Err(length_error(context));
-    }
-    let bytes = len.to_be_bytes();
-    Ok([bytes[1], bytes[2], bytes[3]])
 }
 
 #[cfg(test)]

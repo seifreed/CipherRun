@@ -3,25 +3,7 @@ use crate::constants::{
     CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, HANDSHAKE_TYPE_FINISHED,
     VERSION_TLS_1_0,
 };
-
-fn length_error(context: &str) -> crate::TlsError {
-    crate::TlsError::InvalidInput {
-        message: format!("{context} exceeds maximum length"),
-    }
-}
-
-fn u16_len(len: usize, context: &str) -> Result<u16> {
-    u16::try_from(len).map_err(|_| length_error(context))
-}
-
-fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-    let len = u32::try_from(len).map_err(|_| length_error(context))?;
-    if len > 0x00ff_ffff {
-        return Err(length_error(context));
-    }
-    let bytes = len.to_be_bytes();
-    Ok([bytes[1], bytes[2], bytes[3]])
-}
+use crate::utils::invalid_input_length::{u16_len, u24_len};
 
 pub(super) fn invalid_client_key_exchange(variant: u8, key_len: usize) -> Result<Vec<u8>> {
     let record_body_len = key_len
