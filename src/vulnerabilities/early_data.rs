@@ -25,8 +25,10 @@ use tokio::time::timeout;
 mod replay;
 mod result;
 mod result_analysis;
+mod status;
 
 pub use result::{EarlyDataSizeInfo, EarlyDataTestResult, ReplayTestResult};
+use status::{EarlyDataSupportStatus, Tls13SupportStatus};
 
 /// 0-RTT / Early Data vulnerability tester
 pub struct EarlyDataTester<'a> {
@@ -35,20 +37,6 @@ pub struct EarlyDataTester<'a> {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     test_all_ips: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EarlyDataSupportStatus {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tls13SupportStatus {
-    Supported,
-    NotSupported,
-    Inconclusive,
 }
 
 impl<'a> EarlyDataTester<'a> {
