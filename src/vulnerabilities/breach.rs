@@ -9,6 +9,10 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+mod result;
+
+pub use result::BreachTestResult;
+
 const BREACH_HTTP_RESPONSE_LIMIT: usize = 1024 * 1024;
 
 /// BREACH vulnerability tester
@@ -48,14 +52,6 @@ impl BreachTester {
         }
     }
 
-    fn merge_probe_bool(current: Option<bool>, next: Option<bool>) -> Option<bool> {
-        match (current, next) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (None, _) | (_, None) => None,
-            _ => Some(false),
-        }
-    }
-
     /// Test for BREACH vulnerability
     pub async fn test(&self) -> Result<BreachTestResult> {
         // V11 fix: each sub-test returns an Option so the caller can distinguish
@@ -67,45 +63,11 @@ impl BreachTester {
         let dynamic = self.test_dynamic_content().await?;
         let sensitive = self.test_sensitive_data_reflection().await?;
 
-        let inconclusive = compression.is_none() || dynamic.is_none() || sensitive.is_none();
-        let compression_enabled = compression.unwrap_or(false);
-        let dynamic_content = dynamic.unwrap_or(false);
-        let sensitive_data = sensitive.unwrap_or(false);
-
-        // BREACH requires all three conditions simultaneously:
-        // 1. HTTP compression enabled
-        // 2. Dynamic content (user input reflected)
-        // 3. Sensitive data in responses
-        let vulnerable = !inconclusive && compression_enabled && dynamic_content && sensitive_data;
-
-        let details = if inconclusive {
-            "Inconclusive - one or more BREACH probes could not complete (TCP/TLS error or empty HTTP response)".to_string()
-        } else if vulnerable {
-            "Vulnerable to BREACH (CVE-2013-3587): HTTP compression enabled with dynamic content containing secrets".to_string()
-        } else if compression_enabled {
-            let mut reasons = Vec::new();
-            if !dynamic_content {
-                reasons.push("no dynamic content detected");
-            }
-            if !sensitive_data {
-                reasons.push("no sensitive data reflection detected");
-            }
-            format!(
-                "Partially vulnerable - HTTP compression enabled but {}",
-                reasons.join(" and ")
-            )
-        } else {
-            "Not vulnerable - HTTP compression not enabled".to_string()
-        };
-
-        Ok(BreachTestResult {
-            vulnerable,
-            inconclusive,
-            compression_enabled,
-            dynamic_content,
-            sensitive_data_reflection: sensitive_data,
-            details,
-        })
+        Ok(BreachTestResult::from_probe_results(
+            compression,
+            dynamic,
+            sensitive,
+        ))
     }
 
     /// Test if HTTP compression is enabled. Returns `None` when the probe could
@@ -114,7 +76,7 @@ impl BreachTester {
     async fn test_http_compression(&self) -> Result<Option<bool>> {
         let mut result = Some(false);
         for addr in self.probe_addrs()? {
-            result = Self::merge_probe_bool(result, self.test_http_compression_addr(addr).await?);
+            result = result::merge_probe_bool(result, self.test_http_compression_addr(addr).await?);
             if result == Some(true) {
                 break;
             }
@@ -195,7 +157,7 @@ impl BreachTester {
     async fn test_dynamic_content(&self) -> Result<Option<bool>> {
         let mut result = Some(false);
         for addr in self.probe_addrs()? {
-            result = Self::merge_probe_bool(result, self.test_dynamic_content_addr(addr).await?);
+            result = result::merge_probe_bool(result, self.test_dynamic_content_addr(addr).await?);
             if result == Some(true) {
                 break;
             }
@@ -272,7 +234,7 @@ impl BreachTester {
     async fn test_sensitive_data_reflection(&self) -> Result<Option<bool>> {
         let mut result = Some(false);
         for addr in self.probe_addrs()? {
-            result = Self::merge_probe_bool(
+            result = result::merge_probe_bool(
                 result,
                 self.test_sensitive_data_reflection_addr(addr).await?,
             );
@@ -484,20 +446,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
     (hostname, sni_hostname.is_some())
 }
 
-/// BREACH test result
-#[derive(Debug, Clone)]
-pub struct BreachTestResult {
-    pub vulnerable: bool,
-    /// True when one or more sub-probes could not complete (TCP/TLS failure
-    /// or empty HTTP response). Prevents reporting unreachable servers as
-    /// confirmed-not-vulnerable.
-    pub inconclusive: bool,
-    pub compression_enabled: bool,
-    pub dynamic_content: bool,
-    pub sensitive_data_reflection: bool,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_breach_merge_keeps_inconclusive_over_false() {
-        assert_eq!(BreachTester::merge_probe_bool(Some(false), None), None);
+        assert_eq!(result::merge_probe_bool(Some(false), None), None);
     }
 
     async fn spawn_fragmented_https_server() -> u16 {
