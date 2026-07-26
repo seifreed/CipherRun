@@ -237,6 +237,10 @@ mod tests {
     use tokio::io::{AsyncRead, ReadBuf};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::task::JoinHandle;
+
+    const XMPP_STARTTLS_FEATURES: &[u8] =
+        b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>";
 
     struct OneByteReader {
         data: Vec<u8>,
@@ -265,6 +269,25 @@ mod tests {
             self.offset += 1;
             Poll::Ready(Ok(()))
         }
+    }
+
+    async fn spawn_xmpp_starttls_server(
+        starttls_response: &'static [u8],
+    ) -> (std::net::SocketAddr, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 2048];
+            let _ = stream.read(&mut buffer).await.unwrap();
+            stream.write_all(XMPP_STARTTLS_FEATURES).await.unwrap();
+
+            let _ = stream.read(&mut buffer).await.unwrap();
+            stream.write_all(starttls_response).await.unwrap();
+        });
+
+        (addr, server)
     }
 
     #[test]
@@ -417,27 +440,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 2048];
-            let _ = stream.read(&mut buffer).await.unwrap();
-
-            stream
-                .write_all(
-                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
-                )
-                .await
-                .unwrap();
-
-            let _ = stream.read(&mut buffer).await.unwrap();
-            stream
-                .write_all(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
-                .await
-                .unwrap();
-        });
+        let (addr, server) =
+            spawn_xmpp_starttls_server(b"<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let negotiator = XmppNegotiator::new("example.com".to_string(), false);
@@ -449,27 +453,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_failure_response() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 2048];
-            let _ = stream.read(&mut buffer).await.unwrap();
-
-            stream
-                .write_all(
-                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
-                )
-                .await
-                .unwrap();
-
-            let _ = stream.read(&mut buffer).await.unwrap();
-            stream
-                .write_all(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
-                .await
-                .unwrap();
-        });
+        let (addr, server) =
+            spawn_xmpp_starttls_server(b"<failure xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>").await;
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let negotiator = XmppNegotiator::new("example.com".to_string(), false);
@@ -481,27 +466,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_xmpp_negotiate_starttls_ignores_unrelated_self_closing_tags() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0u8; 2048];
-            let _ = stream.read(&mut buffer).await.unwrap();
-
-            stream
-                .write_all(
-                    b"<stream:features><starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/></stream:features>",
-                )
-                .await
-                .unwrap();
-
-            let _ = stream.read(&mut buffer).await.unwrap();
-            stream
-                .write_all(b"<stream:error/><proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
-                .await
-                .unwrap();
-        });
+        let (addr, server) = spawn_xmpp_starttls_server(
+            b"<stream:error/><proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>",
+        )
+        .await;
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let negotiator = XmppNegotiator::new("example.com".to_string(), false);
