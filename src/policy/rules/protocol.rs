@@ -153,12 +153,19 @@ mod tests {
         }
     }
 
+    fn base_policy() -> ProtocolPolicy {
+        ProtocolPolicy {
+            required: None,
+            prohibited: None,
+            action: PolicyAction::Fail,
+        }
+    }
+
     #[test]
     fn test_required_protocol_rejects_invalid_name() {
         let policy = ProtocolPolicy {
             required: Some(vec!["TLSv9.9".to_string()]),
-            prohibited: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let rule = ProtocolRule::new(&policy, &[], &[]);
@@ -176,9 +183,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_rejects_invalid_name() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLSv9.9".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let rule = ProtocolRule::new(&policy, &[], &[]);
@@ -197,8 +203,7 @@ mod tests {
     fn test_required_protocol_violation() {
         let policy = ProtocolPolicy {
             required: Some(vec!["TLSv1.3".to_string()]),
-            prohibited: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS12, true)];
@@ -215,9 +220,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_violation() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLSv1.0".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS10, true)];
@@ -234,9 +238,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_uses_direct_results_when_any_supported_list_is_empty() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLSv1.0".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS10, true)];
@@ -254,8 +257,7 @@ mod tests {
     fn test_required_protocol_satisfied() {
         let policy = ProtocolPolicy {
             required: Some(vec!["TLS 1.2".to_string()]),
-            prohibited: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS12, true)];
@@ -271,9 +273,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_with_spaces() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLS 1.2".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS12, true)];
@@ -291,8 +292,7 @@ mod tests {
     fn test_required_protocol_with_underscore_alias_is_satisfied() {
         let policy = ProtocolPolicy {
             required: Some(vec!["tls1_2".to_string()]),
-            prohibited: None,
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS12, true)];
@@ -308,9 +308,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_with_underscore_alias_is_detected() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["tls1_2".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS12, true)];
@@ -327,9 +326,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_not_supported_no_violation() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLSv1.3".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS13, false)];
@@ -345,9 +343,8 @@ mod tests {
     #[test]
     fn test_prohibited_protocol_violation_when_supported_on_subset_of_backends() {
         let policy = ProtocolPolicy {
-            required: None,
             prohibited: Some(vec!["TLSv1.0".to_string()]),
-            action: PolicyAction::Fail,
+            ..base_policy()
         };
 
         let results = vec![protocol_result(Protocol::TLS10, false)];
