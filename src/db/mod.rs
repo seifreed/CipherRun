@@ -155,14 +155,17 @@ impl CipherRunDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+
+    async fn test_db() -> CipherRunDatabase {
+        let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
+        CipherRunDatabase::new(&config)
+            .await
+            .expect("test assertion should succeed")
+    }
 
     #[tokio::test]
     async fn test_database_creation() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let db = CipherRunDatabase::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let db = test_db().await;
 
         // Verify database was created
         assert!(matches!(db.pool.db_type(), DatabaseType::Sqlite));
@@ -172,10 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_scan_minimal() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let db = CipherRunDatabase::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let db = test_db().await;
 
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
@@ -216,10 +216,7 @@ mod tests {
             RevocationMethod, RevocationResult, RevocationStatus,
         };
 
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let db = CipherRunDatabase::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let db = test_db().await;
 
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
@@ -279,10 +276,7 @@ mod tests {
     async fn test_delete_scan_cascades_to_child_rows() {
         use crate::application::persistence::PersistedProtocol;
 
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let db = CipherRunDatabase::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let db = test_db().await;
 
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
