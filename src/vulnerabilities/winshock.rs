@@ -6,16 +6,14 @@
 // specially crafted TLS packets during the handshake phase.
 
 use crate::Result;
-use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
-};
+use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
 use crate::protocols::Protocol;
 use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::timeout;
+use tokio::io::AsyncWriteExt;
 
+mod read_io;
 mod result;
 
 pub use result::WinshockTestResult;
@@ -195,10 +193,7 @@ impl WinshockTester {
         // Read the full ServerHello record so a fragmented handshake does not
         // get misclassified as inconclusive.
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-        match self
-            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(3))
-            .await
-        {
+        match read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(3)).await {
             Ok(n) if n > 0 => {
                 // Send malformed ClientKeyExchange that triggers Winshock
                 let malformed_cke = self.build_malformed_client_key_exchange();
@@ -206,9 +201,12 @@ impl WinshockTester {
 
                 // Try to read response
                 let mut response = vec![0u8; 1024];
-                match self
-                    .read_complete_tls_record(&mut stream, &mut response, Duration::from_secs(2))
-                    .await
+                match read_io::complete_tls_record(
+                    &mut stream,
+                    &mut response,
+                    Duration::from_secs(2),
+                )
+                .await
                 {
                     Ok(n) if n > 0 => {
                         // Any server response (TLS alert 0x15 or other) means it handled
@@ -267,54 +265,6 @@ impl WinshockTester {
         msg.extend_from_slice(&[0x41; 256]); // 'A' pattern
 
         msg
-    }
-
-    async fn read_complete_tls_record(
-        &self,
-        stream: &mut tokio::net::TcpStream,
-        buffer: &mut [u8],
-        timeout_duration: Duration,
-    ) -> std::io::Result<usize> {
-        let mut total = 0usize;
-        loop {
-            if total >= buffer.len() {
-                break;
-            }
-            let Some(read_buf) = buffer.get_mut(total..) else {
-                break;
-            };
-            let n = match timeout(timeout_duration, stream.read(read_buf)).await {
-                Ok(Ok(n)) => n,
-                Ok(Err(err)) => return Err(err),
-                Err(_) => break,
-            };
-            if n == 0 {
-                break;
-            }
-            total += n;
-            if total >= TLS_RECORD_HEADER_SIZE {
-                let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-                let record_total =
-                    TLS_RECORD_HEADER_SIZE
-                        .checked_add(record_len)
-                        .ok_or_else(|| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Winshock TLS record length overflow",
-                            )
-                        })?;
-                if record_total > buffer.len() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Winshock TLS record length exceeds buffer",
-                    ));
-                }
-                if total >= record_total {
-                    break;
-                }
-            }
-        }
-        Ok(total)
     }
 }
 
@@ -516,18 +466,9 @@ mod tests {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
-        let tester = WinshockTester::new(
-            Target::with_ips(
-                "localhost".to_string(),
-                port,
-                vec!["127.0.0.1".parse().unwrap()],
-            )
-            .unwrap(),
-        );
         stream.write_all(b"ping").await.unwrap();
         let mut buffer = [0u8; 32];
-        let n = tester
-            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
             .await
             .unwrap();
         assert_eq!(n, 7);
@@ -560,17 +501,8 @@ mod tests {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
-        let tester = WinshockTester::new(
-            Target::with_ips(
-                "localhost".to_string(),
-                port,
-                vec!["127.0.0.1".parse().unwrap()],
-            )
-            .unwrap(),
-        );
         let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
-        let n = tester
-            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -595,17 +527,8 @@ mod tests {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
-        let tester = WinshockTester::new(
-            Target::with_ips(
-                "localhost".to_string(),
-                port,
-                vec!["127.0.0.1".parse().unwrap()],
-            )
-            .unwrap(),
-        );
         let mut buffer = [0u8; 16];
-        let err = tester
-            .read_complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+        let err = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
             .await
             .expect_err("oversized record should fail");
 
