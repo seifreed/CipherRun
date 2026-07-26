@@ -238,47 +238,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_status_line_too_short() {
-        let mut client = response_client(64, b"a\n".to_vec());
-        let mut reader = BufReader::new(&mut client);
-        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
-        assert!(format!("{err}").contains("too short"));
-    }
-
-    #[tokio::test]
-    async fn test_read_status_line_multibyte_prefix_does_not_panic() {
-        // A line whose first bytes form a multi-byte char crossing index 3 must
-        // yield a ParseError, not a panic from slicing on a non-char boundary.
-        let mut client = response_client(64, "a\u{1D400}xx\r\n".as_bytes().to_vec());
-        let mut reader = BufReader::new(&mut client);
-        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
-        assert!(format!("{err}").contains("Invalid TEST status code"));
-    }
-
-    #[tokio::test]
-    async fn test_read_status_line_rejects_attached_text() {
-        let mut client = response_client(64, b"220Ready\r\n".to_vec());
-        let mut reader = BufReader::new(&mut client);
-        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
-        assert!(format!("{err}").contains("status separator"));
-    }
-
-    #[tokio::test]
-    async fn test_read_status_line_rejects_multibyte_separator_without_panic() {
-        // A multi-byte char at byte index 3 (the code/separator position) must
-        // yield a ParseError, not a panic from slicing on a non-char boundary.
-        let mut client = response_client(64, "250\u{1D400}cont\r\n".as_bytes().to_vec());
-        let mut reader = BufReader::new(&mut client);
-        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
-        assert!(format!("{err}").contains("status separator"));
-    }
-
-    #[tokio::test]
-    async fn test_read_status_line_invalid_code() {
-        let mut client = response_client(64, b"abc Invalid\r\n".to_vec());
-        let mut reader = BufReader::new(&mut client);
-        let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
-        assert!(format!("{err}").contains("status code"));
+    async fn test_read_status_line_rejects_invalid_lines() {
+        for (line, expected) in [
+            (b"a\n".to_vec(), "too short"),
+            (
+                "a\u{1D400}xx\r\n".as_bytes().to_vec(),
+                "Invalid TEST status code",
+            ),
+            (b"220Ready\r\n".to_vec(), "status separator"),
+            (
+                "250\u{1D400}cont\r\n".as_bytes().to_vec(),
+                "status separator",
+            ),
+            (b"abc Invalid\r\n".to_vec(), "status code"),
+        ] {
+            let mut client = response_client(64, line);
+            let mut reader = BufReader::new(&mut client);
+            let err = read_status_line(&mut reader, "TEST").await.unwrap_err();
+            assert!(format!("{err}").contains(expected));
+        }
     }
 
     #[tokio::test]
