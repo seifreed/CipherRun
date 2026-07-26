@@ -92,6 +92,60 @@ mod tests {
         result
     }
 
+    async fn negotiate_with_lmtp_server(
+        capability_response: &'static [u8],
+        starttls_response: Option<&'static [u8]>,
+    ) -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(b"220 ready\r\n")
+                .await
+                .expect("test server should write response");
+
+            let mut buffer = vec![0u8; 256];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read data");
+            stream
+                .write_all(capability_response)
+                .await
+                .expect("test server should write response");
+
+            if let Some(response) = starttls_response {
+                let _ = stream
+                    .read(&mut buffer)
+                    .await
+                    .expect("test should read data");
+                stream
+                    .write_all(response)
+                    .await
+                    .expect("test server should write response");
+            }
+        });
+
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let result = LmtpNegotiator::new("localhost".to_string())
+            .negotiate_starttls(&mut client)
+            .await;
+
+        server.await.expect("test server task should complete");
+        result
+    }
+
     #[test]
     fn test_lmtp_negotiator_creation() {
         let negotiator = LmtpNegotiator::new("localhost".to_string());
@@ -115,137 +169,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_lmtp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"220 ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-
-            stream
-                .write_all(b"250-STARTTLS\r\n250 OK\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut cmd = [0u8; 16];
-            let _ = stream.read(&mut cmd).await.expect("test should read data");
-            stream
-                .write_all(b"220 go ahead\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = LmtpNegotiator::new("localhost".to_string());
-        negotiator
-            .negotiate_starttls(&mut client)
+        negotiate_with_lmtp_server(b"250-STARTTLS\r\n250 OK\r\n", Some(b"220 go ahead\r\n"))
             .await
             .expect("test LMTP negotiation should succeed");
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_lmtp_negotiate_starttls_rejects_starttls() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"220 ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-            stream
-                .write_all(b"250 OK\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = LmtpNegotiator::new("localhost".to_string());
-        let err = negotiator
-            .negotiate_starttls(&mut client)
+        let err = negotiate_with_lmtp_server(b"250 OK\r\n", None)
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("does not support STARTTLS"));
-
-        let _ = server.await;
     }
 
     #[tokio::test]
     async fn test_lmtp_negotiate_starttls_lhlo_failed() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"220 ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-            stream
-                .write_all(b"500 LHLO failed\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = LmtpNegotiator::new("localhost".to_string());
-        let err = negotiator
-            .negotiate_starttls(&mut client)
+        let err = negotiate_with_lmtp_server(b"500 LHLO failed\r\n", None)
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("capability failed"));
-
-        server.await.expect("test server task should complete");
     }
 }
