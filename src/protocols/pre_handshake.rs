@@ -132,6 +132,15 @@ mod tests {
             .expect("test handshake length fits in u24")
     }
 
+    fn test_target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().expect("valid IP")],
+        )
+        .expect("target should build")
+    }
+
     fn build_handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
         let mut message = Vec::with_capacity(4 + body.len());
         message.push(handshake_type);
@@ -201,12 +210,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_build() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let client_hello = scanner
@@ -221,12 +225,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_lengths_match() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let client_hello = scanner
@@ -243,12 +242,7 @@ mod tests {
 
     #[test]
     fn test_sni_extension() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let sni = scanner
@@ -262,12 +256,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_server_hello_only() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
@@ -291,12 +280,7 @@ mod tests {
         // Here session_id_len=16, so cipher lives at offset 35+16=51 within the
         // ServerHello body. The old `offset + 34` formula would read into the
         // session_id bytes (0x42) and produce cipher_suite = "0x4242".
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let server_hello_body = build_server_hello_body(0x03, 0x03, 16, 0xc02f, 0x00);
@@ -313,12 +297,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_oversized_server_hello_session_id() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let mut server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
@@ -343,12 +322,7 @@ mod tests {
         // adversarial), the previous `version_maj - 2` arithmetic underflowed
         // u8 and panicked in debug builds. The replacement match on the u16
         // version field must map to "Unknown (...)" without panicking.
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let server_hello_body = build_server_hello_body(0x01, 0x00, 0, 0x0700, 0x00);
@@ -368,12 +342,7 @@ mod tests {
     fn test_parse_handshake_response_maps_known_versions() {
         // Regression test: each supported version bytes-pair maps to its canonical
         // name via the u16 match (not arithmetic subtraction).
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
         let scanner = PreHandshakeScanner::new(target);
 
         for (major, minor, expected) in [
@@ -395,12 +364,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_with_certificate() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
 
@@ -585,12 +549,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_skips_non_handshake_records() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let mut record = Vec::new();
@@ -609,12 +568,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_truncated_record_header() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let data = vec![0x16, 0x03, 0x03, 0x00];
@@ -627,12 +581,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_record_length_exceeds_buffer() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let mut record = Vec::new();
@@ -654,12 +603,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_truncated_handshake_message() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let mut message = Vec::new();
@@ -680,12 +624,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_handshake_spanning_records() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
 
@@ -709,12 +648,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_certificate_length_exceeds() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let mut cert_body = Vec::new();
@@ -735,12 +669,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_invalid_certificate_der_fails() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         let cert_der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
@@ -761,12 +690,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_truncated_record() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build");
+        let target = test_target();
 
         let scanner = PreHandshakeScanner::new(target);
         // TLS record claims 6 bytes, but only 1 byte of handshake body follows.
