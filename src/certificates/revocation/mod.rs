@@ -250,6 +250,21 @@ impl RevocationResult {
 mod tests {
     use super::*;
 
+    fn revocation_result(
+        status: RevocationStatus,
+        method: RevocationMethod,
+        details: &str,
+    ) -> RevocationResult {
+        RevocationResult {
+            status,
+            method,
+            details: details.to_string(),
+            ocsp_stapling: false,
+            ocsp_stapling_details: None,
+            must_staple: false,
+        }
+    }
+
     #[test]
     fn test_revocation_checker_creation() {
         let checker = RevocationChecker::new(true);
@@ -294,50 +309,27 @@ mod tests {
 
     #[test]
     fn test_revocation_result_summary_and_problematic() {
-        let good = RevocationResult {
-            status: RevocationStatus::Good,
-            method: RevocationMethod::OCSP,
-            details: "ok".to_string(),
-            ocsp_stapling: false,
-            ocsp_stapling_details: None,
-            must_staple: false,
-        };
+        let good = revocation_result(RevocationStatus::Good, RevocationMethod::OCSP, "ok");
         assert!(good.summary().contains("not revoked"));
         assert!(!good.is_problematic());
 
-        let revoked = RevocationResult {
-            status: RevocationStatus::Revoked,
-            method: RevocationMethod::CRL,
-            details: "revoked".to_string(),
-            ocsp_stapling: false,
-            ocsp_stapling_details: None,
-            must_staple: false,
-        };
+        let revoked =
+            revocation_result(RevocationStatus::Revoked, RevocationMethod::CRL, "revoked");
         assert!(revoked.summary().contains("REVOKED"));
         assert!(revoked.is_problematic());
 
-        let error = RevocationResult {
-            status: RevocationStatus::Error,
-            method: RevocationMethod::OCSP,
-            details: "error".to_string(),
-            ocsp_stapling: false,
-            ocsp_stapling_details: None,
-            must_staple: false,
-        };
+        let error = revocation_result(RevocationStatus::Error, RevocationMethod::OCSP, "error");
         assert!(error.summary().contains("Error"));
         assert!(error.is_problematic());
     }
 
     #[test]
     fn test_revocation_result_summary_not_checked() {
-        let result = RevocationResult {
-            status: RevocationStatus::NotChecked,
-            method: RevocationMethod::None,
-            details: "not checked".to_string(),
-            ocsp_stapling: false,
-            ocsp_stapling_details: None,
-            must_staple: false,
-        };
+        let result = revocation_result(
+            RevocationStatus::NotChecked,
+            RevocationMethod::None,
+            "not checked",
+        );
         assert!(result.summary().contains("not checked"));
         assert!(!result.is_problematic());
     }
