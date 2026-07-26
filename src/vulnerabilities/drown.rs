@@ -418,6 +418,15 @@ mod tests {
         assert_eq!(result.unwrap(), Sslv2Status::Inconclusive);
     }
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn test_sslv2_one_byte_response_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -435,12 +444,7 @@ mod tests {
                 .expect("write partial header");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = DrownTester::new(target).test().await.unwrap();
         server.await.expect("server task");
@@ -462,12 +466,7 @@ mod tests {
             let (_socket, _) = listener.accept().await.expect("accept");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = DrownTester::new(target).test().await.unwrap();
         server.await.expect("server task");
@@ -496,12 +495,7 @@ mod tests {
             let _ = socket.write_all(&response[1..]).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = DrownTester::new(target)
             .test_sslv2()
@@ -562,12 +556,7 @@ mod tests {
             let _ = socket.write_all(&response).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = DrownTester::new(target)
             .test_sslv2()
