@@ -352,71 +352,30 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_sslv2_response_confirmed() {
-        // SSLv2 ServerHello (message type 0x04)
-        // Need valid record: header (2 bytes) + length must match data
-        // Record length 0x40 = 64 bytes, so total = 66 bytes (header + body)
-        let mut response = vec![0x80, 0x40, 0x04]; // header (length=64) + msg type
-        response.extend(vec![0u8; 63]); // padding to match length
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_confirmed_with_three_byte_header() {
-        let response = [0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Confirmed);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_error() {
-        // SSLv2 Error message (message type 0x00)
-        let mut response = vec![0x80, 0x40, 0x00]; // header + msg type
-        response.extend(vec![0u8; 63]); // padding to match length
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Probable);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_server_verify() {
-        // SSLv2 ServerVerify (message type 0x05)
-        let mut response = vec![0x80, 0x40, 0x05];
-        response.extend(vec![0u8; 63]);
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Probable);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_unknown() {
-        // Unknown SSLv2 message type with valid length
-        let mut response = vec![0x80, 0x40, 0xFF];
-        response.extend(vec![0u8; 63]);
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Suspicious);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_not_sslv2() {
-        // TLS record (not SSLv2)
-        let response = vec![0x16, 0x03, 0x01]; // TLS handshake
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::NotSupported);
-    }
-
-    #[test]
-    fn test_analyze_sslv2_response_truncated() {
-        // SSLv2 header but insufficient data
-        let response = vec![0x80]; // Only 1 byte
-        let result = sslv2::analyze_response(&response);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Sslv2Status::Inconclusive);
+    fn test_analyze_sslv2_responses() {
+        for (case, response, expected) in [
+            ("server hello", sslv2_response(0x04), Sslv2Status::Confirmed),
+            (
+                "three byte header",
+                vec![0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00],
+                Sslv2Status::Confirmed,
+            ),
+            ("error", sslv2_response(0x00), Sslv2Status::Probable),
+            ("server verify", sslv2_response(0x05), Sslv2Status::Probable),
+            ("unknown", sslv2_response(0xff), Sslv2Status::Suspicious),
+            (
+                "tls record",
+                vec![0x16, 0x03, 0x01],
+                Sslv2Status::NotSupported,
+            ),
+            ("truncated", vec![0x80], Sslv2Status::Inconclusive),
+        ] {
+            assert_eq!(
+                sslv2::analyze_response(&response).expect(case),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     fn localhost_target(port: u16) -> Target {
@@ -428,10 +387,14 @@ mod tests {
         .unwrap()
     }
 
-    fn sslv2_server_hello_response() -> Vec<u8> {
-        let mut response = vec![0x80, 0x40, 0x04];
+    fn sslv2_response(message_type: u8) -> Vec<u8> {
+        let mut response = vec![0x80, 0x40, message_type];
         response.extend(vec![0u8; 63]);
         response
+    }
+
+    fn sslv2_server_hello_response() -> Vec<u8> {
+        sslv2_response(0x04)
     }
 
     async fn spawn_sslv2_response_server(response: Vec<u8>) -> (u16, tokio::task::JoinHandle<()>) {
