@@ -4,8 +4,8 @@
 
 //! Path extension trait for convenient path-to-string conversion with typed errors.
 
-use crate::error::TlsError;
 use crate::Result;
+use crate::error::TlsError;
 use std::path::{Path, PathBuf};
 
 /// Extension trait for converting paths to strings with proper error handling.
@@ -61,33 +61,18 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
 
     #[test]
-    fn test_path_to_str_checked_valid() {
-        let path = Path::new("/some/valid/path");
-        assert_eq!(path.to_str_checked().unwrap(), "/some/valid/path");
-    }
+    fn test_to_str_checked_valid_paths() {
+        for value in [
+            "/some/valid/path",
+            "/path/with spaces/file.txt",
+            "relative/path.txt",
+        ] {
+            assert_eq!(Path::new(value).to_str_checked().unwrap(), value);
+        }
 
-    #[test]
-    fn test_pathbuf_to_str_checked_valid() {
-        let path = PathBuf::from("/some/valid/path");
-        assert_eq!(path.to_str_checked().unwrap(), "/some/valid/path");
-    }
-
-    #[test]
-    fn test_path_with_spaces() {
-        let path = Path::new("/path/with spaces/file.txt");
-        assert_eq!(path.to_str_checked().unwrap(), "/path/with spaces/file.txt");
-    }
-
-    #[test]
-    fn test_relative_path_to_str_checked() {
-        let path = Path::new("relative/path.txt");
-        assert_eq!(path.to_str_checked().unwrap(), "relative/path.txt");
-    }
-
-    #[test]
-    fn test_pathbuf_relative_to_str_checked() {
-        let path = PathBuf::from("relative/path.txt");
-        assert_eq!(path.to_str_checked().unwrap(), "relative/path.txt");
+        for value in ["/some/valid/path", "relative/path.txt"] {
+            assert_eq!(PathBuf::from(value).to_str_checked().unwrap(), value);
+        }
     }
 
     #[cfg(unix)]
