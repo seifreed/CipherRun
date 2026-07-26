@@ -500,16 +500,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sslv2_client_hello_length_matches_header() {
-        let hello = sslv2::client_hello();
-        let len = sslv2_header_len(&hello);
-        assert_eq!(hello.len(), len + 2);
-    }
-
-    #[test]
-    fn test_sslv2_export_hello_length_matches_header() {
-        let hello = sslv2::export_client_hello();
-        let len = sslv2_header_len(&hello);
-        assert_eq!(hello.len(), len + 2);
+    fn test_sslv2_client_hello_lengths_match_header() {
+        for hello in [sslv2::client_hello(), sslv2::export_client_hello()] {
+            let len = sslv2_header_len(&hello);
+            assert_eq!(hello.len(), len + 2);
+        }
     }
 }
