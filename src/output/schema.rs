@@ -385,6 +385,16 @@ mod tests {
         );
     }
 
+    fn valid_scan_json() -> Value {
+        json!({
+            "target": "example.com:443",
+            "scan_time_ms": 100,
+            "protocols": [],
+            "ciphers": {},
+            "vulnerabilities": []
+        })
+    }
+
     #[test]
     fn test_schema_generation() {
         let schema = CipherRunSchema::get_schema();
@@ -395,13 +405,7 @@ mod tests {
 
     #[test]
     fn test_validation_valid_data() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        let data = valid_scan_json();
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_ok());
@@ -418,16 +422,11 @@ mod tests {
 
     #[test]
     fn test_validation_target_not_string() {
-        let data = json!({
-            "target": {
+        let mut data = valid_scan_json();
+        data["target"] = json!({
                 "hostname": "example.com",
                 "port": 443,
                 "ip": "93.184.216.34"
-            },
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": []
         });
 
         assert_validation_error(data, "Target must be a string");
@@ -627,26 +626,16 @@ mod tests {
 
     #[test]
     fn test_validation_target_number() {
-        let data = json!({
-            "target": 443,
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        let mut data = valid_scan_json();
+        data["target"] = json!(443);
 
         assert_validation_error(data, "Target must be a string");
     }
 
     #[test]
     fn test_validation_rejects_negative_scan_time() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": -1,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        let mut data = valid_scan_json();
+        data["scan_time_ms"] = json!(-1);
 
         assert_validation_error(data, "scan_time_ms must be a non-negative integer");
     }
@@ -687,63 +676,43 @@ mod tests {
 
     #[test]
     fn test_validation_rejects_protocol_missing_inconclusive() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [{
+        let mut data = valid_scan_json();
+        data["protocols"] = json!([{
                 "protocol": "TLS12",
                 "supported": false,
                 "preferred": false,
                 "ciphers_count": 0
-            }],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        }]);
 
         assert_validation_error(data, "Protocol at index 0");
     }
 
     #[test]
     fn test_validation_rejects_protocols_not_array() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": "TLS12",
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        let mut data = valid_scan_json();
+        data["protocols"] = json!("TLS12");
 
         assert_validation_error(data, "protocols must be an array");
     }
 
     #[test]
     fn test_validation_rejects_protocol_item_not_object() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": ["TLS12"],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        let mut data = valid_scan_json();
+        data["protocols"] = json!(["TLS12"]);
 
         assert_validation_error(data, "Protocol at index 0 must be an object");
     }
 
     #[test]
     fn test_validation_rejects_protocol_invalid_field_types() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [{
+        let mut data = valid_scan_json();
+        data["protocols"] = json!([{
                 "protocol": "TLS 1.2",
                 "supported": "false",
                 "inconclusive": false,
                 "preferred": false,
                 "ciphers_count": -1
-            }],
-            "ciphers": {},
-            "vulnerabilities": []
-        });
+        }]);
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_err());
@@ -767,37 +736,27 @@ mod tests {
 
     #[test]
     fn test_validation_rejects_vulnerability_missing_details() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": [{
+        let mut data = valid_scan_json();
+        data["vulnerabilities"] = json!([{
                 "vuln_type": "Heartbleed",
                 "vulnerable": false,
                 "inconclusive": true,
                 "severity": "High"
-            }]
-        });
+        }]);
 
         assert_validation_error(data, "Vulnerability at index 0");
     }
 
     #[test]
     fn test_validation_rejects_vulnerability_invalid_field_types() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": [{
+        let mut data = valid_scan_json();
+        data["vulnerabilities"] = json!([{
                 "vuln_type": 7,
                 "vulnerable": "false",
                 "inconclusive": false,
                 "details": null,
                 "severity": "banana"
-            }]
-        });
+        }]);
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_err());
@@ -826,42 +785,26 @@ mod tests {
 
     #[test]
     fn test_validation_rejects_vulnerabilities_not_array() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": "Heartbleed"
-        });
+        let mut data = valid_scan_json();
+        data["vulnerabilities"] = json!("Heartbleed");
 
         assert_validation_error(data, "vulnerabilities must be an array");
     }
 
     #[test]
     fn test_validation_rejects_ciphers_not_object() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": [],
-            "vulnerabilities": []
-        });
+        let mut data = valid_scan_json();
+        data["ciphers"] = json!([]);
 
         assert_validation_error(data, "ciphers must be an object");
     }
 
     #[test]
     fn test_validation_rejects_optional_result_groups_with_wrong_types() {
-        let data = json!({
-            "target": "example.com:443",
-            "scan_time_ms": 100,
-            "protocols": [],
-            "ciphers": {},
-            "vulnerabilities": [],
-            "certificate_chain": [],
-            "rating": "A",
-            "http": false
-        });
+        let mut data = valid_scan_json();
+        data["certificate_chain"] = json!([]);
+        data["rating"] = json!("A");
+        data["http"] = json!(false);
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_err());
