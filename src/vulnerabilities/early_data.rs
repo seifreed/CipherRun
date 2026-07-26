@@ -570,16 +570,20 @@ mod tests {
         addr
     }
 
-    #[tokio::test]
-    async fn test_probe_zero_rtt_without_early_data_reports_not_supported() {
-        crate::utils::insecure_tls::ensure_ring_provider();
-        let addr = spawn_tls13_server(0).await;
-        let target = Target::with_ips(
+    fn localhost_target(addr: SocketAddr) -> Target {
+        Target::with_ips(
             "localhost".to_string(),
             addr.port(),
             vec![IpAddr::from([127, 0, 0, 1])],
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_probe_zero_rtt_without_early_data_reports_not_supported() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls13_server(0).await;
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let status = tester.probe_zero_rtt_early_data().await.unwrap();
@@ -608,12 +612,7 @@ mod tests {
     async fn test_probe_zero_rtt_with_early_data_reports_supported() {
         crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let status = tester.probe_zero_rtt_early_data().await.unwrap();
@@ -628,12 +627,7 @@ mod tests {
         // non-verifying connector, otherwise it false-reports "no TLS 1.3" and
         // contradicts the early-data support result.
         let addr = spawn_tls13_server(16384).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let result = tester.test().await.unwrap();
@@ -647,12 +641,7 @@ mod tests {
     async fn test_replay_attack_exercises_two_resumed_early_data_connections() {
         crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let result = tester.test_replay_attack().await.unwrap();
@@ -744,12 +733,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr);
 
         let tester = EarlyDataTester::new(&target);
         let status = tester.connect_tls13().await.unwrap();
