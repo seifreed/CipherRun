@@ -15,6 +15,21 @@ use cipherrun::scanner::{RatingResults, ScanResults};
 use cipherrun::utils::network::Target;
 use cipherrun::vulnerabilities::Severity;
 
+fn aggregated_protocol_result() -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol: Protocol::TLS13,
+        supported: true,
+        inconclusive: false,
+        preferred: true,
+        ciphers_count: 1,
+        handshake_time_ms: None,
+        heartbeat_enabled: None,
+        session_resumption_caching: Some(true),
+        session_resumption_tickets: Some(false),
+        secure_renegotiation: None,
+    }
+}
+
 fn build_scan_results() -> ScanResults {
     let mut results = ScanResults {
         target: "example.com:443".to_string(),
@@ -148,18 +163,7 @@ fn test_multi_ip_report_display() {
     ];
 
     let aggregated = AggregatedScanResult {
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: Some(true),
-            session_resumption_tickets: Some(false),
-            secure_renegotiation: None,
-        }],
+        protocols: vec![aggregated_protocol_result()],
         ciphers: HashMap::new(),
         grade: ("B".to_string(), 85),
         certificate_info: None,
@@ -318,18 +322,7 @@ fn test_multi_ip_report_display_is_deterministic() {
         ];
 
         let aggregated = AggregatedScanResult {
-            protocols: vec![ProtocolTestResult {
-                protocol: Protocol::TLS13,
-                supported: true,
-                inconclusive: false,
-                preferred: true,
-                ciphers_count: 1,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
-                session_resumption_caching: Some(true),
-                session_resumption_tickets: Some(false),
-                secure_renegotiation: None,
-            }],
+            protocols: vec![aggregated_protocol_result()],
             ciphers: HashMap::new(),
             grade: ("B".to_string(), 85),
             certificate_info: None,
