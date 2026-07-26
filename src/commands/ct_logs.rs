@@ -102,24 +102,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_custom_indices_rejects_invalid_format() {
-        let err = parse_custom_indices(&["google:123".to_string()])
-            .expect_err("invalid format should fail");
-        assert!(err.to_string().contains("Expected SOURCE=INDEX"));
-    }
-
-    #[test]
-    fn test_parse_custom_indices_rejects_invalid_value() {
-        let err = parse_custom_indices(&["google=abc".to_string()])
-            .expect_err("invalid value should fail");
-        assert!(err.to_string().contains("Invalid index value"));
-    }
-
-    #[test]
-    fn test_parse_custom_indices_rejects_duplicate_source() {
-        let err = parse_custom_indices(&["google=1".to_string(), "google=2".to_string()])
-            .expect_err("duplicate source should fail");
-
-        assert!(err.to_string().contains("Duplicate --ct-index source"));
+    fn test_parse_custom_indices_rejects_invalid_inputs() {
+        for (case, args, expected) in [
+            ("invalid format", vec!["google:123"], "Expected SOURCE=INDEX"),
+            ("invalid value", vec!["google=abc"], "Invalid index value"),
+            (
+                "duplicate source",
+                vec!["google=1", "google=2"],
+                "Duplicate --ct-index source",
+            ),
+        ] {
+            let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+            let err = parse_custom_indices(&args).expect_err(case);
+            assert!(err.to_string().contains(expected), "{case}");
+        }
     }
 }
