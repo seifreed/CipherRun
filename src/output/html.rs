@@ -1,7 +1,7 @@
 // HTML Report Generator
 
-use crate::Result;
 use crate::scanner::ScanResults;
+use crate::Result;
 use handlebars::Handlebars;
 use serde_json::json;
 
@@ -372,12 +372,32 @@ mod tests {
     use crate::scanner::{AdvancedResults, RatingResults};
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
+    fn scan_results() -> ScanResults {
+        ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn rating_results(grade: Grade, score: u8) -> RatingResults {
+        RatingResults {
+            ssl_rating: Some(RatingResult {
+                grade,
+                score,
+                certificate_score: score,
+                protocol_score: score,
+                key_exchange_score: score,
+                cipher_strength_score: score,
+                warnings: Vec::new(),
+            }),
+        }
+    }
+
     #[test]
     fn test_html_generation() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 5000,
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -388,7 +408,6 @@ mod tests {
     #[test]
     fn test_html_generation_includes_certificate_section() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 5000,
             certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
                 chain: CertificateChain {
@@ -438,7 +457,7 @@ mod tests {
                     must_staple: false,
                 }),
             }),
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -455,7 +474,6 @@ mod tests {
     #[test]
     fn test_html_generation_includes_fingerprint_sections() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 5000,
             advanced: Some(AdvancedResults {
                 cdn_detection: Some(CdnDetection {
@@ -472,7 +490,7 @@ mod tests {
                 }),
                 ..Default::default()
             }),
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -489,19 +507,8 @@ mod tests {
         // (F/T/M -> red). Previously the CSS only coloured F, leaving T/M unstyled.
         for grade in [Grade::T, Grade::M] {
             let results = ScanResults {
-                target: "example.com:443".to_string(),
-                rating: Some(RatingResults {
-                    ssl_rating: Some(RatingResult {
-                        grade,
-                        score: 0,
-                        certificate_score: 0,
-                        protocol_score: 0,
-                        key_exchange_score: 0,
-                        cipher_strength_score: 0,
-                        warnings: Vec::new(),
-                    }),
-                }),
-                ..Default::default()
+                rating: Some(rating_results(grade, 0)),
+                ..scan_results()
             };
             let html = generate_html_report(&results).expect("test assertion should succeed");
             // The grade-box must carry the matching red class.
@@ -520,20 +527,9 @@ mod tests {
     #[test]
     fn test_html_grade_class_formatting() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 10,
-            rating: Some(RatingResults {
-                ssl_rating: Some(RatingResult {
-                    grade: Grade::APlus,
-                    score: 95,
-                    certificate_score: 95,
-                    protocol_score: 95,
-                    key_exchange_score: 95,
-                    cipher_strength_score: 95,
-                    warnings: Vec::new(),
-                }),
-            }),
-            ..Default::default()
+            rating: Some(rating_results(Grade::APlus, 95)),
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -544,7 +540,6 @@ mod tests {
     #[test]
     fn test_html_includes_vulnerabilities() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             vulnerabilities: vec![VulnerabilityResult {
                 vuln_type: VulnerabilityType::Heartbleed,
                 vulnerable: true,
@@ -554,7 +549,7 @@ mod tests {
                 cwe: None,
                 severity: Severity::High,
             }],
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -566,7 +561,6 @@ mod tests {
     #[test]
     fn test_html_protocol_none_is_inconclusive() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             protocols: vec![crate::protocols::ProtocolTestResult {
                 protocol: crate::protocols::Protocol::TLS12,
                 supported: true,
@@ -579,7 +573,7 @@ mod tests {
                 session_resumption_tickets: None,
                 secure_renegotiation: None,
             }],
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -589,7 +583,6 @@ mod tests {
     #[test]
     fn test_html_inconclusive_protocol_not_rendered_as_not_supported() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             protocols: vec![crate::protocols::ProtocolTestResult {
                 protocol: crate::protocols::Protocol::TLS10,
                 supported: false,
@@ -602,7 +595,7 @@ mod tests {
                 session_resumption_tickets: None,
                 secure_renegotiation: None,
             }],
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -616,9 +609,8 @@ mod tests {
     #[test]
     fn test_write_html_file_round_trip() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 1,
-            ..Default::default()
+            ..scan_results()
         };
         let path = std::env::temp_dir().join("cipherrun-report.html");
         write_html_file(&results, path.to_str().unwrap()).expect("write should succeed");
@@ -630,10 +622,9 @@ mod tests {
     #[test]
     fn test_html_omits_vulnerabilities_when_empty() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 1,
             vulnerabilities: Vec::new(),
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -643,10 +634,9 @@ mod tests {
     #[test]
     fn test_html_includes_protocol_section_even_when_empty() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 1,
             protocols: Vec::new(),
-            ..Default::default()
+            ..scan_results()
         };
 
         let html = generate_html_report(&results).expect("test assertion should succeed");
@@ -656,9 +646,8 @@ mod tests {
     #[test]
     fn test_html_contains_head_and_body() {
         let results = ScanResults {
-            target: "example.com:443".to_string(),
             scan_time_ms: 1,
-            ..Default::default()
+            ..scan_results()
         };
         let html = generate_html_report(&results).expect("test assertion should succeed");
         assert!(html.contains("<head>"));
