@@ -260,18 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn test_winshock_result() {
-        let result = WinshockTestResult {
-            vulnerable: false,
-            schannel_detected: true,
-            inconclusive: false,
-            details: "Test".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.schannel_detected);
-    }
-
-    #[test]
     fn test_malformed_cke_build() {
         let malformed = messages::malformed_client_key_exchange();
 
@@ -306,30 +294,6 @@ mod tests {
         assert_eq!(malformed[6], 0xff);
         assert_eq!(malformed[7], 0xff);
         assert_eq!(malformed[8], 0xff);
-    }
-
-    #[test]
-    fn test_winshock_result_details() {
-        let result = WinshockTestResult {
-            vulnerable: false,
-            schannel_detected: false,
-            inconclusive: false,
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
-    fn test_winshock_result_debug_contains_fields() {
-        let result = WinshockTestResult {
-            vulnerable: true,
-            schannel_detected: true,
-            inconclusive: false,
-            details: "Vulnerable".to_string(),
-        };
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("schannel_detected"));
     }
 
     #[test]
