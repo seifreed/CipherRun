@@ -6,8 +6,17 @@ fn length_error(context: &str) -> TlsError {
     }
 }
 
+pub(crate) fn u8_len(len: usize, context: &str) -> Result<u8> {
+    u8::try_from(len).map_err(|_| length_error(context))
+}
+
 pub(crate) fn u16_len(len: usize, context: &str) -> Result<u16> {
     u16::try_from(len).map_err(|_| length_error(context))
+}
+
+pub(crate) fn u16_byte_len(items: usize, context: &str) -> Result<u16> {
+    let bytes = items.checked_mul(2).ok_or_else(|| length_error(context))?;
+    u16_len(bytes, context)
 }
 
 pub(crate) fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {

@@ -91,12 +91,6 @@ impl ClientHelloCapture {
         })
     }
 
-    fn u8_len(len: usize, context: &str) -> Result<u8> {
-        u8::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{context} length is too large"),
-        })
-    }
-
     /// Parse ClientHello from raw TLS record
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut cursor = 0;
@@ -471,25 +465,18 @@ impl ClientHelloCapture {
         bytes.extend_from_slice(&self.random);
 
         // Session ID
-        bytes.push(Self::u8_len(self.session_id.len(), "Session ID")?);
+        bytes.push(length::u8_len(self.session_id.len(), "Session ID")?);
         bytes.extend_from_slice(&self.session_id);
 
         // Cipher Suites
-        let cipher_suites_len =
-            self.cipher_suites
-                .len()
-                .checked_mul(2)
-                .ok_or_else(|| TlsError::ParseError {
-                    message: "Cipher suites length is too large".to_string(),
-                })?;
-        let cipher_suites_len = length::u16_len(cipher_suites_len, "Cipher suites")?;
+        let cipher_suites_len = length::u16_byte_len(self.cipher_suites.len(), "Cipher suites")?;
         bytes.extend_from_slice(&cipher_suites_len.to_be_bytes());
         for cipher in &self.cipher_suites {
             bytes.extend_from_slice(&cipher.to_be_bytes());
         }
 
         // Compression Methods
-        bytes.push(Self::u8_len(
+        bytes.push(length::u8_len(
             self.compression_methods.len(),
             "Compression methods",
         )?);

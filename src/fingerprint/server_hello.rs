@@ -33,12 +33,6 @@ impl ServerHelloCapture {
         })
     }
 
-    fn u8_len(len: usize, context: &str) -> Result<u8> {
-        u8::try_from(len).map_err(|_| TlsError::ParseError {
-            message: format!("{context} length is too large"),
-        })
-    }
-
     /// Parse ServerHello from raw TLS record bytes
     ///
     /// Expected format:
@@ -313,7 +307,7 @@ impl ServerHelloCapture {
         bytes.extend_from_slice(&self.random);
 
         // Session ID
-        bytes.push(Self::u8_len(self.session_id.len(), "Session ID")?);
+        bytes.push(length::u8_len(self.session_id.len(), "Session ID")?);
         bytes.extend_from_slice(&self.session_id);
 
         // Cipher suite
