@@ -252,6 +252,15 @@ mod tests {
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_winshock_result() {
         let result = WinshockTestResult {
@@ -344,12 +353,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = WinshockTester::new(target);
         let result = tester.test().await.unwrap();
@@ -368,12 +372,7 @@ mod tests {
             let _ = listener.accept().await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = WinshockTester::new(target);
         let result = tester.test().await.unwrap();
