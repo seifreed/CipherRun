@@ -8,6 +8,10 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+mod result;
+
+pub use result::Lucky13TestResult;
+
 /// Lucky13 vulnerability tester
 pub struct Lucky13Tester {
     target: Target,
@@ -18,7 +22,7 @@ pub struct Lucky13Tester {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CbcCipherSupportStatus {
+pub(super) enum CbcCipherSupportStatus {
     Supported,
     NotSupported,
     Inconclusive,
@@ -105,36 +109,7 @@ impl Lucky13Tester {
     pub async fn test(&self) -> Result<Lucky13TestResult> {
         let cbc_status = self.test_cbc_ciphers().await?;
 
-        match cbc_status {
-            CbcCipherSupportStatus::Inconclusive => Ok(Lucky13TestResult {
-                vulnerable: false,
-                partially_vulnerable: false,
-                cbc_supported: false,
-                inconclusive: true,
-                details: "Lucky13 assessment inconclusive - unable to determine CBC cipher support"
-                    .to_string(),
-            }),
-            CbcCipherSupportStatus::Supported => Ok(Lucky13TestResult {
-                vulnerable: false,
-                partially_vulnerable: true,
-                cbc_supported: true,
-                inconclusive: false,
-                details:
-                    "Server supports CBC cipher suites, which are in the class susceptible to the \
-                     Lucky13 timing attack (CVE-2013-0169). Whether the TLS implementation includes \
-                     the constant-time MAC mitigation cannot be confirmed by remote timing (the \
-                     difference is below network-jitter resolution). Recommendation: prefer AEAD \
-                     cipher suites (AES-GCM, ChaCha20-Poly1305) and disable CBC."
-                        .to_string(),
-            }),
-            CbcCipherSupportStatus::NotSupported => Ok(Lucky13TestResult {
-                vulnerable: false,
-                partially_vulnerable: false,
-                cbc_supported: false,
-                inconclusive: false,
-                details: "Not vulnerable - server does not support CBC cipher suites".to_string(),
-            }),
-        }
+        Ok(Lucky13TestResult::from_cbc_status(cbc_status))
     }
 
     /// Test if CBC ciphers are supported.
@@ -213,16 +188,6 @@ fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
         .clone()
         .unwrap_or_else(|| target_hostname.to_string());
     (hostname, sni_hostname.is_some())
-}
-
-/// Lucky13 test result
-#[derive(Debug, Clone)]
-pub struct Lucky13TestResult {
-    pub vulnerable: bool,
-    pub partially_vulnerable: bool,
-    pub cbc_supported: bool,
-    pub inconclusive: bool,
-    pub details: String,
 }
 
 #[cfg(test)]
