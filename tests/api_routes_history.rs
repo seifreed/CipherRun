@@ -51,6 +51,33 @@ async fn insert_history_scan(
     }
 }
 
+async fn history_json(state: Arc<AppState>, domain: &str, port: u16, limit: usize) -> Value {
+    let response = history::get_history(
+        axum::extract::State(state),
+        axum::extract::Path(domain.to_string()),
+        axum::extract::Query(history::HistoryQuery { port, limit }),
+    )
+    .await
+    .unwrap();
+    serde_json::to_value(response.0).unwrap()
+}
+
+async fn history_err(
+    state: Arc<AppState>,
+    domain: &str,
+    port: u16,
+    limit: usize,
+    message: &str,
+) -> cipherrun::api::models::error::ApiError {
+    history::get_history(
+        axum::extract::State(state),
+        axum::extract::Path(domain.to_string()),
+        axum::extract::Query(history::HistoryQuery { port, limit }),
+    )
+    .await
+    .expect_err(message)
+}
+
 #[tokio::test]
 async fn test_history_route_returns_not_found_when_no_history_exists() {
     let state = sqlite_state().await;
@@ -70,18 +97,7 @@ async fn test_history_route_returns_inserted_scan() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 10).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
 }
@@ -92,18 +108,7 @@ async fn test_history_route_filters_by_port() {
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "example.com", 8443, 0, "B").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 10,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 8443, 10).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -115,18 +120,7 @@ async fn test_history_route_applies_limit_and_desc_order() {
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
     assert_eq!(json["scans"][1]["grade"], Value::from("B"));
@@ -137,16 +131,14 @@ async fn test_history_route_returns_not_found_for_unknown_domain() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("missing.example".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
+    let err = history_err(
+        state,
+        "missing.example",
+        443,
+        10,
+        "unknown domain should return not found",
     )
-    .await
-    .expect_err("unknown domain should return not found");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::NotFound(_)
@@ -160,18 +152,7 @@ async fn test_history_route_applies_limit_with_matching_port_only() {
     insert_history_scan(&state, "example.com", 8443, -10, "B").await;
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
 }
@@ -181,16 +162,14 @@ async fn test_history_route_unknown_domain_returns_not_found_even_with_other_mat
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("missing.example".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 1,
-        }),
+    let err = history_err(
+        state,
+        "missing.example",
+        8443,
+        1,
+        "unknown domain should return not found",
     )
-    .await
-    .expect_err("unknown domain should return not found");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::NotFound(_)
@@ -205,18 +184,7 @@ async fn test_history_route_limit_preserves_desc_order_for_same_port() {
     insert_history_scan(&state, "example.com", 8443, -5, "B").await;
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 3,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 8443, 3).await;
     assert_eq!(json["total_scans"], Value::from(4));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
     assert_eq!(json["scans"][1]["grade"], Value::from("B"));
@@ -230,18 +198,7 @@ async fn test_history_route_limit_one_returns_latest_scan_for_port() {
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
 }
@@ -253,18 +210,7 @@ async fn test_history_route_ignores_other_ports_when_limit_is_high() {
     insert_history_scan(&state, "example.com", 8443, -10, "B").await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 10).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("A"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -276,16 +222,7 @@ async fn test_history_route_zero_limit_returns_bad_request_even_with_matching_do
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 0,
-        }),
-    )
-    .await
-    .expect_err("zero limit should fail");
+    let err = history_err(state, "example.com", 443, 0, "zero limit should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -297,16 +234,7 @@ async fn test_history_route_zero_limit_returns_bad_request_for_unknown_domain() 
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("missing.example".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 0,
-        }),
-    )
-    .await
-    .expect_err("zero limit should fail");
+    let err = history_err(state, "missing.example", 443, 0, "zero limit should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -318,16 +246,14 @@ async fn test_history_route_returns_not_found_for_known_domain_when_port_does_no
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 10,
-        }),
+    let err = history_err(
+        state,
+        "example.com",
+        8443,
+        10,
+        "missing port history should return not found",
     )
-    .await
-    .expect_err("missing port history should return not found");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::NotFound(_)
@@ -340,18 +266,7 @@ async fn test_history_route_returns_only_matching_port_when_other_port_has_newer
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 10).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -362,18 +277,7 @@ async fn test_history_route_ignores_newer_matching_port_results_from_other_domai
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 10).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -384,18 +288,7 @@ async fn test_history_route_limit_one_still_ignores_other_domain_newer_scan() {
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -407,16 +300,7 @@ async fn test_history_route_limit_zero_returns_bad_request_even_with_other_domai
     insert_history_scan(&state, "example.com", 443, -5, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 0,
-        }),
-    )
-    .await
-    .expect_err("zero limit should fail");
+    let err = history_err(state, "example.com", 443, 0, "zero limit should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -430,18 +314,7 @@ async fn test_history_route_limit_one_returns_same_domain_requested_port_only() 
     insert_history_scan(&state, "example.com", 8443, -5, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(1));
     assert_eq!(json["scans"][0]["grade"], Value::from("C"));
 }
@@ -453,18 +326,7 @@ async fn test_history_route_limit_two_ignores_other_domain_even_when_newer() {
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -477,18 +339,7 @@ async fn test_history_route_limit_two_ignores_newer_other_port_from_same_domain(
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -502,18 +353,7 @@ async fn test_history_route_limit_one_ignores_newer_other_domain_and_other_port_
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -522,16 +362,14 @@ async fn test_history_route_limit_one_ignores_newer_other_domain_and_other_port_
 async fn test_history_route_rejects_domain_with_embedded_port() {
     let state = sqlite_state().await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com:443".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
+    let err = history_err(
+        state,
+        "example.com:443",
+        443,
+        10,
+        "embedded port in domain path should fail",
     )
-    .await
-    .expect_err("embedded port in domain path should fail");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -542,16 +380,14 @@ async fn test_history_route_rejects_domain_with_embedded_port() {
 async fn test_history_route_rejects_invalid_hostname() {
     let state = sqlite_state().await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example..com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 10,
-        }),
+    let err = history_err(
+        state,
+        "example..com",
+        443,
+        10,
+        "invalid hostname should fail",
     )
-    .await
-    .expect_err("invalid hostname should fail");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -567,18 +403,7 @@ async fn test_history_route_limit_two_ignores_other_domain_and_other_port_even_w
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -592,18 +417,7 @@ async fn test_history_route_limit_two_for_non_default_port_ignores_newer_other_p
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 8443, 2).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -617,18 +431,7 @@ async fn test_history_route_limit_one_for_non_default_port_ignores_newer_other_p
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 8443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -641,16 +444,14 @@ async fn test_history_route_unknown_domain_non_default_port_returns_not_found_wi
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("missing.example".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 2,
-        }),
+    let err = history_err(
+        state,
+        "missing.example",
+        8443,
+        2,
+        "unknown domain should return not found",
     )
-    .await
-    .expect_err("unknown domain should return not found");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::NotFound(_)
@@ -664,16 +465,7 @@ async fn test_history_route_limit_zero_for_non_default_port_returns_bad_request(
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 8443,
-            limit: 0,
-        }),
-    )
-    .await
-    .expect_err("zero limit should fail");
+    let err = history_err(state, "example.com", 8443, 0, "zero limit should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -688,18 +480,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_newer_non_default
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -713,18 +494,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_newer_non_default
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(3));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -737,16 +507,7 @@ async fn test_history_route_limit_zero_for_default_port_returns_bad_request() {
     insert_history_scan(&state, "example.com", 8443, -5, "A").await;
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 0,
-        }),
-    )
-    .await
-    .expect_err("zero limit should fail");
+    let err = history_err(state, "example.com", 443, 0, "zero limit should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -758,13 +519,7 @@ async fn test_history_route_port_zero_returns_bad_request() {
     let state = sqlite_state().await;
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery { port: 0, limit: 10 }),
-    )
-    .await
-    .expect_err("port zero should fail");
+    let err = history_err(state, "example.com", 0, 10, "port zero should fail").await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::BadRequest(_)
@@ -778,16 +533,14 @@ async fn test_history_route_unknown_default_port_returns_not_found_with_same_dom
     insert_history_scan(&state, "example.com", 8443, -2, "A").await;
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
-    let err = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("missing.example".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
+    let err = history_err(
+        state,
+        "missing.example",
+        443,
+        2,
+        "unknown domain should return not found",
     )
-    .await
-    .expect_err("unknown domain should return not found");
+    .await;
     assert!(matches!(
         err,
         cipherrun::api::models::error::ApiError::NotFound(_)
@@ -802,18 +555,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_same_domain_newer
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 8443, -1, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -827,18 +569,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_same_domain_newer
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "example.com", 8443, -1, "A").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
@@ -850,18 +581,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_only_other_domain
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 2,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 2).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
     assert_eq!(json["scans"][1]["grade"], Value::from("C"));
@@ -874,18 +594,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_only_other_domain
     insert_history_scan(&state, "example.com", 443, -10, "B").await;
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
-    let response = history::get_history(
-        axum::extract::State(state),
-        axum::extract::Path("example.com".to_string()),
-        axum::extract::Query(history::HistoryQuery {
-            port: 443,
-            limit: 1,
-        }),
-    )
-    .await
-    .unwrap();
-
-    let json = serde_json::to_value(response.0).unwrap();
+    let json = history_json(state, "example.com", 443, 1).await;
     assert_eq!(json["total_scans"], Value::from(2));
     assert_eq!(json["scans"][0]["grade"], Value::from("B"));
 }
