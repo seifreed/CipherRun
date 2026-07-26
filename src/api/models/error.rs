@@ -82,40 +82,33 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    fn metadata(&self) -> (StatusCode, &'static str) {
+        match self {
+            ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
+            ApiError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
+            ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "FORBIDDEN"),
+            ApiError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
+            ApiError::Conflict(_) => (StatusCode::CONFLICT, "CONFLICT"),
+            ApiError::RateLimited(_) => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED"),
+            ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+            ApiError::ServiceUnavailable(_) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE")
+            }
+            ApiError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
+            ApiError::Scanner(_) => (StatusCode::INTERNAL_SERVER_ERROR, "SCANNER_ERROR"),
+            ApiError::Validation(_) => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
+            ApiError::Timeout(_) => (StatusCode::REQUEST_TIMEOUT, "TIMEOUT"),
+        }
+    }
+
     /// Convert to HTTP status code
     pub fn status_code(&self) -> StatusCode {
-        match self {
-            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
-            ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::Conflict(_) => StatusCode::CONFLICT,
-            ApiError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
-            ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::Scanner(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::Validation(_) => StatusCode::BAD_REQUEST,
-            ApiError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
-        }
+        self.metadata().0
     }
 
     /// Get error code string
     pub fn error_code(&self) -> &str {
-        match self {
-            ApiError::BadRequest(_) => "BAD_REQUEST",
-            ApiError::Unauthorized(_) => "UNAUTHORIZED",
-            ApiError::Forbidden(_) => "FORBIDDEN",
-            ApiError::NotFound(_) => "NOT_FOUND",
-            ApiError::Conflict(_) => "CONFLICT",
-            ApiError::RateLimited(_) => "RATE_LIMITED",
-            ApiError::Internal(_) => "INTERNAL_ERROR",
-            ApiError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
-            ApiError::Database(_) => "DATABASE_ERROR",
-            ApiError::Scanner(_) => "SCANNER_ERROR",
-            ApiError::Validation(_) => "VALIDATION_ERROR",
-            ApiError::Timeout(_) => "TIMEOUT",
-        }
+        self.metadata().1
     }
 }
 
