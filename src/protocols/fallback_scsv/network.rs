@@ -269,6 +269,15 @@ impl FallbackScsvTester<'_> {
 mod tests {
     use super::*;
 
+    fn example_target() -> crate::utils::network::Target {
+        crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["93.184.216.34".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_aggregate_scsv_inconclusive_wins_over_not_supported() {
         // Regression test for S5: a single inconclusive probe must not be
@@ -318,12 +327,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_truncated_alert() {
-        let target = crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
         let tester = FallbackScsvTester::new(&target);
 
         let buffer = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
@@ -333,12 +337,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_alert_record() {
-        let target = crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
         let tester = FallbackScsvTester::new(&target);
 
         let mut buffer = [0u8; 7];
@@ -350,12 +349,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_truncated_non_alert_record() {
-        let target = crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
+        let target = example_target();
         let tester = FallbackScsvTester::new(&target);
 
         let buffer = [0x16, 0x03, 0x03, 0x00, 0x10, 0x02];
