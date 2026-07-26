@@ -486,13 +486,7 @@ mod tests {
         // V1 regression: connection failures must yield inconclusive=true, not a
         // clean "not vulnerable" verdict. We exercise the branch by targeting a
         // port guaranteed to be closed.
-        use std::net::{IpAddr, Ipv4Addr};
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            1, // reserved; refuses connection
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .expect("target should build");
+        let target = localhost_target(1);
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
         let result = rt.block_on(async {
