@@ -1,13 +1,14 @@
 use super::*;
-use crate::Args;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
 use crate::client_sim::simulator::ClientSimulationResult;
 use crate::fingerprint::{CdnDetection, Ja3Fingerprint, Ja3Signature, LoadBalancerInfo};
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
+use crate::scanner::inconsistency::SingleIpScanResult;
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+use crate::Args;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -42,6 +43,19 @@ fn empty_aggregated_result() -> crate::scanner::aggregation::AggregatedScanResul
 
 fn example_target(ips: Vec<std::net::IpAddr>) -> Target {
     Target::with_ips("example.com".to_string(), 443, ips).expect("test assertion should succeed")
+}
+
+fn successful_ip_scan(
+    ip: std::net::IpAddr,
+    scan_result: ScanResults,
+    scan_duration_ms: u64,
+) -> SingleIpScanResult {
+    SingleIpScanResult {
+        ip,
+        scan_result,
+        scan_duration_ms,
+        error: None,
+    }
 }
 
 #[test]
@@ -300,21 +314,11 @@ fn test_aggregate_vulnerabilities_merges_by_type() {
 
     results.insert(
         "127.0.0.1".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.1".parse().unwrap(),
-            scan_result: scan_a,
-            scan_duration_ms: 10,
-            error: None,
-        },
+        successful_ip_scan("127.0.0.1".parse().unwrap(), scan_a, 10),
     );
     results.insert(
         "127.0.0.2".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.2".parse().unwrap(),
-            scan_result: scan_b,
-            scan_duration_ms: 12,
-            error: None,
-        },
+        successful_ip_scan("127.0.0.2".parse().unwrap(), scan_b, 12),
     );
 
     let aggregated = Scanner::aggregate_vulnerabilities(&results);
@@ -355,44 +359,12 @@ fn test_aggregate_vulnerabilities_preserves_all_detail_segments_deterministicall
     };
 
     let mut results_a = HashMap::new();
-    results_a.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_short.clone(),
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
-    results_a.insert(
-        ip2,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_long.clone(),
-            scan_duration_ms: 12,
-            error: None,
-        },
-    );
+    results_a.insert(ip1, successful_ip_scan(ip1, scan_short.clone(), 10));
+    results_a.insert(ip2, successful_ip_scan(ip2, scan_long.clone(), 12));
 
     let mut results_b = HashMap::new();
-    results_b.insert(
-        ip2,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_long,
-            scan_duration_ms: 12,
-            error: None,
-        },
-    );
-    results_b.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_short,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    results_b.insert(ip2, successful_ip_scan(ip2, scan_long, 12));
+    results_b.insert(ip1, successful_ip_scan(ip1, scan_short, 10));
 
     let aggregated_a = Scanner::aggregate_vulnerabilities(&results_a);
     let aggregated_b = Scanner::aggregate_vulnerabilities(&results_b);
@@ -424,15 +396,7 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
     };
 
     let mut results = HashMap::new();
-    results.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: successful_scan,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    results.insert(ip1, successful_ip_scan(ip1, successful_scan, 10));
     results.insert(
         ip2,
         crate::scanner::inconsistency::SingleIpScanResult {
@@ -449,11 +413,9 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
     assert!(!aggregated[0].vulnerable);
     // Vulnerability confirmed on the successful backend remains conclusive
     assert!(!aggregated[0].inconclusive);
-    assert!(
-        aggregated[0]
-            .details
-            .contains("incomplete backend coverage")
-    );
+    assert!(aggregated[0]
+        .details
+        .contains("incomplete backend coverage"));
 }
 
 #[test]
@@ -517,21 +479,11 @@ fn test_select_common_certificate_chain_prefers_matching_fingerprint() {
 
     results.insert(
         "127.0.0.1".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.1".parse().unwrap(),
-            scan_result: scan_a,
-            scan_duration_ms: 10,
-            error: None,
-        },
+        successful_ip_scan("127.0.0.1".parse().unwrap(), scan_a, 10),
     );
     results.insert(
         "127.0.0.2".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.2".parse().unwrap(),
-            scan_result: scan_b,
-            scan_duration_ms: 12,
-            error: None,
-        },
+        successful_ip_scan("127.0.0.2".parse().unwrap(), scan_b, 12),
     );
 
     let cert_info = leaf_b;
@@ -614,39 +566,36 @@ fn test_select_common_certificate_chain_prefers_majority_full_chain_for_same_lea
 
     results.insert(
         "127.0.0.2".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.2".parse().unwrap(),
-            scan_result: ScanResults {
+        successful_ip_scan(
+            "127.0.0.2".parse().unwrap(),
+            ScanResults {
                 certificate_chain: Some(chain_a.clone()),
                 ..Default::default()
             },
-            scan_duration_ms: 10,
-            error: None,
-        },
+            10,
+        ),
     );
     results.insert(
         "127.0.0.3".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.3".parse().unwrap(),
-            scan_result: ScanResults {
+        successful_ip_scan(
+            "127.0.0.3".parse().unwrap(),
+            ScanResults {
                 certificate_chain: Some(chain_a.clone()),
                 ..Default::default()
             },
-            scan_duration_ms: 12,
-            error: None,
-        },
+            12,
+        ),
     );
     results.insert(
         "127.0.0.1".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.1".parse().unwrap(),
-            scan_result: ScanResults {
+        successful_ip_scan(
+            "127.0.0.1".parse().unwrap(),
+            ScanResults {
                 certificate_chain: Some(chain_b),
                 ..Default::default()
             },
-            scan_duration_ms: 14,
-            error: None,
-        },
+            14,
+        ),
     );
 
     let cert_info = leaf;
@@ -757,12 +706,7 @@ fn test_select_common_certificate_chain_fallback_to_first_success() {
 
     results.insert(
         "127.0.0.1".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.1".parse().unwrap(),
-            scan_result: scan,
-            scan_duration_ms: 5,
-            error: None,
-        },
+        successful_ip_scan("127.0.0.1".parse().unwrap(), scan, 5),
     );
 
     let selected = Scanner::select_common_certificate_chain(&results, None);
@@ -825,27 +769,25 @@ fn test_select_common_certificate_chain_is_deterministic_without_fingerprint() {
 
     results.insert(
         "127.0.0.2".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.2".parse().unwrap(),
-            scan_result: ScanResults {
+        successful_ip_scan(
+            "127.0.0.2".parse().unwrap(),
+            ScanResults {
                 certificate_chain: Some(high_chain),
                 ..Default::default()
             },
-            scan_duration_ms: 12,
-            error: None,
-        },
+            12,
+        ),
     );
     results.insert(
         "127.0.0.1".parse().unwrap(),
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: "127.0.0.1".parse().unwrap(),
-            scan_result: ScanResults {
+        successful_ip_scan(
+            "127.0.0.1".parse().unwrap(),
+            ScanResults {
                 certificate_chain: Some(low_chain),
                 ..Default::default()
             },
-            scan_duration_ms: 10,
-            error: None,
-        },
+            10,
+        ),
     );
 
     let selected = Scanner::select_common_certificate_chain(&results, None)
@@ -972,15 +914,7 @@ fn test_build_conservative_multi_ip_result() {
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip,
-            scan_result,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip, successful_ip_scan(ip, scan_result, 10));
 
     let aggregated = crate::scanner::aggregation::AggregatedScanResult {
         protocols: Vec::new(),
@@ -1039,15 +973,7 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified(
 
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip,
-            scan_result,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip, successful_ip_scan(ip, scan_result, 10));
 
     let aggregated = empty_aggregated_result();
 
@@ -1096,15 +1022,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip,
-            scan_result,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip, successful_ip_scan(ip, scan_result, 10));
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: example_target(vec![ip]),
@@ -1161,24 +1079,8 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: slow_result,
-            scan_duration_ms: 25,
-            error: None,
-        },
-    );
-    per_ip_results.insert(
-        ip2,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip2,
-            scan_result: fast_result,
-            scan_duration_ms: 8,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip1, successful_ip_scan(ip1, slow_result, 25));
+    per_ip_results.insert(ip2, successful_ip_scan(ip2, fast_result, 8));
 
     let aggregated = empty_aggregated_result();
 
@@ -1230,33 +1132,31 @@ fn test_build_conservative_multi_ip_result_saturates_probe_attempts() {
     let mut per_ip_results = HashMap::new();
     per_ip_results.insert(
         ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: ScanResults {
+        successful_ip_scan(
+            ip1,
+            ScanResults {
                 scan_metadata: ScanMetadata {
                     probe_status: first_status,
                     ..Default::default()
                 },
                 ..Default::default()
             },
-            scan_duration_ms: 10,
-            error: None,
-        },
+            10,
+        ),
     );
     per_ip_results.insert(
         ip2,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip2,
-            scan_result: ScanResults {
+        successful_ip_scan(
+            ip2,
+            ScanResults {
                 scan_metadata: ScanMetadata {
                     probe_status: second_status,
                     ..Default::default()
                 },
                 ..Default::default()
             },
-            scan_duration_ms: 20,
-            error: None,
-        },
+            20,
+        ),
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
@@ -1313,15 +1213,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: successful_result,
-            scan_duration_ms: 11,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip1, successful_ip_scan(ip1, successful_result, 11));
     per_ip_results.insert(
         ip2,
         crate::scanner::inconsistency::SingleIpScanResult {
@@ -1400,24 +1292,8 @@ fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip_high,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip_high,
-            scan_result: fallback_high,
-            scan_duration_ms: 9,
-            error: None,
-        },
-    );
-    per_ip_results.insert(
-        ip_low,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip_low,
-            scan_result: fallback_low,
-            scan_duration_ms: 7,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip_high, successful_ip_scan(ip_high, fallback_high, 9));
+    per_ip_results.insert(ip_low, successful_ip_scan(ip_low, fallback_low, 7));
 
     let aggregated = empty_aggregated_result();
 
@@ -1464,15 +1340,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip,
-            scan_result,
-            scan_duration_ms: 9,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip, successful_ip_scan(ip, scan_result, 9));
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: example_target(vec![ip]),
@@ -1525,15 +1393,7 @@ fn test_build_conservative_multi_ip_result_partial_success_preserves_unknown_pro
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip1,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip: ip1,
-            scan_result: successful_result,
-            scan_duration_ms: 9,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip1, successful_ip_scan(ip1, successful_result, 9));
     per_ip_results.insert(
         ip2,
         crate::scanner::inconsistency::SingleIpScanResult {
@@ -1674,15 +1534,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
         });
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(
-        ip,
-        crate::scanner::inconsistency::SingleIpScanResult {
-            ip,
-            scan_result,
-            scan_duration_ms: 10,
-            error: None,
-        },
-    );
+    per_ip_results.insert(ip, successful_ip_scan(ip, scan_result, 10));
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
         target: example_target(vec![ip]),
@@ -1715,8 +1567,7 @@ fn test_scanner_new_requires_target() {
     let err = Scanner::new(args.to_scan_request().expect("scan request should build"))
         .err()
         .expect("should error");
-    assert!(
-        err.to_string()
-            .contains("A target is required for scan execution")
-    );
+    assert!(err
+        .to_string()
+        .contains("A target is required for scan execution"));
 }
