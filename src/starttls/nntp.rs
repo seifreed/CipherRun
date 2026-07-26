@@ -96,6 +96,62 @@ mod tests {
         result
     }
 
+    async fn negotiate_with_nntp_server(
+        greeting: &'static [u8],
+        capabilities: Vec<&'static [u8]>,
+        starttls_response: Option<&'static [u8]>,
+    ) -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(greeting)
+                .await
+                .expect("test server should write response");
+
+            let mut buffer = vec![0u8; 256];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read data");
+
+            for line in capabilities {
+                stream
+                    .write_all(line)
+                    .await
+                    .expect("test server should write response");
+            }
+
+            if let Some(response) = starttls_response {
+                let _ = stream
+                    .read(&mut buffer)
+                    .await
+                    .expect("test should read data");
+                stream
+                    .write_all(response)
+                    .await
+                    .expect("test server should write response");
+            }
+        });
+
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let result = NntpNegotiator::new().negotiate_starttls(&mut client).await;
+
+        server.await.expect("test server task should complete");
+        result
+    }
+
     #[test]
     fn test_nntp_negotiator_creation() {
         let negotiator = NntpNegotiator::new();
@@ -119,116 +175,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_nntp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"200 server ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-
-            stream
-                .write_all(b"101 Capability list follows\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b"VERSION 2\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b"STARTTLS\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b".\r\n")
-                .await
-                .expect("test server should write response");
-
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-            stream
-                .write_all(b"382 Continue with TLS negotiation\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = NntpNegotiator::new();
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        let result = negotiate_with_nntp_server(
+            b"200 server ready\r\n",
+            vec![
+                b"101 Capability list follows\r\n",
+                b"VERSION 2\r\n",
+                b"STARTTLS\r\n",
+                b".\r\n",
+            ],
+            Some(b"382 Continue with TLS negotiation\r\n"),
+        )
+        .await;
         assert!(result.is_ok());
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_nntp_negotiate_starttls_missing_starttls() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"201 server ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-
-            stream
-                .write_all(b"101 Capability list follows\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b"VERSION 2\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b"MODE-READER\r\n")
-                .await
-                .expect("test server should write response");
-            stream
-                .write_all(b".\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = NntpNegotiator::new();
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        let result = negotiate_with_nntp_server(
+            b"201 server ready\r\n",
+            vec![
+                b"101 Capability list follows\r\n",
+                b"VERSION 2\r\n",
+                b"MODE-READER\r\n",
+                b".\r\n",
+            ],
+            None,
+        )
+        .await;
         assert!(result.is_err());
-
-        server.await.expect("test server task should complete");
     }
 }
