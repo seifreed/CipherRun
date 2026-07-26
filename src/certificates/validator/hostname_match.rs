@@ -116,20 +116,19 @@ impl CertificateValidator {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_wildcard_hostname_match() {
-        let cert = CertificateInfo {
-            subject: "CN=unused".to_string(),
+    fn test_cert(subject: &str, san: &[&str]) -> CertificateInfo {
+        CertificateInfo {
+            subject: subject.to_string(),
             issuer: "CN=CA".to_string(),
             serial_number: "123".to_string(),
-            not_before: "2024-01-01 00:00:00 +0000".to_string(),
-            not_after: "2025-01-01 00:00:00 +0000".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2025-01-01".to_string(),
             expiry_countdown: None,
             signature_algorithm: "sha256WithRSAEncryption".to_string(),
             public_key_algorithm: "rsaEncryption".to_string(),
             public_key_size: Some(2048),
             rsa_exponent: None,
-            san: vec!["*.example.com".to_string()],
+            san: san.iter().map(|name| name.to_string()).collect(),
             is_ca: false,
             key_usage: vec![],
             extended_key_usage: vec![],
@@ -141,7 +140,12 @@ mod tests {
             aia_url: None,
             certificate_transparency: None,
             der_bytes: vec![],
-        };
+        }
+    }
+
+    #[test]
+    fn test_wildcard_hostname_match() {
+        let cert = test_cert("CN=unused", &["*.example.com"]);
 
         // Wildcard should match subdomain
         let validator = CertificateValidator::new("api.example.com".to_string());
@@ -164,30 +168,7 @@ mod tests {
     #[test]
     fn test_wildcard_with_bare_domain_sans() {
         // Test cert with both wildcard and bare domain in SANs
-        let cert = CertificateInfo {
-            subject: "CN=unused".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01 00:00:00 +0000".to_string(),
-            not_after: "2025-01-01 00:00:00 +0000".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec!["*.example.com".to_string(), "example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
-        };
+        let cert = test_cert("CN=unused", &["*.example.com", "example.com"]);
 
         // Both subdomain and bare domain should match
         let validator = CertificateValidator::new("api.example.com".to_string());
@@ -201,30 +182,7 @@ mod tests {
 
     #[test]
     fn test_hostname_matching() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec!["example.com".to_string(), "www.example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
-        };
+        let cert = test_cert("CN=example.com", &["example.com", "www.example.com"]);
 
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
@@ -235,30 +193,7 @@ mod tests {
 
     #[test]
     fn test_hostname_mismatch_does_not_fall_back_to_cn_when_san_exists() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec!["other.example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: vec![],
-        };
+        let cert = test_cert("CN=example.com", &["other.example.com"]);
 
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
@@ -272,30 +207,7 @@ mod tests {
 
     #[test]
     fn test_hostname_matches_cn_before_next_dn_attribute_without_space() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com,O=Test".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec![],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            der_bytes: vec![],
-            certificate_transparency: None,
-        };
+        let cert = test_cert("CN=example.com,O=Test", &[]);
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
 
@@ -305,30 +217,7 @@ mod tests {
 
     #[test]
     fn test_hostname_matches_cn_with_spaces_around_equals() {
-        let cert = CertificateInfo {
-            subject: "C=US, O=Test, CN = example.com".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec![],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            der_bytes: vec![],
-            certificate_transparency: None,
-        };
+        let cert = test_cert("C=US, O=Test, CN = example.com", &[]);
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
 
@@ -338,30 +227,7 @@ mod tests {
 
     #[test]
     fn test_hostname_rejects_cn_with_multiple_trailing_dots() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com..".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec![],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            der_bytes: vec![],
-            certificate_transparency: None,
-        };
+        let cert = test_cert("CN=example.com..", &[]);
 
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
@@ -372,30 +238,7 @@ mod tests {
 
     #[test]
     fn test_hostname_matches_cn_before_slash_delimited_attribute() {
-        let cert = CertificateInfo {
-            subject: "CN=example.com/O=Test".to_string(),
-            issuer: "CN=CA".to_string(),
-            serial_number: "123".to_string(),
-            not_before: "2024-01-01".to_string(),
-            not_after: "2025-01-01".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256WithRSAEncryption".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec![],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            der_bytes: vec![],
-            certificate_transparency: None,
-        };
+        let cert = test_cert("CN=example.com/O=Test", &[]);
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
 
