@@ -640,6 +640,12 @@ mod legacy_probe_tests {
             .expect("target should build")
     }
 
+    fn short_timeout_tester(addr: SocketAddr) -> ProtocolTester {
+        ProtocolTester::new(example_target_for_addr(addr))
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_millis(100))
+    }
+
     async fn spawn_probe_response_server(response: Vec<u8>) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -750,10 +756,7 @@ mod legacy_probe_tests {
     async fn test_tls_legacy_raw_probe_handles_fragmented_server_hello() {
         let addr = spawn_fragmented_probe_response_server(server_hello_record(0x0301), 6).await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_tls_legacy_raw_on_ip(Protocol::TLS10, addr)
@@ -769,10 +772,7 @@ mod legacy_probe_tests {
             spawn_fragmented_probe_response_server(vec![0x80, 0x04, 0x04, 0x00, 0x00, 0x00], 2)
                 .await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_sslv2_on_ip(addr)
@@ -789,10 +789,7 @@ mod legacy_probe_tests {
         record.extend(vec![0u8; record_len - 1]);
         let addr = spawn_probe_response_server(record).await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_sslv2_on_ip(addr)
@@ -807,10 +804,7 @@ mod legacy_probe_tests {
         let addr =
             spawn_probe_response_server(vec![0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00]).await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_sslv2_on_ip(addr)
@@ -824,10 +818,7 @@ mod legacy_probe_tests {
     async fn test_sslv2_probe_rejects_client_only_message_from_server() {
         let addr = spawn_probe_response_server(vec![0x80, 0x04, 0x02, 0x00, 0x00, 0x00]).await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_sslv2_on_ip(addr)
@@ -841,10 +832,7 @@ mod legacy_probe_tests {
     async fn test_sslv2_probe_truncated_known_record_is_inconclusive() {
         let addr = spawn_probe_response_server(vec![0x80, 0x06, 0x04, 0x00, 0x00, 0x00]).await;
 
-        let target = example_target_for_addr(addr);
-        let tester = ProtocolTester::new(target)
-            .with_connect_timeout(Duration::from_millis(100))
-            .with_read_timeout(Duration::from_millis(100));
+        let tester = short_timeout_tester(addr);
 
         let outcome = tester
             .test_sslv2_on_ip(addr)
