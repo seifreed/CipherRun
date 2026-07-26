@@ -140,22 +140,14 @@ mod tests {
 
     #[test]
     fn test_effective_sleep_ms_rejects_invalid_delay() {
-        let args = ConnectionArgs {
-            delay: Some("nope".to_string()),
-            ..Default::default()
-        };
+        for delay in ["nope".to_string(), format!("{}s", u64::MAX / 1000 + 1)] {
+            let args = ConnectionArgs {
+                delay: Some(delay),
+                ..Default::default()
+            };
 
-        assert!(args.effective_sleep_ms().is_err());
-    }
-
-    #[test]
-    fn test_effective_sleep_ms_rejects_delay_that_exceeds_millis_range() {
-        let args = ConnectionArgs {
-            delay: Some(format!("{}s", u64::MAX / 1000 + 1)),
-            ..Default::default()
-        };
-
-        assert!(args.effective_sleep_ms().is_err());
+            assert!(args.effective_sleep_ms().is_err());
+        }
     }
 
     #[test]
