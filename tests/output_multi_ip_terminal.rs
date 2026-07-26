@@ -76,10 +76,7 @@ fn build_scan_results() -> ScanResults {
     results
 }
 
-#[test]
-fn test_multi_ip_report_display() {
-    colored::control::set_override(false);
-
+fn build_report(reverse: bool) -> MultiIpScanReport {
     let ip1: IpAddr = "192.0.2.1".parse().unwrap();
     let ip2: IpAddr = "192.0.2.2".parse().unwrap();
 
@@ -100,24 +97,49 @@ fn test_multi_ip_report_display() {
     };
 
     let mut per_ip_results = HashMap::new();
-    per_ip_results.insert(ip1, success);
-    per_ip_results.insert(ip2, failure);
+    if reverse {
+        per_ip_results.insert(ip2, failure.clone());
+        per_ip_results.insert(ip1, success.clone());
+    } else {
+        per_ip_results.insert(ip1, success.clone());
+        per_ip_results.insert(ip2, failure.clone());
+    }
 
     let mut grades = HashMap::new();
-    grades.insert(ip1, ("A".to_string(), 95));
-    grades.insert(ip2, ("C".to_string(), 70));
+    if reverse {
+        grades.insert(ip2, ("C".to_string(), 70));
+        grades.insert(ip1, ("A".to_string(), 95));
+    } else {
+        grades.insert(ip1, ("A".to_string(), 95));
+        grades.insert(ip2, ("C".to_string(), 70));
+    }
 
     let mut fingerprints = HashMap::new();
-    fingerprints.insert(ip1, "abc1234567890def".to_string());
-    fingerprints.insert(ip2, "def1234567890abc".to_string());
+    if reverse {
+        fingerprints.insert(ip2, "def1234567890abc".to_string());
+        fingerprints.insert(ip1, "abc1234567890def".to_string());
+    } else {
+        fingerprints.insert(ip1, "abc1234567890def".to_string());
+        fingerprints.insert(ip2, "def1234567890abc".to_string());
+    }
 
     let mut cipher_diffs = HashMap::new();
-    cipher_diffs.insert(ip1, vec!["TLS_AES_128_GCM_SHA256".to_string()]);
-    cipher_diffs.insert(ip2, vec!["TLS_AES_256_GCM_SHA384".to_string()]);
+    if reverse {
+        cipher_diffs.insert(ip2, vec!["TLS_AES_256_GCM_SHA384".to_string()]);
+        cipher_diffs.insert(ip1, vec!["TLS_AES_128_GCM_SHA256".to_string()]);
+    } else {
+        cipher_diffs.insert(ip1, vec!["TLS_AES_128_GCM_SHA256".to_string()]);
+        cipher_diffs.insert(ip2, vec!["TLS_AES_256_GCM_SHA384".to_string()]);
+    }
 
     let mut alpn = HashMap::new();
-    alpn.insert(ip1, vec!["h2".to_string(), "http/1.1".to_string()]);
-    alpn.insert(ip2, vec!["http/1.1".to_string()]);
+    if reverse {
+        alpn.insert(ip2, vec!["http/1.1".to_string()]);
+        alpn.insert(ip1, vec!["h2".to_string(), "http/1.1".to_string()]);
+    } else {
+        alpn.insert(ip1, vec!["h2".to_string(), "http/1.1".to_string()]);
+        alpn.insert(ip2, vec!["http/1.1".to_string()]);
+    }
 
     let inconsistencies = vec![
         Inconsistency {
@@ -178,7 +200,7 @@ fn test_multi_ip_report_display() {
 
     let aggregated = aggregated_result(&inconsistencies);
 
-    let report = MultiIpScanReport {
+    MultiIpScanReport {
         target,
         per_ip_results,
         total_ips: 2,
@@ -187,9 +209,14 @@ fn test_multi_ip_report_display() {
         total_duration_ms: 500,
         inconsistencies,
         aggregated,
-    };
+    }
+}
 
-    let output = format!("{}", report);
+#[test]
+fn test_multi_ip_report_display() {
+    colored::control::set_override(false);
+
+    let output = format!("{}", build_report(false));
     assert!(output.contains("MULTI-IP SCAN REPORT"));
     assert!(output.contains("Target: example.com:443"));
     assert!(output.contains("IPs Scanned: 1/2 successful"));
@@ -202,142 +229,6 @@ fn test_multi_ip_report_display() {
 #[test]
 fn test_multi_ip_report_display_is_deterministic() {
     colored::control::set_override(false);
-
-    let build_report = |reverse: bool| {
-        let ip1: IpAddr = "192.0.2.1".parse().unwrap();
-        let ip2: IpAddr = "192.0.2.2".parse().unwrap();
-
-        let target = Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2]).unwrap();
-
-        let success = SingleIpScanResult {
-            ip: ip1,
-            scan_result: build_scan_results(),
-            scan_duration_ms: 120,
-            error: None,
-        };
-
-        let failure = SingleIpScanResult {
-            ip: ip2,
-            scan_result: ScanResults::default(),
-            scan_duration_ms: 80,
-            error: Some("timeout".to_string()),
-        };
-
-        let mut per_ip_results = HashMap::new();
-        if reverse {
-            per_ip_results.insert(ip2, failure.clone());
-            per_ip_results.insert(ip1, success.clone());
-        } else {
-            per_ip_results.insert(ip1, success.clone());
-            per_ip_results.insert(ip2, failure.clone());
-        }
-
-        let mut grades = HashMap::new();
-        if reverse {
-            grades.insert(ip2, ("C".to_string(), 70));
-            grades.insert(ip1, ("A".to_string(), 95));
-        } else {
-            grades.insert(ip1, ("A".to_string(), 95));
-            grades.insert(ip2, ("C".to_string(), 70));
-        }
-
-        let mut fingerprints = HashMap::new();
-        if reverse {
-            fingerprints.insert(ip2, "def1234567890abc".to_string());
-            fingerprints.insert(ip1, "abc1234567890def".to_string());
-        } else {
-            fingerprints.insert(ip1, "abc1234567890def".to_string());
-            fingerprints.insert(ip2, "def1234567890abc".to_string());
-        }
-
-        let mut cipher_diffs = HashMap::new();
-        if reverse {
-            cipher_diffs.insert(ip2, vec!["TLS_AES_256_GCM_SHA384".to_string()]);
-            cipher_diffs.insert(ip1, vec!["TLS_AES_128_GCM_SHA256".to_string()]);
-        } else {
-            cipher_diffs.insert(ip1, vec!["TLS_AES_128_GCM_SHA256".to_string()]);
-            cipher_diffs.insert(ip2, vec!["TLS_AES_256_GCM_SHA384".to_string()]);
-        }
-
-        let mut alpn = HashMap::new();
-        if reverse {
-            alpn.insert(ip2, vec!["http/1.1".to_string()]);
-            alpn.insert(ip1, vec!["h2".to_string(), "http/1.1".to_string()]);
-        } else {
-            alpn.insert(ip1, vec!["h2".to_string(), "http/1.1".to_string()]);
-            alpn.insert(ip2, vec!["http/1.1".to_string()]);
-        }
-
-        let inconsistencies = vec![
-            Inconsistency {
-                inconsistency_type: InconsistencyType::ProtocolSupport,
-                severity: Severity::High,
-                description: "TLS 1.3 mismatch".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::Protocols {
-                    protocol: Protocol::TLS13,
-                    ips_with_support: vec![ip1],
-                    ips_without_support: vec![ip2],
-                },
-            },
-            Inconsistency {
-                inconsistency_type: InconsistencyType::Certificates,
-                severity: Severity::Critical,
-                description: "Certificate mismatch".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::Certificates { fingerprints },
-            },
-            Inconsistency {
-                inconsistency_type: InconsistencyType::SecurityGrade,
-                severity: Severity::Medium,
-                description: "Grades differ".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::Grades { grades },
-            },
-            Inconsistency {
-                inconsistency_type: InconsistencyType::CipherSuites,
-                severity: Severity::Low,
-                description: "Cipher mismatch".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::CipherSuites {
-                    differences: cipher_diffs,
-                },
-            },
-            Inconsistency {
-                inconsistency_type: InconsistencyType::SessionResumption,
-                severity: Severity::Info,
-                description: "Session resumption differs".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::SessionResumption {
-                    ips_with_caching: vec![ip1],
-                    ips_with_tickets: vec![ip2],
-                    ips_without: vec![],
-                },
-            },
-            Inconsistency {
-                inconsistency_type: InconsistencyType::Alpn,
-                severity: Severity::Info,
-                description: "ALPN differs".to_string(),
-                ips_affected: vec![ip1, ip2],
-                details: InconsistencyDetails::Alpn {
-                    protocols_by_ip: alpn,
-                },
-            },
-        ];
-
-        let aggregated = aggregated_result(&inconsistencies);
-
-        MultiIpScanReport {
-            target,
-            per_ip_results,
-            total_ips: 2,
-            successful_scans: 1,
-            failed_scans: 1,
-            total_duration_ms: 500,
-            inconsistencies,
-            aggregated,
-        }
-    };
 
     let output_a = format!("{}", build_report(false));
     let output_b = format!("{}", build_report(true));
