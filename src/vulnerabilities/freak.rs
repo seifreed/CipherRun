@@ -131,6 +131,15 @@ mod tests {
     use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
     use tokio::net::TcpListener;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_freak_result_not_vulnerable() {
         let result = FreakTestResult {
@@ -197,12 +206,7 @@ mod tests {
     async fn test_freak_tester_no_export_support() {
         // 7 export suites probed across 2 protocols => up to 14 connections.
         let addr = spawn_rejecting_server(EXPORT_RSA_CIPHER_SUITES.len() * 2).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = FreakTester::new(target);
         let result = tester.test().await.unwrap();
@@ -217,12 +221,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = FreakTester::new(target);
         let result = tester.test().await.unwrap();
