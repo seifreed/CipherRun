@@ -31,7 +31,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod result;
 mod sslv2;
+
+pub use result::DrownTestResult;
 
 const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
@@ -143,13 +146,6 @@ impl DrownTester {
         .await
     }
 
-    fn detailed_status(status: Sslv2Status) -> Option<Sslv2Status> {
-        match status {
-            Sslv2Status::Inconclusive => None,
-            _ => Some(status),
-        }
-    }
-
     fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
@@ -168,68 +164,21 @@ impl DrownTester {
         }
     }
 
-    fn merge_sslv2_status(best: Sslv2Status, next: Sslv2Status) -> Sslv2Status {
-        fn rank(status: Sslv2Status) -> u8 {
-            match status {
-                Sslv2Status::Confirmed => 5,
-                Sslv2Status::Probable => 4,
-                Sslv2Status::Suspicious => 3,
-                Sslv2Status::Inconclusive => 2,
-                Sslv2Status::NotSupported => 1,
-            }
-        }
-
-        if rank(next) > rank(best) { next } else { best }
-    }
-
     /// Test for DROWN vulnerability
     pub async fn test(&self) -> Result<DrownTestResult> {
         let sslv2_status = self.test_sslv2().await?;
         let sslv2_supported = sslv2_status.is_vulnerable();
 
         let sslv2_export_status = if sslv2_supported {
-            Self::detailed_status(self.test_sslv2_export_ciphers().await?)
+            self.test_sslv2_export_ciphers().await?.detailed()
         } else {
             None
         };
 
-        let sslv2_export = sslv2_export_status
-            .as_ref()
-            .is_some_and(Sslv2Status::is_vulnerable);
-        let vulnerable = sslv2_supported;
-
-        let details = match sslv2_status {
-            Sslv2Status::Confirmed if sslv2_export => {
-                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 ServerHello received, export ciphers enabled (highly vulnerable)".to_string()
-            }
-            Sslv2Status::Confirmed => {
-                "Vulnerable to DROWN (CVE-2016-0800) - SSLv2 ServerHello received".to_string()
-            }
-            Sslv2Status::Probable if sslv2_export => {
-                "Potentially vulnerable to DROWN - SSLv2 probable (known message type detected), export ciphers enabled".to_string()
-            }
-            Sslv2Status::Probable => {
-                "Potentially vulnerable to DROWN - SSLv2 probable (known message type detected)".to_string()
-            }
-            Sslv2Status::Suspicious => {
-                "DROWN: SSLv2-like response detected - manual verification recommended".to_string()
-            }
-            Sslv2Status::NotSupported => {
-                "Not vulnerable - SSLv2 not supported".to_string()
-            }
-            Sslv2Status::Inconclusive => {
-                "DROWN test inconclusive - connection error prevented SSLv2 detection".to_string()
-            }
-        };
-
-        Ok(DrownTestResult {
-            vulnerable,
-            sslv2_supported,
-            sslv2_export_ciphers: sslv2_export,
+        Ok(DrownTestResult::from_statuses(
+            sslv2_status,
             sslv2_export_status,
-            sslv2_status: Self::detailed_status(sslv2_status),
-            details,
-        })
+        ))
     }
 
     /// Test if SSLv2 is supported with detailed status
@@ -237,7 +186,7 @@ impl DrownTester {
         let mut best = Sslv2Status::NotSupported;
         for addr in self.probe_addrs()? {
             let status = self.test_sslv2_addr(addr).await?;
-            best = Self::merge_sslv2_status(best, status);
+            best = best.merge(status);
             if best == Sslv2Status::Confirmed {
                 break;
             }
@@ -286,7 +235,7 @@ impl DrownTester {
         let mut best = Sslv2Status::NotSupported;
         for addr in self.probe_addrs()? {
             let status = self.test_sslv2_export_ciphers_addr(addr).await?;
-            best = Self::merge_sslv2_status(best, status);
+            best = best.merge(status);
             if best == Sslv2Status::Confirmed {
                 break;
             }
@@ -387,19 +336,6 @@ impl DrownTester {
     }
 }
 
-/// DROWN test result
-#[derive(Debug, Clone)]
-pub struct DrownTestResult {
-    pub vulnerable: bool,
-    pub sslv2_supported: bool,
-    pub sslv2_export_ciphers: bool,
-    /// Detailed SSLv2 export detection status (None if the probe did not run or was inconclusive)
-    pub sslv2_export_status: Option<Sslv2Status>,
-    /// Detailed SSLv2 detection status (None if test was inconclusive)
-    pub sslv2_status: Option<Sslv2Status>,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,16 +386,13 @@ mod tests {
 
     #[test]
     fn test_detailed_status_omits_inconclusive() {
+        assert_eq!(Sslv2Status::Inconclusive.detailed(), None);
         assert_eq!(
-            DrownTester::detailed_status(Sslv2Status::Inconclusive),
-            None
-        );
-        assert_eq!(
-            DrownTester::detailed_status(Sslv2Status::NotSupported),
+            Sslv2Status::NotSupported.detailed(),
             Some(Sslv2Status::NotSupported)
         );
         assert_eq!(
-            DrownTester::detailed_status(Sslv2Status::Confirmed),
+            Sslv2Status::Confirmed.detailed(),
             Some(Sslv2Status::Confirmed)
         );
     }
