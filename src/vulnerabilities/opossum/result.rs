@@ -5,6 +5,16 @@ pub enum OpossumStatus {
     Inconclusive,
 }
 
+impl OpossumStatus {
+    pub(super) fn merge(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::Vulnerable, _) | (_, Self::Vulnerable) => Self::Vulnerable,
+            (Self::Inconclusive, _) | (_, Self::Inconclusive) => Self::Inconclusive,
+            _ => Self::NotVulnerable,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OpossumTestResult {
     pub vulnerable: bool,

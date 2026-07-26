@@ -81,18 +81,6 @@ impl OpossumTester {
         }
     }
 
-    fn merge_status(best: OpossumStatus, next: OpossumStatus) -> OpossumStatus {
-        match (best, next) {
-            (OpossumStatus::Vulnerable, _) | (_, OpossumStatus::Vulnerable) => {
-                OpossumStatus::Vulnerable
-            }
-            (OpossumStatus::Inconclusive, _) | (_, OpossumStatus::Inconclusive) => {
-                OpossumStatus::Inconclusive
-            }
-            _ => OpossumStatus::NotVulnerable,
-        }
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -140,7 +128,7 @@ impl OpossumTester {
     async fn test_openssl_version(&self) -> Result<OpossumStatus> {
         let mut best = OpossumStatus::NotVulnerable;
         for addr in self.probe_addrs()? {
-            best = Self::merge_status(best, self.test_openssl_version_addr(addr).await?);
+            best = best.merge(self.test_openssl_version_addr(addr).await?);
             if best == OpossumStatus::Vulnerable {
                 break;
             }
@@ -187,7 +175,7 @@ impl OpossumTester {
     async fn test_certificate_parsing(&self) -> Result<OpossumStatus> {
         let mut best = OpossumStatus::NotVulnerable;
         for addr in self.probe_addrs()? {
-            best = Self::merge_status(best, self.test_certificate_parsing_addr(addr).await?);
+            best = best.merge(self.test_certificate_parsing_addr(addr).await?);
             if best == OpossumStatus::Vulnerable {
                 break;
             }
@@ -382,11 +370,11 @@ mod tests {
     #[test]
     fn test_opossum_merge_status_preserves_uncertainty() {
         assert_eq!(
-            OpossumTester::merge_status(OpossumStatus::NotVulnerable, OpossumStatus::Inconclusive),
+            OpossumStatus::NotVulnerable.merge(OpossumStatus::Inconclusive),
             OpossumStatus::Inconclusive
         );
         assert_eq!(
-            OpossumTester::merge_status(OpossumStatus::Inconclusive, OpossumStatus::Vulnerable),
+            OpossumStatus::Inconclusive.merge(OpossumStatus::Vulnerable),
             OpossumStatus::Vulnerable
         );
     }
