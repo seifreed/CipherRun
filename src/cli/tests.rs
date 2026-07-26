@@ -74,68 +74,66 @@ fn test_explicit_sleep_overrides_ids_friendly_throttle() {
 }
 
 #[test]
-fn test_validate_conflicting_ip_flags() {
-    let args = Args {
-        network: NetworkArgs {
-            test_all_ips: true,
-            first_ip_only: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_ip_with_test_all_ips_conflict() {
-    let args = Args {
-        ip: Some("127.0.0.1".to_string()),
-        network: NetworkArgs {
-            test_all_ips: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_ip_with_first_ip_only_conflict() {
-    let args = Args {
-        ip: Some("127.0.0.1".to_string()),
-        network: NetworkArgs {
-            first_ip_only: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_scan_all_ips_requires_single_target() {
-    let args = Args {
-        network: NetworkArgs {
-            scan_all_ips: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
-}
-
-#[test]
-fn test_validate_scan_all_ips_conflicts_with_test_all_ips() {
-    let args = Args {
-        target: Some("example.com:443".to_string()),
-        network: NetworkArgs {
-            scan_all_ips: true,
-            test_all_ips: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(args.validate().is_err());
+fn test_validate_rejects_conflicting_ip_options() {
+    for (case, args) in [
+        (
+            "test-all-ips with first-ip-only",
+            Args {
+                network: NetworkArgs {
+                    test_all_ips: true,
+                    first_ip_only: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            "explicit ip with test-all-ips",
+            Args {
+                ip: Some("127.0.0.1".to_string()),
+                network: NetworkArgs {
+                    test_all_ips: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            "explicit ip with first-ip-only",
+            Args {
+                ip: Some("127.0.0.1".to_string()),
+                network: NetworkArgs {
+                    first_ip_only: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            "scan-all-ips without target",
+            Args {
+                network: NetworkArgs {
+                    scan_all_ips: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            "scan-all-ips with test-all-ips",
+            Args {
+                target: Some("example.com:443".to_string()),
+                network: NetworkArgs {
+                    scan_all_ips: true,
+                    test_all_ips: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+    ] {
+        assert!(args.validate().is_err(), "{case}");
+    }
 }
 
 #[test]
