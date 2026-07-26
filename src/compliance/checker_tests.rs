@@ -68,6 +68,21 @@ fn create_certificate_assessment_with_revocation(
     }
 }
 
+fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
+    ProtocolTestResult {
+        protocol,
+        supported: true,
+        inconclusive: false,
+        preferred: false,
+        ciphers_count: 0,
+        heartbeat_enabled: None,
+        handshake_time_ms: None,
+        session_resumption_caching: None,
+        session_resumption_tickets: None,
+        secure_renegotiation: None,
+    }
+}
+
 #[test]
 fn test_check_protocols_denied() {
     let rule = Rule {
@@ -90,30 +105,8 @@ fn test_check_protocols_denied() {
 
     let results = ScanAssessment {
         protocols: vec![
-            ProtocolTestResult {
-                protocol: Protocol::SSLv2,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
+            protocol_result(Protocol::SSLv2),
+            protocol_result(Protocol::TLS12),
         ],
         ..Default::default()
     };
@@ -146,30 +139,8 @@ fn test_check_protocols_allowed() {
 
     let results = ScanAssessment {
         protocols: vec![
-            ProtocolTestResult {
-                protocol: Protocol::TLS10,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
-            ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 0,
-                heartbeat_enabled: None,
-                handshake_time_ms: None,
-                session_resumption_caching: None,
-                session_resumption_tickets: None,
-                secure_renegotiation: None,
-            },
+            protocol_result(Protocol::TLS10),
+            protocol_result(Protocol::TLS12),
         ],
         ..Default::default()
     };
@@ -201,18 +172,7 @@ fn test_check_protocols_allowed_names_are_normalized() {
     };
 
     let results = ScanAssessment {
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![protocol_result(Protocol::TLS12)],
         ..Default::default()
     };
 
@@ -242,18 +202,7 @@ fn test_check_protocols_denied_names_are_normalized() {
     };
 
     let results = ScanAssessment {
-        protocols: vec![ProtocolTestResult {
-            protocol: Protocol::SSLv3,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }],
+        protocols: vec![protocol_result(Protocol::SSLv3)],
         ..Default::default()
     };
 
