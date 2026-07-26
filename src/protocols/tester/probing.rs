@@ -7,8 +7,11 @@ use tokio::time::timeout;
 
 mod legacy_tls;
 mod openssl_tls12;
+mod outcome;
 pub(super) mod sslv2;
 mod tls13;
+
+pub(super) use outcome::ProtocolProbeOutcome;
 
 /// Legacy-protocol cipher suites offered when probing SSLv3/TLS1.0/TLS1.1 by a
 /// raw ClientHello. The vendored OpenSSL build cannot negotiate these protocol
@@ -20,30 +23,6 @@ mod tls13;
 const LEGACY_PROBE_CIPHERS: &[u16] = &[
     0xc014, 0xc013, 0xc00a, 0xc009, 0x0035, 0x002f, 0xc012, 0xc008, 0x000a, 0x0005, 0x0004,
 ];
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ProtocolProbeOutcome {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
-
-impl ProtocolProbeOutcome {
-    fn is_supported(self) -> bool {
-        matches!(self, Self::Supported)
-    }
-
-    fn is_inconclusive(self) -> bool {
-        matches!(self, Self::Inconclusive)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Supported => "supported",
-            Self::NotSupported => "NOT supported",
-            Self::Inconclusive => "inconclusive",
-        }
-    }
-}
 
 impl ProtocolTester {
     pub async fn test_all_protocols(&self) -> Result<Vec<ProtocolTestResult>> {
