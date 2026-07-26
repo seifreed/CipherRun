@@ -250,15 +250,21 @@ mod tests {
     use crate::vulnerabilities::test_support::spawn_dummy_server;
     use std::net::IpAddr;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_beast_result_creation() {
-        let result = BeastTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            tls10_cbc_supported: true,
-            ssl3_cbc_supported: false,
-            details: "Test".to_string(),
-        };
+        let result = BeastTestResult::from_probe_statuses(
+            BeastProbeStatus::Supported,
+            BeastProbeStatus::NotSupported,
+        );
         assert!(result.vulnerable);
         assert!(result.tls10_cbc_supported);
     }
@@ -266,12 +272,7 @@ mod tests {
     #[tokio::test]
     async fn test_beast_inconclusive_on_dummy_server() {
         let addr = spawn_dummy_server(5).await;
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = BeastTester::new(target);
         let result = tester.test().await.unwrap();
@@ -282,26 +283,20 @@ mod tests {
 
     #[test]
     fn test_beast_result_details_contains_tls() {
-        let result = BeastTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            tls10_cbc_supported: true,
-            ssl3_cbc_supported: false,
-            details: "Vulnerable: TLS 1.0 with CBC ciphers enabled".to_string(),
-        };
+        let result = BeastTestResult::from_probe_statuses(
+            BeastProbeStatus::Supported,
+            BeastProbeStatus::NotSupported,
+        );
 
         assert!(result.details.contains("TLS 1.0"));
     }
 
     #[test]
     fn test_beast_result_details_not_vulnerable_text() {
-        let result = BeastTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            tls10_cbc_supported: false,
-            ssl3_cbc_supported: false,
-            details: "Not vulnerable - TLS 1.0/SSL 3.0 CBC ciphers not supported".to_string(),
-        };
+        let result = BeastTestResult::from_probe_statuses(
+            BeastProbeStatus::NotSupported,
+            BeastProbeStatus::NotSupported,
+        );
         assert!(result.details.contains("Not vulnerable"));
         assert!(!result.vulnerable);
     }
