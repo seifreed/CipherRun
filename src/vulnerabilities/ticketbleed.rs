@@ -7,32 +7,19 @@
 
 use crate::Result;
 use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
-use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+mod client_hello;
 mod outcome;
 mod parse;
-/// Distinctive 16-byte Session ID sent in the resumption ClientHello.
-///
-/// A Ticketbleed-vulnerable F5 BIG-IP echoes a full 32-byte Session ID in its
-/// ServerHello — beginning with whatever the client sent and padding the
-/// remainder with uninitialized memory. Using a 16-byte marker makes a
-/// coincidental "echo" from a healthy server (which would have to generate a
-/// fresh Session ID matching all 16 bytes) astronomically unlikely (2^-128),
-/// so the leak check below cannot false-positive.
 mod read_io;
 mod server_hello;
 mod session_ticket;
 
 use outcome::TicketbleedProbeOutcome;
 pub use outcome::TicketbleedTestResult;
-
-const TICKETBLEED_SESSION_ID_MARKER: [u8; 16] = [
-    0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-];
 
 #[cfg(test)]
 fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
@@ -149,7 +136,7 @@ impl TicketbleedTester {
     ) -> Result<TicketbleedProbeOutcome> {
         match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
             Ok(mut stream) => {
-                let client_hello = self.build_client_hello_with_session_ticket()?;
+                let client_hello = client_hello::with_empty_session_ticket()?;
                 stream.write_all(&client_hello).await?;
 
                 let mut buffer = vec![0u8; BUFFER_SIZE_MAX_WITH_OVERHEAD];
@@ -176,9 +163,10 @@ impl TicketbleedTester {
                         };
 
                         if has_new_ticket {
-                            let client_hello2 = match self
-                                .build_client_hello_with_received_ticket(server_response)
-                            {
+                            let client_hello2 = match client_hello::with_received_ticket(
+                                server_response,
+                                session_ticket::extract,
+                            ) {
                                 Ok(value) => value,
                                 Err(_) => {
                                     return Ok(TicketbleedProbeOutcome::Inconclusive(
@@ -234,40 +222,6 @@ impl TicketbleedTester {
             )),
         }
     }
-
-    /// Build ClientHello with SessionTicket extension using ClientHelloBuilder
-    fn build_client_hello_with_session_ticket(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-        builder.for_vulnerability_testing().add_session_ticket(); // Add empty session ticket for ticketbleed testing
-        builder.build()
-    }
-
-    /// Build ClientHello with the received session ticket and a short marker
-    /// Session ID.
-    ///
-    /// Ticketbleed (CVE-2016-9244) is triggered by sending a valid session ticket
-    /// alongside a Session ID shorter than 32 bytes. A vulnerable F5 BIG-IP leaks
-    /// uninitialized memory by padding its echoed Session ID back out to 32 bytes.
-    fn build_client_hello_with_received_ticket(&self, server_response: &[u8]) -> Result<Vec<u8>> {
-        // Extract the session ticket from the server's NewSessionTicket message
-        let ticket = session_ticket::extract(server_response)?;
-
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-        builder.for_vulnerability_testing();
-
-        if let Some(ticket_data) = ticket {
-            // Add the received ticket with data to trigger Ticketbleed
-            builder.add_session_ticket_with_data(&ticket_data);
-            // Send the distinctive marker Session ID. A vulnerable F5 echoes it
-            // back padded to 32 bytes with leaked memory (see detect_memory_leak).
-            builder.set_session_id(&TICKETBLEED_SESSION_ID_MARKER);
-        } else {
-            // Fallback: send empty ticket if extraction failed
-            builder.add_session_ticket();
-        }
-
-        builder.build()
-    }
 }
 
 #[cfg(test)]
@@ -321,17 +275,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_session_ticket() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = TicketbleedTester::new(target);
-        let hello = tester
-            .build_client_hello_with_session_ticket()
-            .expect("ClientHello should build");
+        let hello = client_hello::with_empty_session_ticket().expect("ClientHello should build");
 
         assert!(hello.len() > 50);
         assert_eq!(hello.first(), Some(&0x16)); // Handshake
@@ -426,7 +370,7 @@ mod tests {
     fn test_detect_memory_leak_flags_padded_session_id_echo() {
         // Vulnerable F5: echoes a 32-byte Session ID that begins with our marker,
         // the trailing 16 bytes being leaked memory.
-        let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
+        let mut session_id = client_hello::SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let response = server_hello_record_with_session_id(&session_id);
         assert!(server_hello::detect_memory_leak(&response).unwrap());
@@ -434,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_detect_memory_leak_finds_serverhello_inside_combined_record() {
-        let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
+        let mut session_id = client_hello::SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
 
         let mut server_hello = Vec::new();
@@ -455,7 +399,7 @@ mod tests {
     #[test]
     fn test_detect_memory_leak_clears_exact_marker_echo() {
         // Healthy resumption: server echoes the marker at its exact length.
-        let response = server_hello_record_with_session_id(&TICKETBLEED_SESSION_ID_MARKER);
+        let response = server_hello_record_with_session_id(&client_hello::SESSION_ID_MARKER);
         assert!(!server_hello::detect_memory_leak(&response).unwrap());
     }
 
@@ -470,7 +414,7 @@ mod tests {
     #[test]
     fn test_detect_memory_leak_rejects_truncated_record() {
         // A record claiming more bytes than are present must not be parsed.
-        let mut session_id = TICKETBLEED_SESSION_ID_MARKER.to_vec();
+        let mut session_id = client_hello::SESSION_ID_MARKER.to_vec();
         session_id.extend_from_slice(&[0x77u8; 16]);
         let mut response = server_hello_record_with_session_id(&session_id);
         *response
@@ -684,7 +628,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read request");
 
             let response = handshake_record(&[server_hello_record_with_session_id(
-                &TICKETBLEED_SESSION_ID_MARKER,
+                &client_hello::SESSION_ID_MARKER,
             )]);
             socket
                 .write_all(&response[..4])
@@ -771,7 +715,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read follow-up hello");
             socket
                 .write_all(&server_hello_record_with_session_id(
-                    &TICKETBLEED_SESSION_ID_MARKER,
+                    &client_hello::SESSION_ID_MARKER,
                 ))
                 .await
                 .expect("write follow-up server hello");
