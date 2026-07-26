@@ -1,10 +1,10 @@
 // Cipher policy rules
 
-use crate::ciphers::tester::ProtocolCipherSummary;
-use crate::policy::violation::PolicyViolation;
-use crate::policy::CipherPolicy;
-use crate::protocols::Protocol;
 use crate::Result;
+use crate::ciphers::tester::ProtocolCipherSummary;
+use crate::policy::CipherPolicy;
+use crate::policy::violation::PolicyViolation;
+use crate::protocols::Protocol;
 use regex::RegexBuilder;
 use std::collections::HashMap;
 
@@ -257,8 +257,8 @@ fn compile_cipher_pattern(pattern: &str) -> std::result::Result<regex::Regex, re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ciphers::tester::CipherCounts;
     use crate::ciphers::CipherSuite;
+    use crate::ciphers::tester::CipherCounts;
     use crate::policy::PolicyAction;
 
     fn create_test_cipher(name: &str) -> CipherSuite {
@@ -303,22 +303,39 @@ mod tests {
         HashMap::from([(Protocol::TLS12, summary)])
     }
 
+    fn prohibited_pattern(pattern: &str) -> CipherPolicy {
+        CipherPolicy {
+            prohibited_patterns: Some(vec![pattern.to_string()]),
+            ..base_policy()
+        }
+    }
+
+    fn required_pattern(pattern: &str) -> CipherPolicy {
+        CipherPolicy {
+            required_patterns: Some(vec![pattern.to_string()]),
+            ..base_policy()
+        }
+    }
+
+    fn violations(
+        policy: &CipherPolicy,
+        results: &HashMap<Protocol, ProtocolCipherSummary>,
+    ) -> Vec<PolicyViolation> {
+        CipherRule::new(policy, results)
+            .evaluate("example.com:443")
+            .expect("test assertion should succeed")
+    }
+
     #[test]
     fn test_prohibited_cipher_pattern() {
-        let policy = CipherPolicy {
-            prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
-            ..base_policy()
-        };
+        let policy = prohibited_pattern(".*_RC4_.*");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
@@ -326,70 +343,54 @@ mod tests {
 
     #[test]
     fn test_invalid_prohibited_pattern_fails_closed_with_violation() {
-        let policy = CipherPolicy {
-            // Unbalanced bracket — invalid regex.
-            prohibited_patterns: Some(vec!["RC4[".to_string()]),
-            ..base_policy()
-        };
+        let policy = prohibited_pattern("RC4[");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
-        assert!(violations[0]
-            .description
-            .contains("Invalid prohibited cipher pattern"));
+        assert!(
+            violations[0]
+                .description
+                .contains("Invalid prohibited cipher pattern")
+        );
     }
 
     #[test]
     fn test_invalid_required_pattern_fails_closed_with_violation() {
-        let policy = CipherPolicy {
-            // Unbalanced bracket — invalid regex.
-            required_patterns: Some(vec!["AES[".to_string()]),
-            ..base_policy()
-        };
+        let policy = required_pattern("AES[");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
-        assert!(violations[0]
-            .description
-            .contains("Invalid required cipher pattern"));
+        assert!(
+            violations[0]
+                .description
+                .contains("Invalid required cipher pattern")
+        );
     }
 
     #[test]
     fn test_prohibited_cipher_pattern_is_case_insensitive() {
-        let policy = CipherPolicy {
-            prohibited_patterns: Some(vec![".*_RC4_.*".to_string()]),
-            ..base_policy()
-        };
+        let policy = prohibited_pattern(".*_RC4_.*");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("tls_rsa_with_rc4_128_sha")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
@@ -416,10 +417,7 @@ mod tests {
             },
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert!(!violations.is_empty());
         assert_eq!(violations[0].rule_path, "ciphers.min_strength");
@@ -441,10 +439,7 @@ mod tests {
             },
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert_eq!(violations[0].rule_path, "ciphers.require_forward_secrecy");
     }
@@ -465,70 +460,49 @@ mod tests {
             },
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert_eq!(violations[0].rule_path, "ciphers.require_aead");
     }
 
     #[test]
     fn test_required_patterns_violation() {
-        let policy = CipherPolicy {
-            required_patterns: Some(vec!["TLS_AES_128_GCM_SHA256".to_string()]),
-            ..base_policy()
-        };
+        let policy = required_pattern("TLS_AES_128_GCM_SHA256");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("TLS_RSA_WITH_AES_128_CBC_SHA")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
     }
 
     #[test]
     fn test_required_patterns_satisfied() {
-        let policy = CipherPolicy {
-            required_patterns: Some(vec![".*GCM.*".to_string()]),
-            ..base_policy()
-        };
+        let policy = required_pattern(".*GCM.*");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert!(violations.is_empty());
     }
 
     #[test]
     fn test_required_cipher_pattern_is_case_insensitive() {
-        let policy = CipherPolicy {
-            required_patterns: Some(vec![".*GCM.*".to_string()]),
-            ..base_policy()
-        };
+        let policy = required_pattern(".*GCM.*");
 
         let results = tls12_results(test_summary(
             vec![create_test_cipher("tls_aes_128_gcm_sha256")],
             CipherCounts::default(),
         ));
 
-        let rule = CipherRule::new(&policy, &results);
-        let violations = rule
-            .evaluate("example.com:443")
-            .expect("test assertion should succeed");
+        let violations = violations(&policy, &results);
 
         assert!(violations.is_empty(), "{violations:?}");
     }
