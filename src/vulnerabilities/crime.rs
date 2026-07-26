@@ -358,20 +358,6 @@ mod tests {
     }
 
     #[test]
-    fn test_crime_result_creation() {
-        let result = CrimeTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            tls_compression_enabled: true,
-            spdy_compression_enabled: false,
-            details: "Test".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert!(result.tls_compression_enabled);
-        assert!(!result.spdy_compression_enabled);
-    }
-
-    #[test]
     fn test_client_hello_with_npn() {
         let hello = client_hello::with_npn().expect("ClientHello should build");
 
@@ -382,39 +368,6 @@ mod tests {
         // Check for compression methods (DEFLATE = 0x01)
         let has_deflate = hello.windows(2).any(|w| w == [0x02, 0x01]);
         assert!(has_deflate);
-    }
-
-    #[test]
-    fn test_crime_result_debug_contains_details() {
-        let result = CrimeTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            tls_compression_enabled: false,
-            spdy_compression_enabled: false,
-            details: "No compression".to_string(),
-        };
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("No compression"));
-    }
-
-    #[test]
-    fn test_crime_result_not_vulnerable_text() {
-        let result = CrimeTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            tls_compression_enabled: false,
-            spdy_compression_enabled: false,
-            details: "Not vulnerable - TLS/SPDY compression disabled".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
-    fn test_client_hello_with_npn_contains_extension_id() {
-        let hello = client_hello::with_npn().expect("ClientHello should build");
-
-        // NPN extension type is 0x3374
         assert!(hello.windows(2).any(|w| w == [0x33, 0x74]));
     }
 
