@@ -366,6 +366,44 @@ pub struct CtPolicyCompliance {
 mod tests {
     use super::*;
 
+    fn cert_info_with_der(der_bytes: Vec<u8>) -> CertificateInfo {
+        CertificateInfo {
+            subject: "CN=example.com".to_string(),
+            issuer: "CN=example.com".to_string(),
+            serial_number: "01".to_string(),
+            not_before: "2024-01-01 00:00:00 +0000".to_string(),
+            not_after: "2025-01-01 00:00:00 +0000".to_string(),
+            expiry_countdown: None,
+            signature_algorithm: "sha256".to_string(),
+            public_key_algorithm: "rsaEncryption".to_string(),
+            public_key_size: Some(2048),
+            rsa_exponent: None,
+            san: vec!["example.com".to_string()],
+            is_ca: false,
+            key_usage: vec![],
+            extended_key_usage: vec![],
+            extended_validation: false,
+            ev_oids: vec![],
+            pin_sha256: None,
+            fingerprint_sha256: None,
+            debian_weak_key: None,
+            aia_url: None,
+            certificate_transparency: None,
+            der_bytes,
+        }
+    }
+
+    fn ct_result(sct_count: usize, compliant: bool) -> CtVerificationResult {
+        CtVerificationResult {
+            has_sct: true,
+            sct_count,
+            sct_sources: vec![SctSource::X509Extension],
+            compliant,
+            details: vec![],
+            log_lookup_inconclusive: false,
+        }
+    }
+
     #[test]
     fn test_ct_verifier_creation() {
         let verifier = CtVerifier::new(false);
@@ -494,30 +532,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
             .expect("test assertion should succeed");
 
-        let cert_info = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=example.com".to_string(),
-            serial_number: "01".to_string(),
-            not_before: "2024-01-01 00:00:00 +0000".to_string(),
-            not_after: "2025-01-01 00:00:00 +0000".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: cert.cert.der().as_ref().to_vec(),
-        };
+        let cert_info = cert_info_with_der(cert.cert.der().as_ref().to_vec());
 
         let result = verifier
             .verify(&cert_info)
@@ -554,30 +569,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
             .expect("test assertion should succeed");
 
-        let cert_info = CertificateInfo {
-            subject: "CN=example.com".to_string(),
-            issuer: "CN=example.com".to_string(),
-            serial_number: "01".to_string(),
-            not_before: "2024-01-01 00:00:00 +0000".to_string(),
-            not_after: "2025-01-01 00:00:00 +0000".to_string(),
-            expiry_countdown: None,
-            signature_algorithm: "sha256".to_string(),
-            public_key_algorithm: "rsaEncryption".to_string(),
-            public_key_size: Some(2048),
-            rsa_exponent: None,
-            san: vec!["example.com".to_string()],
-            is_ca: false,
-            key_usage: vec![],
-            extended_key_usage: vec![],
-            extended_validation: false,
-            ev_oids: vec![],
-            pin_sha256: None,
-            fingerprint_sha256: None,
-            debian_weak_key: None,
-            aia_url: None,
-            certificate_transparency: None,
-            der_bytes: cert.cert.der().as_ref().to_vec(),
-        };
+        let cert_info = cert_info_with_der(cert.cert.der().as_ref().to_vec());
 
         let result = verifier
             .verify(&cert_info)
@@ -602,14 +594,7 @@ mod tests {
     #[test]
     fn test_policy_compliance() {
         let verifier = CtVerifier::new(false);
-        let result = CtVerificationResult {
-            has_sct: true,
-            sct_count: 3,
-            sct_sources: vec![SctSource::X509Extension],
-            compliant: true,
-            details: vec![],
-            log_lookup_inconclusive: false,
-        };
+        let result = ct_result(3, true);
 
         let compliance = verifier.check_policy_compliance(&result, 24);
         assert!(compliance.chrome_compliant);
@@ -619,14 +604,7 @@ mod tests {
     #[test]
     fn test_policy_compliance_requires_three_for_long_validity() {
         let verifier = CtVerifier::new(false);
-        let result = CtVerificationResult {
-            has_sct: true,
-            sct_count: 2,
-            sct_sources: vec![SctSource::X509Extension],
-            compliant: false,
-            details: vec![],
-            log_lookup_inconclusive: false,
-        };
+        let result = ct_result(2, false);
 
         let compliance = verifier.check_policy_compliance(&result, 60);
         assert!(!compliance.chrome_compliant);
