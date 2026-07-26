@@ -32,9 +32,9 @@ fn test_certificate_consistency_detects_different_full_chains_with_same_leaf() {
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: ScanResults {
+        successful_scan(
+            ip1,
+            ScanResults {
                 certificate_chain: Some(make_certificate_chain(&[
                     "leaf",
                     "intermediate-a",
@@ -42,15 +42,14 @@ fn test_certificate_consistency_detects_different_full_chains_with_same_leaf() {
                 ])),
                 ..Default::default()
             },
-            scan_duration_ms: 10,
-            error: None,
-        },
+            10,
+        ),
     );
     results.insert(
         ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: ScanResults {
+        successful_scan(
+            ip2,
+            ScanResults {
                 certificate_chain: Some(make_certificate_chain(&[
                     "leaf",
                     "intermediate-b",
@@ -58,9 +57,8 @@ fn test_certificate_consistency_detects_different_full_chains_with_same_leaf() {
                 ])),
                 ..Default::default()
             },
-            scan_duration_ms: 12,
-            error: None,
-        },
+            12,
+        ),
     );
 
     let aggregator = ConservativeAggregator::new(results, vec![]);
@@ -83,35 +81,19 @@ fn test_aggregate_grade_conservative_prefers_certificate_over_low_numeric_score(
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: make_scan_result(
-                Vec::new(),
-                HashMap::new(),
-                "fp1",
-                Grade::T,
-                95,
-                Vec::new(),
-            ),
-            scan_duration_ms: 10,
-            error: None,
-        },
+        successful_scan(
+            ip1,
+            make_scan_result(Vec::new(), HashMap::new(), "fp1", Grade::T, 95, Vec::new()),
+            10,
+        ),
     );
     results.insert(
         ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: make_scan_result(
-                Vec::new(),
-                HashMap::new(),
-                "fp2",
-                Grade::A,
-                10,
-                Vec::new(),
-            ),
-            scan_duration_ms: 12,
-            error: None,
-        },
+        successful_scan(
+            ip2,
+            make_scan_result(Vec::new(), HashMap::new(), "fp2", Grade::A, 10, Vec::new()),
+            12,
+        ),
     );
 
     let aggregator = ConservativeAggregator::new(results, vec![]);
@@ -129,25 +111,16 @@ fn test_certificate_consistency_is_false_when_some_successful_backends_lack_cert
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: ScanResults {
+        successful_scan(
+            ip1,
+            ScanResults {
                 certificate_chain: Some(make_certificate("leaf-a")),
                 ..Default::default()
             },
-            scan_duration_ms: 10,
-            error: None,
-        },
+            10,
+        ),
     );
-    results.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: ScanResults::default(),
-            scan_duration_ms: 12,
-            error: None,
-        },
-    );
+    results.insert(ip2, successful_scan(ip2, ScanResults::default(), 12));
 
     let aggregator = ConservativeAggregator::new(results, vec![]);
     let aggregated = aggregator.aggregate();
@@ -309,6 +282,19 @@ pub(crate) fn make_scan_result(
     }
 }
 
+fn successful_scan(
+    ip: IpAddr,
+    scan_result: ScanResults,
+    scan_duration_ms: u64,
+) -> SingleIpScanResult {
+    SingleIpScanResult {
+        ip,
+        scan_result,
+        scan_duration_ms,
+        error: None,
+    }
+}
+
 #[test]
 fn test_conservative_aggregation_merges_results() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
@@ -370,24 +356,8 @@ fn test_conservative_aggregation_merges_results() {
     );
 
     let mut results = HashMap::new();
-    results.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results.insert(ip1, successful_scan(ip1, scan1, 100));
+    results.insert(ip2, successful_scan(ip2, scan2, 120));
 
     let aggregator = ConservativeAggregator::new(results, vec![]);
     let aggregated = aggregator.aggregate();
@@ -485,44 +455,12 @@ fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
     );
 
     let mut results_a = HashMap::new();
-    results_a.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_ip1.clone(),
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results_a.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_ip2.clone(),
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results_a.insert(ip1, successful_scan(ip1, scan_ip1.clone(), 100));
+    results_a.insert(ip2, successful_scan(ip2, scan_ip2.clone(), 120));
 
     let mut results_b = HashMap::new();
-    results_b.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_ip2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
-    results_b.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_ip1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
+    results_b.insert(ip2, successful_scan(ip2, scan_ip2, 120));
+    results_b.insert(ip1, successful_scan(ip1, scan_ip1, 100));
 
     let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
     let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
@@ -584,21 +522,19 @@ fn test_aggregate_ciphers_saturates_overflowing_handshake_average() {
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: make_scan_result(Vec::new(), ciphers_ip1, "fp1", Grade::A, 90, Vec::new()),
-            scan_duration_ms: 100,
-            error: None,
-        },
+        successful_scan(
+            ip1,
+            make_scan_result(Vec::new(), ciphers_ip1, "fp1", Grade::A, 90, Vec::new()),
+            100,
+        ),
     );
     results.insert(
         ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: make_scan_result(Vec::new(), ciphers_ip2, "fp2", Grade::A, 90, Vec::new()),
-            scan_duration_ms: 120,
-            error: None,
-        },
+        successful_scan(
+            ip2,
+            make_scan_result(Vec::new(), ciphers_ip2, "fp2", Grade::A, 90, Vec::new()),
+            120,
+        ),
     );
 
     let aggregated = ConservativeAggregator::new(results, vec![]).aggregate();
@@ -671,44 +607,12 @@ fn test_aggregate_protocols_conservative_uses_consensus_metadata() {
     );
 
     let mut results_a = HashMap::new();
-    results_a.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_ip1.clone(),
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results_a.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_ip2.clone(),
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results_a.insert(ip1, successful_scan(ip1, scan_ip1.clone(), 100));
+    results_a.insert(ip2, successful_scan(ip2, scan_ip2.clone(), 120));
 
     let mut results_b = HashMap::new();
-    results_b.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_ip2,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
-    results_b.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_ip1,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
+    results_b.insert(ip2, successful_scan(ip2, scan_ip2, 120));
+    results_b.insert(ip1, successful_scan(ip1, scan_ip1, 100));
 
     let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
     let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
@@ -751,44 +655,12 @@ fn test_aggregate_certificate_tie_break_is_deterministic() {
     let scan_b = make_scan_result(vec![], HashMap::new(), "aaaa", Grade::A, 90, Vec::new());
 
     let mut results_a = HashMap::new();
-    results_a.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_a.clone(),
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
-    results_a.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_b.clone(),
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
+    results_a.insert(ip1, successful_scan(ip1, scan_a.clone(), 100));
+    results_a.insert(ip2, successful_scan(ip2, scan_b.clone(), 120));
 
     let mut results_b = HashMap::new();
-    results_b.insert(
-        ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: scan_b,
-            scan_duration_ms: 120,
-            error: None,
-        },
-    );
-    results_b.insert(
-        ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: scan_a,
-            scan_duration_ms: 100,
-            error: None,
-        },
-    );
+    results_b.insert(ip2, successful_scan(ip2, scan_b, 120));
+    results_b.insert(ip1, successful_scan(ip1, scan_a, 100));
 
     let aggregated_a = ConservativeAggregator::new(results_a, vec![]).aggregate();
     let aggregated_b = ConservativeAggregator::new(results_b, vec![]).aggregate();
@@ -820,9 +692,9 @@ fn test_aggregate_protocols_marks_unsupported_when_not_all_support() {
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: make_scan_result(
+        successful_scan(
+            ip1,
+            make_scan_result(
                 protocols_ip1,
                 HashMap::new(),
                 "fp1",
@@ -830,15 +702,14 @@ fn test_aggregate_protocols_marks_unsupported_when_not_all_support() {
                 90,
                 Vec::new(),
             ),
-            scan_duration_ms: 1,
-            error: None,
-        },
+            1,
+        ),
     );
     results.insert(
         ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: make_scan_result(
+        successful_scan(
+            ip2,
+            make_scan_result(
                 protocols_ip2,
                 HashMap::new(),
                 "fp1",
@@ -846,9 +717,8 @@ fn test_aggregate_protocols_marks_unsupported_when_not_all_support() {
                 90,
                 Vec::new(),
             ),
-            scan_duration_ms: 1,
-            error: None,
-        },
+            1,
+        ),
     );
 
     let aggregator = ConservativeAggregator::new(results, Vec::new());
@@ -872,19 +742,11 @@ fn test_aggregate_protocols_marks_partial_backend_failure_inconclusive() {
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: make_scan_result(
-                protocols,
-                HashMap::new(),
-                "fp1",
-                Grade::A,
-                90,
-                Vec::new(),
-            ),
-            scan_duration_ms: 1,
-            error: None,
-        },
+        successful_scan(
+            ip1,
+            make_scan_result(protocols, HashMap::new(), "fp1", Grade::A, 90, Vec::new()),
+            1,
+        ),
     );
     results.insert(
         ip2,
@@ -922,9 +784,9 @@ fn test_aggregate_protocols_preserves_inconclusive_when_all_support() {
     let mut results = HashMap::new();
     results.insert(
         ip1,
-        SingleIpScanResult {
-            ip: ip1,
-            scan_result: make_scan_result(
+        successful_scan(
+            ip1,
+            make_scan_result(
                 protocols_ip1,
                 HashMap::new(),
                 "fp1",
@@ -932,15 +794,14 @@ fn test_aggregate_protocols_preserves_inconclusive_when_all_support() {
                 90,
                 Vec::new(),
             ),
-            scan_duration_ms: 1,
-            error: None,
-        },
+            1,
+        ),
     );
     results.insert(
         ip2,
-        SingleIpScanResult {
-            ip: ip2,
-            scan_result: make_scan_result(
+        successful_scan(
+            ip2,
+            make_scan_result(
                 protocols_ip2,
                 HashMap::new(),
                 "fp1",
@@ -948,9 +809,8 @@ fn test_aggregate_protocols_preserves_inconclusive_when_all_support() {
                 90,
                 Vec::new(),
             ),
-            scan_duration_ms: 1,
-            error: None,
-        },
+            1,
+        ),
     );
 
     let aggregated = ConservativeAggregator::new(results, Vec::new()).aggregate();
