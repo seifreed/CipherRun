@@ -9,13 +9,12 @@ use crate::constants::{
     BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, CONTENT_TYPE_CHANGE_CIPHER_SPEC,
     CONTENT_TYPE_HANDSHAKE, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
 };
-use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod client_hello;
 mod read_io;
 mod result;
 
@@ -110,7 +109,7 @@ impl CcsInjectionTester {
         {
             Ok(mut stream) => {
                 // Send TLS ClientHello
-                let client_hello = self.build_client_hello()?;
+                let client_hello = client_hello::minimal_tls10_rsa()?;
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello
@@ -291,13 +290,6 @@ impl CcsInjectionTester {
             }
         }
     }
-
-    /// Build a basic TLS ClientHello message using ClientHelloBuilder
-    fn build_client_hello(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
-        builder.for_rsa_key_exchange();
-        builder.build_minimal()
-    }
 }
 
 fn alert_record_is_complete(buffer: &[u8], n: usize) -> bool {
@@ -368,17 +360,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_build() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CcsInjectionTester::new(target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::minimal_tls10_rsa().expect("ClientHello should build");
 
         assert!(hello.len() > 40);
         assert_eq!(hello.first(), Some(&CONTENT_TYPE_HANDSHAKE)); // Handshake (0x16)
@@ -387,17 +369,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_version_bytes() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CcsInjectionTester::new(target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::minimal_tls10_rsa().expect("ClientHello should build");
 
         assert_eq!(hello.get(1), Some(&0x03));
         assert_eq!(hello.get(2), Some(&0x01));
@@ -405,17 +377,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_non_empty() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = CcsInjectionTester::new(target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::minimal_tls10_rsa().expect("ClientHello should build");
         assert!(!hello.is_empty());
     }
 
