@@ -172,16 +172,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_compare_scan_ids() {
-        assert!(CompareScanIds::parse("1").is_err());
-        assert!(CompareScanIds::parse("1:2:3").is_err());
-    }
-
-    #[test]
-    fn rejects_non_positive_compare_scan_ids() {
-        assert!(CompareScanIds::parse("0:2").is_err());
-        assert!(CompareScanIds::parse("1:0").is_err());
-        assert!(CompareScanIds::parse("-1:2").is_err());
-        assert!(CompareScanIds::parse("1:-2").is_err());
+        for input in ["1", "1:2:3", "0:2", "1:0", "-1:2", "1:-2"] {
+            assert!(CompareScanIds::parse(input).is_err(), "{input}");
+        }
     }
 
     #[test]
