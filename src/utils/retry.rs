@@ -424,67 +424,43 @@ mod tests {
 
     #[test]
     fn test_is_io_error_retriable() {
-        // Retriable errors
-        assert!(is_io_error_retriable(&Error::new(
-            ErrorKind::TimedOut,
-            "timeout"
-        )));
-        assert!(is_io_error_retriable(&Error::new(
-            ErrorKind::ConnectionReset,
-            "reset"
-        )));
-        assert!(is_io_error_retriable(&Error::new(
-            ErrorKind::ConnectionAborted,
-            "aborted"
-        )));
-        assert!(is_io_error_retriable(&Error::new(
-            ErrorKind::BrokenPipe,
-            "broken"
-        )));
+        for (kind, message) in [
+            (ErrorKind::TimedOut, "timeout"),
+            (ErrorKind::ConnectionReset, "reset"),
+            (ErrorKind::ConnectionAborted, "aborted"),
+            (ErrorKind::BrokenPipe, "broken"),
+        ] {
+            assert!(is_io_error_retriable(&Error::new(kind, message)));
+        }
 
         // ENETDOWN (error 50) - Network is down - should be retriable
         assert!(is_io_error_retriable(&Error::other(
             "Network is down (os error 50)"
         )));
 
-        // Non-retriable errors
-        assert!(!is_io_error_retriable(&Error::new(
-            ErrorKind::ConnectionRefused,
-            "refused"
-        )));
-        assert!(!is_io_error_retriable(&Error::new(
-            ErrorKind::NotFound,
-            "not found"
-        )));
-        assert!(!is_io_error_retriable(&Error::new(
-            ErrorKind::PermissionDenied,
-            "denied"
-        )));
-        assert!(!is_io_error_retriable(&Error::new(
-            ErrorKind::InvalidInput,
-            "invalid"
-        )));
+        for (kind, message) in [
+            (ErrorKind::ConnectionRefused, "refused"),
+            (ErrorKind::NotFound, "not found"),
+            (ErrorKind::PermissionDenied, "denied"),
+            (ErrorKind::InvalidInput, "invalid"),
+        ] {
+            assert!(!is_io_error_retriable(&Error::new(kind, message)));
+        }
     }
 
     #[test]
     fn test_is_retriable_by_message() {
-        // Retriable based on message
-        let timeout_err = TlsError::Other("Connection timed out".to_string());
-        assert!(is_retriable(&timeout_err));
+        for message in ["Connection timed out", "Connection reset by peer"] {
+            assert!(is_retriable(&TlsError::Other(message.to_string())));
+        }
 
-        let reset_err = TlsError::Other("Connection reset by peer".to_string());
-        assert!(is_retriable(&reset_err));
-
-        // Non-retriable based on message
-        let refused_err = TlsError::Other("Connection refused".to_string());
-        assert!(!is_retriable(&refused_err));
-
-        let dns_err = TlsError::Other("Failed to lookup host".to_string());
-        assert!(!is_retriable(&dns_err));
-
-        // Unknown error - default to non-retriable
-        let unknown_err = TlsError::Other("Unknown error".to_string());
-        assert!(!is_retriable(&unknown_err));
+        for message in [
+            "Connection refused",
+            "Failed to lookup host",
+            "Unknown error",
+        ] {
+            assert!(!is_retriable(&TlsError::Other(message.to_string())));
+        }
     }
 
     #[test]
