@@ -1,29 +1,20 @@
-use crate::{Result, TlsError};
-
-fn length_error(context: &str) -> TlsError {
-    TlsError::Other(format!("{context} exceeds maximum length"))
-}
+use crate::Result;
+use crate::utils::invalid_input_length as length;
 
 pub(crate) fn u8_len(len: usize, context: &str) -> Result<u8> {
-    u8::try_from(len).map_err(|_| length_error(context))
+    length::u8_len(len, context)
 }
 
 pub(crate) fn u16_len(len: usize, context: &str) -> Result<u16> {
-    u16::try_from(len).map_err(|_| length_error(context))
+    length::u16_len(len, context)
 }
 
 pub(crate) fn u16_byte_len(items: usize, context: &str) -> Result<u16> {
-    let bytes = items.checked_mul(2).ok_or_else(|| length_error(context))?;
-    u16_len(bytes, context)
+    length::u16_len_plus(items, items, context)
 }
 
 pub(crate) fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-    let len = u32::try_from(len).map_err(|_| length_error(context))?;
-    if len > 0x00ff_ffff {
-        return Err(length_error(context));
-    }
-    let bytes = len.to_be_bytes();
-    Ok([bytes[1], bytes[2], bytes[3]])
+    length::u24_len(len, context)
 }
 
 #[cfg(test)]
