@@ -2,10 +2,10 @@
 //
 // Parses CT log entries (Merkle Tree Leaf format) and extracts certificates
 
-use super::Result;
 use super::client::CtLogEntryResponse;
+use super::Result;
 use crate::error::TlsError;
-use crate::utils::result_byte_parse::{self, read_u8_at, read_u16_at, read_u64_at};
+use crate::utils::result_byte_parse::{self, read_u16_at, read_u64_at, read_u8_at};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -343,6 +343,19 @@ mod tests {
         build_leaf_input_with_timestamp(0, cert_der)
     }
 
+    fn entry(leaf_input: String) -> CtLogEntryResponse {
+        CtLogEntryResponse {
+            leaf_input,
+            extra_data: String::new(),
+        }
+    }
+
+    fn assert_parse_entry_error(entry: &CtLogEntryResponse, expected: &str) {
+        let parser = Parser::new("test-log".to_string());
+        let err = parser.parse_entry(entry, 7).unwrap_err();
+        assert!(format!("{err}").contains(expected));
+    }
+
     fn append_u24_len(out: &mut Vec<u8>, len: usize) {
         let len = len as u32;
         out.push(((len >> 16) & 0xff) as u8);
@@ -394,15 +407,9 @@ mod tests {
 
     #[test]
     fn test_parse_entry_rejects_invalid_ct_timestamp() {
-        let entry = CtLogEntryResponse {
-            leaf_input: build_leaf_input_with_timestamp(u64::MAX, &[]),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_leaf_input_with_timestamp(u64::MAX, &[]));
 
-        let parser = Parser::new("test-log".to_string());
-        let err = parser.parse_entry(&entry, 0).unwrap_err();
-
-        assert!(format!("{err}").contains("Invalid CT leaf timestamp"));
+        assert_parse_entry_error(&entry, "Invalid CT leaf timestamp");
     }
 
     #[test]
@@ -434,10 +441,7 @@ mod tests {
         let cert = builder.build();
         let cert_der = cert.to_der().unwrap();
 
-        let entry = CtLogEntryResponse {
-            leaf_input: build_leaf_input(&cert_der),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_leaf_input(&cert_der));
 
         let parser = Parser::new("test-log".to_string());
         let parsed = parser.parse_entry(&entry, 42).unwrap();
@@ -517,10 +521,7 @@ mod tests {
         let cert_der = cert.to_der().unwrap();
         let tbs_der = tbs_der_from_cert(&cert_der);
 
-        let entry = CtLogEntryResponse {
-            leaf_input: build_precert_leaf_input(&tbs_der),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_precert_leaf_input(&tbs_der));
 
         let parser = Parser::new("test-log".to_string());
         let parsed = parser.parse_entry(&entry, 7).unwrap();
@@ -536,28 +537,18 @@ mod tests {
     fn test_parse_entry_precertificate_rejects_malformed_san() {
         let cert_der = cert_with_raw_extension_der("2.5.29.17", b"\x05\x00");
         let tbs_der = tbs_der_from_cert(&cert_der);
-        let entry = CtLogEntryResponse {
-            leaf_input: build_precert_leaf_input(&tbs_der),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_precert_leaf_input(&tbs_der));
 
-        let parser = Parser::new("test-log".to_string());
-        let err = parser.parse_entry(&entry, 7).unwrap_err();
-        assert!(format!("{err}").contains("Failed to parse subject alternative name"));
+        assert_parse_entry_error(&entry, "Failed to parse subject alternative name");
     }
 
     #[test]
     fn test_parse_entry_rejects_x509_der_trailing_bytes() {
         let mut cert_der = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
         cert_der.push(0xff);
-        let entry = CtLogEntryResponse {
-            leaf_input: build_leaf_input(&cert_der),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_leaf_input(&cert_der));
 
-        let parser = Parser::new("test-log".to_string());
-        let err = parser.parse_entry(&entry, 7).unwrap_err();
-        assert!(format!("{err}").contains("trailing bytes"));
+        assert_parse_entry_error(&entry, "trailing bytes");
     }
 
     #[test]
@@ -565,14 +556,9 @@ mod tests {
         let cert_der = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
         let mut tbs_der = tbs_der_from_cert(&cert_der);
         tbs_der.push(0xff);
-        let entry = CtLogEntryResponse {
-            leaf_input: build_precert_leaf_input(&tbs_der),
-            extra_data: String::new(),
-        };
+        let entry = entry(build_precert_leaf_input(&tbs_der));
 
-        let parser = Parser::new("test-log".to_string());
-        let err = parser.parse_entry(&entry, 7).unwrap_err();
-        assert!(format!("{err}").contains("trailing bytes"));
+        assert_parse_entry_error(&entry, "trailing bytes");
     }
 
     #[test]
@@ -581,10 +567,7 @@ mod tests {
         leaf.extend_from_slice(&0u64.to_be_bytes());
         leaf.extend_from_slice(&0u16.to_be_bytes());
         leaf.extend_from_slice(&[0, 0, 0]);
-        let entry = CtLogEntryResponse {
-            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
-            extra_data: String::new(),
-        };
+        let entry = entry(base64::engine::general_purpose::STANDARD.encode(leaf));
 
         let parser = Parser::new("test-log".to_string());
         assert!(parser.parse_entry(&entry, 0).is_err());
@@ -597,10 +580,7 @@ mod tests {
         leaf.extend_from_slice(&0u16.to_be_bytes());
         leaf.extend_from_slice(&[0x00, 0x00, 0x10]); // length 16
         leaf.extend_from_slice(&[0x01, 0x02, 0x03]); // only 3 bytes present
-        let entry = CtLogEntryResponse {
-            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
-            extra_data: String::new(),
-        };
+        let entry = entry(base64::engine::general_purpose::STANDARD.encode(leaf));
 
         let parser = Parser::new("test-log".to_string());
         assert!(parser.parse_entry(&entry, 0).is_err());
@@ -614,22 +594,14 @@ mod tests {
         leaf.extend_from_slice(&[0x00, 0x00, 0x01]); // length 1
         leaf.push(0x30); // declared certificate byte
         leaf.push(0xff); // trailing byte outside declared certificate
-        let entry = CtLogEntryResponse {
-            leaf_input: base64::engine::general_purpose::STANDARD.encode(leaf),
-            extra_data: String::new(),
-        };
+        let entry = entry(base64::engine::general_purpose::STANDARD.encode(leaf));
 
-        let parser = Parser::new("test-log".to_string());
-        let err = parser.parse_entry(&entry, 0).unwrap_err();
-        assert!(format!("{err}").contains("trailing bytes"));
+        assert_parse_entry_error(&entry, "trailing bytes");
     }
 
     #[test]
     fn test_parse_entry_invalid_base64() {
-        let entry = CtLogEntryResponse {
-            leaf_input: "not-base64!!".to_string(),
-            extra_data: String::new(),
-        };
+        let entry = entry("not-base64!!".to_string());
 
         let parser = Parser::new("test-log".to_string());
         assert!(parser.parse_entry(&entry, 0).is_err());
