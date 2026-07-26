@@ -9,6 +9,7 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 
+mod http_analysis;
 mod result;
 
 pub use result::BreachTestResult;
@@ -140,7 +141,9 @@ impl BreachTester {
                         })?;
                         let response = String::from_utf8_lossy(bytes);
                         // Check for Content-Encoding header
-                        let compressed = response.lines().any(Self::is_compressed_encoding_header);
+                        let compressed = response
+                            .lines()
+                            .any(http_analysis::is_compressed_encoding_header);
                         Ok(Some(compressed))
                     } else {
                         Ok(None)
@@ -218,7 +221,9 @@ impl BreachTester {
                                 .to_string(),
                         })?;
                         let response = String::from_utf8_lossy(bytes);
-                        Ok(Self::classify_dynamic_content_response(&response, marker))
+                        Ok(http_analysis::classify_dynamic_content_response(
+                            &response, marker,
+                        ))
                     } else {
                         Ok(None)
                     }
@@ -303,7 +308,7 @@ impl BreachTester {
                         })?;
                         let response = String::from_utf8_lossy(bytes);
                         // Check for sensitive data with more precise matching
-                        let has_sensitive = Self::detect_sensitive_patterns(&response);
+                        let has_sensitive = http_analysis::detect_sensitive_patterns(&response);
                         Ok(Some(has_sensitive))
                     } else {
                         Ok(None)
@@ -314,91 +319,6 @@ impl BreachTester {
         })
         .await
         .map_err(|e| crate::TlsError::Other(format!("BREACH test blocking task failed: {}", e)))?
-    }
-
-    /// Detect sensitive data patterns in HTTP response
-    /// Uses precise matching to reduce false positives from comments/irrelevant text
-    fn detect_sensitive_patterns(response: &str) -> bool {
-        let response_lower = response.to_lowercase();
-        let headers_lower = response_lower
-            .split_once("\r\n\r\n")
-            .or_else(|| response_lower.split_once("\n\n"))
-            .map_or(response_lower.as_str(), |(headers, _)| headers);
-
-        // Check Set-Cookie header (definitive indicator)
-        if headers_lower.contains("set-cookie:") {
-            return true;
-        }
-
-        // Check for CSRF tokens in HTML attributes (more precise)
-        // Look for actual HTML attributes, not just the word "csrf"
-        if response_lower.contains("csrf-token=")
-            || response_lower.contains("csrf_token=")
-            || response_lower.contains("_csrf=")
-            || response_lower.contains("name=\"csrf")
-            || response_lower.contains("name='csrf")
-            || response_lower.contains("csrfmiddlewaretoken")
-        {
-            return true;
-        }
-
-        // Check for session tokens in specific contexts
-        // Avoid matching "session" word in comments or unrelated text
-        if response_lower.contains("phpsessid=")
-            || response_lower.contains("jsessionid=")
-            || response_lower.contains("asp.net_sessionid=")
-            || response_lower.contains("sessionid=")
-            || response_lower.contains("session_id=")
-            || response_lower.contains("name=\"session")
-            || response_lower.contains("name='session")
-        {
-            return true;
-        }
-
-        // Check for API tokens in headers or meta tags
-        if headers_lower.contains("authorization:")
-            || headers_lower.contains("x-auth-token:")
-            || headers_lower.contains("x-api-key:")
-            || response_lower.contains("api_key=")
-            || response_lower.contains("access_token=")
-            || response_lower.contains("name=\"token")
-            || response_lower.contains("name='token")
-        {
-            return true;
-        }
-
-        false
-    }
-
-    fn is_compressed_encoding_header(line: &str) -> bool {
-        let Some((name, value)) = line.split_once(':') else {
-            return false;
-        };
-        if !name.eq_ignore_ascii_case("Content-Encoding") {
-            return false;
-        }
-
-        value.split(',').map(str::trim).any(|token| {
-            matches!(
-                token.to_ascii_lowercase().as_str(),
-                "gzip" | "deflate" | "br" | "zstd" | "compress"
-            )
-        })
-    }
-
-    fn classify_dynamic_content_response(response: &str, marker: &str) -> Option<bool> {
-        let status_line = response.strip_prefix("HTTP/")?;
-        let status_code = status_line
-            .split_once(' ')
-            .map(|x| x.1)
-            .and_then(|rest| rest.split_whitespace().next())
-            .and_then(|code| code.parse::<u16>().ok())?;
-
-        if (200..300).contains(&status_code) {
-            Some(response.contains(marker))
-        } else {
-            Some(false)
-        }
     }
 
     fn read_http_response(
@@ -562,16 +482,16 @@ mod tests {
 
     #[test]
     fn test_detect_sensitive_patterns_is_case_insensitive() {
-        assert!(BreachTester::detect_sensitive_patterns(
+        assert!(http_analysis::detect_sensitive_patterns(
             r#"<input NAME="CSRFToken" value="abc">"#
         ));
-        assert!(BreachTester::detect_sensitive_patterns(
+        assert!(http_analysis::detect_sensitive_patterns(
             "HTTP/1.1 200 OK\r\nX-API-Key: abc\r\n\r\n"
         ));
-        assert!(BreachTester::detect_sensitive_patterns(
+        assert!(http_analysis::detect_sensitive_patterns(
             r#"<form><input Name='SessionId' value='abc'></form>"#
         ));
-        assert!(BreachTester::detect_sensitive_patterns(
+        assert!(http_analysis::detect_sensitive_patterns(
             "https://example.test/callback?Access_Token=abc"
         ));
     }
@@ -580,18 +500,18 @@ mod tests {
     fn test_detect_sensitive_patterns_ignores_header_names_in_body_text() {
         let response =
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDocs mention Set-Cookie: here";
-        assert!(!BreachTester::detect_sensitive_patterns(response));
+        assert!(!http_analysis::detect_sensitive_patterns(response));
     }
 
     #[test]
     fn test_compression_header_requires_exact_encoding_token() {
-        assert!(BreachTester::is_compressed_encoding_header(
+        assert!(http_analysis::is_compressed_encoding_header(
             "Content-Encoding: gzip, br"
         ));
-        assert!(BreachTester::is_compressed_encoding_header(
+        assert!(http_analysis::is_compressed_encoding_header(
             "content-Encoding: gzip"
         ));
-        assert!(!BreachTester::is_compressed_encoding_header(
+        assert!(!http_analysis::is_compressed_encoding_header(
             "Content-Encoding: bravo"
         ));
     }
@@ -627,18 +547,18 @@ mod tests {
     #[test]
     fn test_dynamic_content_response_requires_http_status() {
         assert_eq!(
-            BreachTester::classify_dynamic_content_response("not http", "marker"),
+            http_analysis::classify_dynamic_content_response("not http", "marker"),
             None
         );
         assert_eq!(
-            BreachTester::classify_dynamic_content_response(
+            http_analysis::classify_dynamic_content_response(
                 "HTTP/1.1 404 Not Found\r\n\r\n",
                 "marker"
             ),
             Some(false)
         );
         assert_eq!(
-            BreachTester::classify_dynamic_content_response(
+            http_analysis::classify_dynamic_content_response(
                 "HTTP/1.1 200 OK\r\n\r\nmarker",
                 "marker"
             ),
@@ -652,7 +572,7 @@ mod tests {
         let response = format!("HTTP/1.1 200 OK\r\n\r\n{}{}", "a".repeat(20_000), marker);
 
         assert_eq!(
-            BreachTester::classify_dynamic_content_response(&response, marker),
+            http_analysis::classify_dynamic_content_response(&response, marker),
             Some(true)
         );
     }
@@ -664,7 +584,7 @@ mod tests {
             "a".repeat(20_000)
         );
 
-        assert!(BreachTester::detect_sensitive_patterns(&response));
+        assert!(http_analysis::detect_sensitive_patterns(&response));
     }
 
     #[test]
