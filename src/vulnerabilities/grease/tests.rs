@@ -1,4 +1,5 @@
 use super::*;
+use crate::vulnerabilities::test_support::spawn_dummy_server;
 use std::net::IpAddr;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -231,21 +232,6 @@ fn test_build_client_hello_combined_grease() {
 
     assert_eq!(hello[0], 0x16);
     assert_eq!(hello[5], 0x01);
-}
-
-async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let mut remaining = max_accepts;
-        while remaining > 0 {
-            if let Ok((socket, _)) = listener.accept().await {
-                drop(socket);
-            }
-            remaining -= 1;
-        }
-    });
-    addr
 }
 
 async fn spawn_self_signed_tls_server(max_accepts: usize) -> std::net::SocketAddr {

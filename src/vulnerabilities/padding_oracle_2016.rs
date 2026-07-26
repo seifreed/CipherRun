@@ -283,8 +283,8 @@ impl<'a> PaddingOracle2016Tester<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, SocketAddr};
-    use tokio::net::TcpListener;
+    use crate::vulnerabilities::test_support::spawn_dummy_server;
+    use std::net::IpAddr;
 
     #[test]
     fn test_result_structure() {
@@ -384,24 +384,9 @@ mod tests {
         );
     }
 
-    async fn spawn_dummy_server() -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test assertion should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test assertion should succeed");
-        tokio::spawn(async move {
-            if let Ok((socket, _)) = listener.accept().await {
-                drop(socket);
-            }
-        });
-        addr
-    }
-
     #[tokio::test]
     async fn test_padding_oracle_inactive_target_is_inconclusive() {
-        let addr = spawn_dummy_server().await;
+        let addr = spawn_dummy_server(1).await;
         let target = Target::with_ips(
             "example.com".to_string(),
             addr.port(),

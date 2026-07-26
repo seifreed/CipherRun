@@ -164,6 +164,8 @@ pub mod robot;
 pub mod starttls_injection;
 pub mod sweet32;
 pub mod tester;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod ticketbleed;
 pub mod winshock;
 

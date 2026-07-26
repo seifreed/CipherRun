@@ -247,8 +247,8 @@ impl BeastTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, SocketAddr};
-    use tokio::net::TcpListener;
+    use crate::vulnerabilities::test_support::spawn_dummy_server;
+    use std::net::IpAddr;
 
     #[test]
     fn test_beast_result_creation() {
@@ -261,21 +261,6 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert!(result.tls10_cbc_supported);
-    }
-
-    async fn spawn_dummy_server(max_accepts: usize) -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let mut remaining = max_accepts;
-            while remaining > 0 {
-                if let Ok((socket, _)) = listener.accept().await {
-                    drop(socket);
-                    remaining -= 1;
-                }
-            }
-        });
-        addr
     }
 
     #[tokio::test]
