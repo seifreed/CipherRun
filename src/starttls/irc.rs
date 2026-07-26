@@ -252,16 +252,18 @@ mod tests {
         (port, handle)
     }
 
-    #[tokio::test]
-    async fn test_irc_negotiation_success() {
-        let (port, handle) = spawn_irc_server().await;
+    async fn negotiate_irc_port(port: u16) -> Result<()> {
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("test assertion should succeed");
+        IrcNegotiator::new().negotiate_starttls(&mut stream).await
+    }
 
-        let negotiator = IrcNegotiator::new();
-        negotiator
-            .negotiate_starttls(&mut stream)
+    #[tokio::test]
+    async fn test_irc_negotiation_success() {
+        let (port, handle) = spawn_irc_server().await;
+
+        negotiate_irc_port(port)
             .await
             .expect("test assertion should succeed");
 
@@ -272,14 +274,10 @@ mod tests {
     async fn test_irc_negotiation_accepts_lowercase_cap_ls_final_line() {
         let (port, handle) =
             spawn_irc_server_with_cap_line(b"cap * ls :multi-prefix tls\r\n").await;
-        let mut stream = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .expect("test assertion should succeed");
 
-        let negotiator = IrcNegotiator::new();
         tokio::time::timeout(
             std::time::Duration::from_millis(250),
-            negotiator.negotiate_starttls(&mut stream),
+            negotiate_irc_port(port),
         )
         .await
         .expect("negotiation should not wait for more CAP LS lines")
@@ -292,14 +290,10 @@ mod tests {
     async fn test_irc_negotiation_does_not_treat_notls_as_tls_capability() {
         let (port, handle) =
             spawn_irc_server_with_responses(b"CAP * LS :multi-prefix notls\r\n", None).await;
-        let mut stream = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .expect("test assertion should succeed");
 
-        let negotiator = IrcNegotiator::new();
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(250),
-            negotiator.negotiate_starttls(&mut stream),
+            negotiate_irc_port(port),
         )
         .await
         .expect("negotiation should not wait for STARTTLS");
@@ -414,12 +408,7 @@ mod tests {
         )
         .await;
 
-        let mut stream = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .expect("test assertion should succeed");
-
-        let negotiator = IrcNegotiator::new();
-        let result = negotiator.negotiate_starttls(&mut stream).await;
+        let result = negotiate_irc_port(port).await;
         assert!(
             result.is_err(),
             "ERR_STARTTLS 691 must not be accepted just because its text mentions 670"
@@ -433,12 +422,7 @@ mod tests {
         let (port, handle) =
             spawn_irc_server_with_responses(b"CAP * LS :multi-prefix\r\n", None).await;
 
-        let mut stream = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .expect("test assertion should succeed");
-
-        let negotiator = IrcNegotiator::new();
-        let result = negotiator.negotiate_starttls(&mut stream).await;
+        let result = negotiate_irc_port(port).await;
         assert!(result.is_err());
 
         let _ = handle.await;
