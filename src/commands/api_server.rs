@@ -121,6 +121,26 @@ mod tests {
     use super::*;
     use crate::Args;
 
+    const INVALID_API_CONFIG: &str = r#"
+host = "127.0.0.1"
+port = 8080
+max_concurrent_scans = 0
+api_keys = { "test-key" = "User" }
+enable_cors = false
+rate_limit_per_minute = 100
+max_body_size = 1048576
+request_timeout_seconds = 300
+ws_ping_interval_seconds = 30
+job_queue_capacity = 1000
+enable_swagger = true
+"#;
+
+    fn write_invalid_api_config(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        let path = dir.path().join("api.toml");
+        std::fs::write(&path, INVALID_API_CONFIG).expect("config should be written");
+        path
+    }
+
     #[test]
     fn test_api_server_command_name() {
         let args = Args::default();
@@ -180,24 +200,7 @@ mod tests {
     #[test]
     fn test_cli_overrides_apply_before_effective_config_validation() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
-        let path = dir.path().join("api.toml");
-        std::fs::write(
-            &path,
-            r#"
-host = "127.0.0.1"
-port = 8080
-max_concurrent_scans = 0
-api_keys = { "test-key" = "User" }
-enable_cors = false
-rate_limit_per_minute = 100
-max_body_size = 1048576
-request_timeout_seconds = 300
-ws_ping_interval_seconds = 30
-job_queue_capacity = 1000
-enable_swagger = true
-"#,
-        )
-        .expect("config should be written");
+        let path = write_invalid_api_config(&dir);
 
         let args = Args {
             api_server: crate::cli::ApiServerArgs {
@@ -216,24 +219,7 @@ enable_swagger = true
     #[test]
     fn test_effective_api_config_rejects_invalid_config_before_server_start() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
-        let path = dir.path().join("api.toml");
-        std::fs::write(
-            &path,
-            r#"
-host = "127.0.0.1"
-port = 8080
-max_concurrent_scans = 0
-api_keys = { "test-key" = "User" }
-enable_cors = false
-rate_limit_per_minute = 100
-max_body_size = 1048576
-request_timeout_seconds = 300
-ws_ping_interval_seconds = 30
-job_queue_capacity = 1000
-enable_swagger = true
-"#,
-        )
-        .expect("config should be written");
+        let path = write_invalid_api_config(&dir);
 
         let args = Args {
             api_server: crate::cli::ApiServerArgs {
