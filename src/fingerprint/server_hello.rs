@@ -4,7 +4,7 @@
 
 use crate::Result;
 use crate::error::TlsError;
-use crate::fingerprint::length;
+use crate::utils::parse_length as length;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read};
 

@@ -6,7 +6,7 @@ use crate::constants::{
     EXTENSION_SUPPORTED_GROUPS, HANDSHAKE_TYPE_CLIENT_HELLO, RANDOM_BYTES_SIZE,
     TLS_RECORD_HEADER_SIZE,
 };
-use crate::fingerprint::length;
+use crate::utils::parse_length as length;
 use crate::{Result, TlsError};
 use serde::{Deserialize, Serialize};
 

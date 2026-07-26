@@ -5,9 +5,9 @@
 
 use crate::Result;
 use crate::error::TlsError;
-use crate::fingerprint::length;
 use crate::fingerprint::server_hello::ServerHelloCapture;
 use crate::utils::network::Target;
+use crate::utils::parse_length as length;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 use std::io::{Read, Write};
