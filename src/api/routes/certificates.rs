@@ -187,10 +187,8 @@ mod tests {
     use crate::application::CertificateInventorySort;
     use chrono::Utc;
 
-    #[test]
-    fn presenter_extracts_cn_with_cn() {
-        let subject = "C=US, O=Example Org, CN=example.com";
-        let summary = present_certificate_summary(CertificateView {
+    fn certificate_view(subject: &str) -> CertificateView {
+        CertificateView {
             fingerprint: "fp".to_string(),
             subject: subject.to_string(),
             issuer: "issuer".to_string(),
@@ -198,24 +196,22 @@ mod tests {
             not_after: Utc::now(),
             san_json: None,
             hostnames: Vec::new(),
-        })
-        .expect("empty SAN should present");
+        }
+    }
+
+    #[test]
+    fn presenter_extracts_cn_with_cn() {
+        let subject = "C=US, O=Example Org, CN=example.com";
+        let summary = present_certificate_summary(certificate_view(subject))
+            .expect("empty SAN should present");
         assert_eq!(summary.common_name, "example.com");
     }
 
     #[test]
     fn presenter_falls_back_to_subject_without_cn() {
         let subject = "O=Example Org, OU=Security";
-        let summary = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: subject.to_string(),
-            issuer: "issuer".to_string(),
-            not_before: Utc::now(),
-            not_after: Utc::now(),
-            san_json: None,
-            hostnames: Vec::new(),
-        })
-        .expect("empty SAN should present");
+        let summary = present_certificate_summary(certificate_view(subject))
+            .expect("empty SAN should present");
         assert_eq!(summary.common_name, subject);
     }
 
