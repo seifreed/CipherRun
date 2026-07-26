@@ -375,6 +375,15 @@ mod tests {
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::scanner::ScanResults;
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+    use serde_json::Value;
+
+    fn assert_validation_error(data: Value, expected: &str) {
+        let errors = CipherRunSchema::validate(&data).expect_err("schema validation should fail");
+        assert!(
+            errors.iter().any(|e| e.contains(expected)),
+            "expected validation error containing {expected:?}, got {errors:?}"
+        );
+    }
 
     #[test]
     fn test_schema_generation() {
@@ -404,11 +413,7 @@ mod tests {
             "scan_time_ms": 100
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.contains("target")));
+        assert_validation_error(data, "target");
     }
 
     #[test]
@@ -425,10 +430,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("Target must be a string")));
+        assert_validation_error(data, "Target must be a string");
     }
 
     #[test]
@@ -598,10 +600,7 @@ mod tests {
     #[test]
     fn test_validation_non_object_root() {
         let data = json!("not-an-object");
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("Root must be an object")));
+        assert_validation_error(data, "Root must be an object");
     }
 
     #[test]
@@ -636,10 +635,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("Target must be a string")));
+        assert_validation_error(data, "Target must be a string");
     }
 
     #[test]
@@ -652,14 +648,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("scan_time_ms must be a non-negative integer"))
-        );
+        assert_validation_error(data, "scan_time_ms must be a non-negative integer");
     }
 
     #[test]
@@ -711,10 +700,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.contains("Protocol at index 0")));
+        assert_validation_error(data, "Protocol at index 0");
     }
 
     #[test]
@@ -727,14 +713,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("protocols must be an array"))
-        );
+        assert_validation_error(data, "protocols must be an array");
     }
 
     #[test]
@@ -747,14 +726,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("Protocol at index 0 must be an object"))
-        );
+        assert_validation_error(data, "Protocol at index 0 must be an object");
     }
 
     #[test]
@@ -808,14 +780,7 @@ mod tests {
             }]
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("Vulnerability at index 0"))
-        );
+        assert_validation_error(data, "Vulnerability at index 0");
     }
 
     #[test]
@@ -869,14 +834,7 @@ mod tests {
             "vulnerabilities": "Heartbleed"
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("vulnerabilities must be an array"))
-        );
+        assert_validation_error(data, "vulnerabilities must be an array");
     }
 
     #[test]
@@ -889,14 +847,7 @@ mod tests {
             "vulnerabilities": []
         });
 
-        let result = CipherRunSchema::validate(&data);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("ciphers must be an object"))
-        );
+        assert_validation_error(data, "ciphers must be an object");
     }
 
     #[test]
