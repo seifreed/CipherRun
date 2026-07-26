@@ -218,6 +218,10 @@ mod tests {
         .unwrap()
     }
 
+    fn crime_tester(target: &Target) -> CrimeTester<'_> {
+        CrimeTester::new(target)
+    }
+
     fn server_hello(compression: u8) -> Vec<u8> {
         let mut response = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
@@ -249,6 +253,17 @@ mod tests {
         });
 
         (port, server)
+    }
+
+    async fn spdy_status_for_response(response: Vec<u8>) -> CompressionProbeStatus {
+        let (port, server) = spawn_tls_response_server(response).await;
+        let target = localhost_target(port);
+        let status = crime_tester(&target)
+            .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+        server.await.unwrap();
+        status
     }
 
     #[test]
@@ -412,18 +427,8 @@ mod tests {
         write_u16_at(&mut response, ext_len_pos, 6); // claims 6 bytes of extensions
         finish_server_hello(&mut response);
 
-        let (port, server) = spawn_tls_response_server(response).await;
-
-        let target = localhost_target(port);
-        let tester = CrimeTester::new(&target);
-
-        let status = tester
-            .test_spdy_compression()
-            .await
-            .expect("probe should return a status");
+        let status = spdy_status_for_response(response).await;
         assert_eq!(status, CompressionProbeStatus::Inconclusive);
-
-        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -438,18 +443,8 @@ mod tests {
         write_u16_at(&mut response, ext_len_pos, ext_len);
         finish_server_hello(&mut response);
 
-        let (port, server) = spawn_tls_response_server(response).await;
-
-        let target = localhost_target(port);
-        let tester = CrimeTester::new(&target);
-
-        let status = tester
-            .test_spdy_compression()
-            .await
-            .expect("probe should return a status");
+        let status = spdy_status_for_response(response).await;
         assert_eq!(status, CompressionProbeStatus::Inconclusive);
-
-        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -467,18 +462,8 @@ mod tests {
         let rec_len = (response.len() - 5) as u16;
         write_u16_at(&mut response, 3, rec_len);
 
-        let (port, server) = spawn_tls_response_server(response).await;
-
-        let target = localhost_target(port);
-        let tester = CrimeTester::new(&target);
-
-        let status = tester
-            .test_spdy_compression()
-            .await
-            .expect("probe should return a status");
+        let status = spdy_status_for_response(response).await;
         assert_eq!(status, CompressionProbeStatus::Enabled);
-
-        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -501,9 +486,8 @@ mod tests {
         });
 
         let target = localhost_target(port);
-        let tester = CrimeTester::new(&target);
 
-        let status = tester
+        let status = crime_tester(&target)
             .test_tls_compression()
             .await
             .expect("probe should return a status");
@@ -536,9 +520,8 @@ mod tests {
         });
 
         let target = localhost_target(port);
-        let tester = CrimeTester::new(&target);
 
-        let status = tester
+        let status = crime_tester(&target)
             .test_tls_compression()
             .await
             .expect("probe should return a status");
@@ -568,8 +551,7 @@ mod tests {
 
         let target = localhost_target(port);
 
-        let tester = CrimeTester::new(&target);
-        let result = tester.test().await.unwrap();
+        let result = crime_tester(&target).test().await.unwrap();
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
         assert!(!result.tls_compression_enabled);
