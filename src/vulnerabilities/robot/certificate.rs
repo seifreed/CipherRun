@@ -1,15 +1,6 @@
 use crate::Result;
+use crate::vulnerabilities::bytes::read_u24_at;
 use openssl::x509::X509;
-
-fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
-    data.get(offset..offset.checked_add(3)?)
-        .and_then(|bytes| <&[u8; 3]>::try_from(bytes).ok())
-        .and_then(|bytes| {
-            let [high, mid, low] = *bytes;
-            let value = u32::from_be_bytes([0, high, mid, low]);
-            usize::try_from(value).ok()
-        })
-}
 
 /// Parse the server handshake buffer to find the Certificate message and return the RSA
 /// modulus length in bytes.

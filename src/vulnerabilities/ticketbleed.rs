@@ -13,7 +13,6 @@ use tokio::io::AsyncWriteExt;
 
 mod client_hello;
 mod outcome;
-mod parse;
 mod read_io;
 mod server_hello;
 mod session_ticket;

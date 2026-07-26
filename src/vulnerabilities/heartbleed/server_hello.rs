@@ -1,11 +1,5 @@
 use crate::Result;
-
-use super::parse::read_u16_at;
-
-fn read_u24_at(data: &[u8], offset: usize) -> Option<usize> {
-    let bytes = data.get(offset..offset.checked_add(3)?)?;
-    Some(((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
-}
+use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at};
 
 pub(super) fn has_heartbeat_extension(data: &[u8]) -> Result<bool> {
     if data.len() < 44 {

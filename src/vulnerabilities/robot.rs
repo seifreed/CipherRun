@@ -16,7 +16,6 @@ mod certificate;
 mod client_hello;
 mod messages;
 mod oracle_analysis;
-mod parse;
 mod result;
 
 pub use result::{RobotStatus, RobotTestResult};

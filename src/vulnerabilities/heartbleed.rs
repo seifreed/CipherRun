@@ -12,7 +12,6 @@ use tokio::time::timeout;
 mod client_hello;
 mod heartbeat_probe;
 mod heartbeat_response;
-mod parse;
 mod read_io;
 mod result;
 mod server_hello;

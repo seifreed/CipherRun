@@ -1,8 +1,8 @@
 use crate::Result;
 use crate::constants::CONTENT_TYPE_HANDSHAKE;
+use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at};
 
 use super::client_hello::SESSION_ID_MARKER;
-use super::parse::{read_u16_at, read_u24_at};
 
 pub(super) fn detect_memory_leak(response: &[u8]) -> Result<bool> {
     Ok(extract_session_id(response)?.is_some_and(|session_id| {

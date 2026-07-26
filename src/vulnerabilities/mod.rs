@@ -1,6 +1,7 @@
 // Vulnerabilities module - Vulnerability checks
 
 pub mod aggregation;
+pub(crate) mod bytes;
 pub(crate) mod handshake_read;
 
 pub use aggregation::merge_vulnerability_result;

@@ -1,6 +1,5 @@
 use crate::Result;
-
-use super::parse::{read_u16_at, read_u24_at};
+use crate::vulnerabilities::bytes::{read_u16_at, read_u24_at};
 
 pub(super) fn extract(response: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut offset = 0usize;

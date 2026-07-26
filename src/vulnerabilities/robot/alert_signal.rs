@@ -1,4 +1,4 @@
-use super::parse::read_u16_at;
+use crate::vulnerabilities::bytes::read_u16_at;
 use std::collections::HashSet;
 
 #[derive(Debug, PartialEq, Eq)]
