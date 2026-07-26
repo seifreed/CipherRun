@@ -66,13 +66,8 @@ impl AlpnTester {
         self
     }
 
-    fn probe_addrs(&self) -> Vec<std::net::SocketAddr> {
-        let addrs = self.target.socket_addrs();
-        if self.test_all_ips {
-            addrs
-        } else {
-            addrs.first().copied().into_iter().collect()
-        }
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        crate::utils::target_addrs::socket_addrs_for_probe(&self.target, self.test_all_ips)
     }
 
     fn http3_validation_note() -> &'static str {
@@ -156,10 +151,7 @@ impl AlpnTester {
 
     /// Test a specific ALPN protocol
     async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<AlpnProbeOutcome> {
-        let addrs = self.probe_addrs();
-        if addrs.is_empty() {
-            return Ok(AlpnProbeOutcome::Inconclusive);
-        }
+        let addrs = self.probe_addrs()?;
         let hostname = self
             .starttls_hostname
             .clone()

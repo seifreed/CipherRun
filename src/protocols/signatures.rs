@@ -65,13 +65,8 @@ impl SignatureTester {
         self
     }
 
-    fn probe_addrs(&self) -> Vec<std::net::SocketAddr> {
-        let addrs = self.target.socket_addrs();
-        if self.test_all_ips {
-            addrs
-        } else {
-            addrs.first().copied().into_iter().collect()
-        }
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        crate::utils::target_addrs::socket_addrs_for_probe(&self.target, self.test_all_ips)
     }
 
     pub async fn enumerate_signatures(&self) -> Result<SignatureEnumerationResult> {
@@ -81,7 +76,7 @@ impl SignatureTester {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::timeout;
 
-        let addrs = self.probe_addrs();
+        let addrs = self.probe_addrs()?;
         let connect_timeout = Duration::from_secs(10);
         let read_timeout = Duration::from_secs(5);
 
@@ -427,10 +422,13 @@ mod tests {
         )
         .unwrap();
 
-        let single = SignatureTester::new(target.clone()).probe_addrs();
+        let single = SignatureTester::new(target.clone()).probe_addrs().unwrap();
         assert_eq!(single.len(), 1);
 
-        let all = SignatureTester::new(target).with_test_all_ips(true).probe_addrs();
+        let all = SignatureTester::new(target)
+            .with_test_all_ips(true)
+            .probe_addrs()
+            .unwrap();
         assert_eq!(all.len(), 2);
     }
 
