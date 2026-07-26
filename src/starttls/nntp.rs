@@ -58,6 +58,43 @@ mod tests {
     use crate::starttls::response;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::task::JoinHandle;
+
+    async fn spawn_response_server(
+        response: &'static [u8],
+    ) -> (std::net::SocketAddr, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(response)
+                .await
+                .expect("test server should write response");
+        });
+
+        (addr, server)
+    }
+
+    async fn read_nntp_status(response: &'static [u8]) -> Result<(u16, String)> {
+        let (addr, server) = spawn_response_server(response).await;
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let mut reader = BufReader::new(&mut client);
+        let result = response::read_status_line(&mut reader, "NNTP").await;
+
+        server.await.expect("test server task should complete");
+        result
+    }
 
     #[test]
     fn test_nntp_negotiator_creation() {
@@ -67,67 +104,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_nntp_read_response_parse_error() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"abc\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let mut reader = BufReader::new(&mut client);
-        let err = response::read_status_line(&mut reader, "NNTP")
-            .await
-            .unwrap_err();
+        let err = read_nntp_status(b"abc\r\n").await.unwrap_err();
         assert!(format!("{err}").contains("Invalid NNTP status code"));
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_nntp_read_response_valid() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"200 ready\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let mut reader = BufReader::new(&mut client);
-        let (code, line) = response::read_status_line(&mut reader, "NNTP")
+        let (code, line) = read_nntp_status(b"200 ready\r\n")
             .await
             .expect("test assertion should succeed");
         assert_eq!(code, 200);
         assert!(line.contains("ready"));
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
