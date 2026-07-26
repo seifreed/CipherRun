@@ -82,25 +82,38 @@ impl ComplianceFramework {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_framework_get_requirement() {
-        let framework = ComplianceFramework {
+    fn requirement(id: &str, name: &str, category: &str, severity: Severity) -> Requirement {
+        Requirement {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            category: category.to_string(),
+            severity,
+            remediation: String::new(),
+            rules: vec![],
+        }
+    }
+
+    fn framework(requirements: Vec<Requirement>) -> ComplianceFramework {
+        ComplianceFramework {
             id: "test".to_string(),
             name: "Test".to_string(),
             version: "1.0".to_string(),
             description: "Test framework".to_string(),
             organization: "Test Org".to_string(),
             effective_date: None,
-            requirements: vec![Requirement {
-                id: "TEST-1".to_string(),
-                name: "Test Requirement".to_string(),
-                description: "".to_string(),
-                category: "Security".to_string(),
-                severity: Severity::High,
-                remediation: "".to_string(),
-                rules: vec![],
-            }],
-        };
+            requirements,
+        }
+    }
+
+    #[test]
+    fn test_framework_get_requirement() {
+        let framework = framework(vec![requirement(
+            "TEST-1",
+            "Test Requirement",
+            "Security",
+            Severity::High,
+        )]);
 
         assert!(framework.get_requirement("TEST-1").is_some());
         assert!(framework.get_requirement("TEST-2").is_none());
@@ -108,43 +121,11 @@ mod tests {
 
     #[test]
     fn test_framework_categories() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            version: "1.0".to_string(),
-            description: "Test framework".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![
-                Requirement {
-                    id: "TEST-1".to_string(),
-                    name: "Test 1".to_string(),
-                    description: "".to_string(),
-                    category: "Protocol Security".to_string(),
-                    severity: Severity::High,
-                    remediation: "".to_string(),
-                    rules: vec![],
-                },
-                Requirement {
-                    id: "TEST-2".to_string(),
-                    name: "Test 2".to_string(),
-                    description: "".to_string(),
-                    category: "Cipher Security".to_string(),
-                    severity: Severity::High,
-                    remediation: "".to_string(),
-                    rules: vec![],
-                },
-                Requirement {
-                    id: "TEST-3".to_string(),
-                    name: "Test 3".to_string(),
-                    description: "".to_string(),
-                    category: "Protocol Security".to_string(),
-                    severity: Severity::Medium,
-                    remediation: "".to_string(),
-                    rules: vec![],
-                },
-            ],
-        };
+        let framework = framework(vec![
+            requirement("TEST-1", "Test 1", "Protocol Security", Severity::High),
+            requirement("TEST-2", "Test 2", "Cipher Security", Severity::High),
+            requirement("TEST-3", "Test 3", "Protocol Security", Severity::Medium),
+        ]);
 
         let categories = framework.categories();
         assert_eq!(categories.len(), 2);
@@ -154,34 +135,10 @@ mod tests {
 
     #[test]
     fn test_requirements_by_category_and_severity() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            version: "1.0".to_string(),
-            description: "Test framework".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![
-                Requirement {
-                    id: "REQ-1".to_string(),
-                    name: "Req 1".to_string(),
-                    description: "".to_string(),
-                    category: "Protocols".to_string(),
-                    severity: Severity::High,
-                    remediation: "".to_string(),
-                    rules: vec![],
-                },
-                Requirement {
-                    id: "REQ-2".to_string(),
-                    name: "Req 2".to_string(),
-                    description: "".to_string(),
-                    category: "Ciphers".to_string(),
-                    severity: Severity::Medium,
-                    remediation: "".to_string(),
-                    rules: vec![],
-                },
-            ],
-        };
+        let framework = framework(vec![
+            requirement("REQ-1", "Req 1", "Protocols", Severity::High),
+            requirement("REQ-2", "Req 2", "Ciphers", Severity::Medium),
+        ]);
 
         let protocols = framework.requirements_by_category("Protocols");
         assert_eq!(protocols.len(), 1);
