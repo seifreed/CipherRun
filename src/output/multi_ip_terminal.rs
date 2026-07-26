@@ -507,6 +507,25 @@ mod tests {
         Target::with_ips("example.com".to_string(), 443, vec![ip.parse().unwrap()]).unwrap()
     }
 
+    fn report(
+        target: Target,
+        totals: (usize, usize, usize, u64),
+        aggregated: AggregatedScanResult,
+        inconsistencies: Vec<Inconsistency>,
+    ) -> MultiIpScanReport {
+        let (total_ips, successful_scans, failed_scans, total_duration_ms) = totals;
+        MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::new(),
+            total_ips,
+            successful_scans,
+            failed_scans,
+            total_duration_ms,
+            aggregated,
+            inconsistencies,
+        }
+    }
+
     #[test]
     fn test_color_grade_includes_grade_text() {
         let grade = MultiIpScanReport::color_grade("A", 95).to_string();
@@ -533,16 +552,12 @@ mod tests {
     fn test_display_report_includes_header_and_target() {
         let target = example_target("192.0.2.10");
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 0,
-            failed_scans: 1,
-            total_duration_ms: 0,
-            aggregated: aggregated_result("F", 0, true),
-            inconsistencies: Vec::new(),
-        };
+            (1, 0, 1, 0),
+            aggregated_result("F", 0, true),
+            Vec::new(),
+        );
 
         let output = format!("{}", report);
         assert!(output.contains("MULTI-IP SCAN REPORT"));
@@ -555,16 +570,12 @@ mod tests {
         let target =
             Target::with_ips("::1".to_string(), 443, vec!["192.0.2.10".parse().unwrap()]).unwrap();
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 0,
-            failed_scans: 1,
-            total_duration_ms: 0,
-            aggregated: aggregated_result("F", 0, true),
-            inconsistencies: Vec::new(),
-        };
+            (1, 0, 1, 0),
+            aggregated_result("F", 0, true),
+            Vec::new(),
+        );
 
         let output = format!("{}", report);
         assert!(output.contains("Target: [::1]:443"));
@@ -575,16 +586,12 @@ mod tests {
     fn test_display_report_includes_totals() {
         let target = example_target("192.0.2.11");
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 2,
-            successful_scans: 1,
-            failed_scans: 1,
-            total_duration_ms: 123,
-            aggregated: aggregated_result("B", 80, true),
-            inconsistencies: Vec::new(),
-        };
+            (2, 1, 1, 123),
+            aggregated_result("B", 80, true),
+            Vec::new(),
+        );
 
         let output = format!("{}", report);
         assert!(output.contains("IPs Scanned:"));
@@ -608,16 +615,12 @@ mod tests {
             },
         };
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 2,
-            successful_scans: 2,
-            failed_scans: 0,
-            total_duration_ms: 20,
-            aggregated: aggregated_result("A", 95, true),
-            inconsistencies: vec![inconsistency],
-        };
+            (2, 2, 0, 20),
+            aggregated_result("A", 95, true),
+            vec![inconsistency],
+        );
 
         let output = format!("{}", report);
         assert!(output.contains("INCONSISTENCIES DETECTED"));
@@ -628,16 +631,12 @@ mod tests {
     fn test_display_report_without_inconsistencies() {
         let target = example_target("192.0.2.13");
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 1,
-            failed_scans: 0,
-            total_duration_ms: 5,
-            aggregated: aggregated_result("A", 95, true),
-            inconsistencies: Vec::new(),
-        };
+            (1, 1, 0, 5),
+            aggregated_result("A", 95, true),
+            Vec::new(),
+        );
 
         let output = format!("{}", report);
         assert!(!output.contains("INCONSISTENCIES DETECTED"));
@@ -653,22 +652,18 @@ mod tests {
         let mut fingerprints = HashMap::new();
         fingerprints.insert(ip, "<empty>".to_string());
 
-        let report = MultiIpScanReport {
+        let report = report(
             target,
-            per_ip_results: HashMap::new(),
-            total_ips: 1,
-            successful_scans: 1,
-            failed_scans: 0,
-            total_duration_ms: 1,
-            aggregated: aggregated_result("A", 95, false),
-            inconsistencies: vec![Inconsistency {
+            (1, 1, 0, 1),
+            aggregated_result("A", 95, false),
+            vec![Inconsistency {
                 inconsistency_type: InconsistencyType::Certificates,
                 severity: crate::vulnerabilities::Severity::High,
                 description: "Certificate mismatch".to_string(),
                 ips_affected: vec![ip],
                 details: InconsistencyDetails::Certificates { fingerprints },
             }],
-        };
+        );
 
         let output = format!("{}", report);
         assert!(output.contains("Different certificates detected"));
