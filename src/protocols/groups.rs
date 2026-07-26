@@ -318,7 +318,7 @@ impl GroupTester {
                 Err(_) => continue,
             };
 
-            let (hostname, use_sni) = openssl_hostname_and_sni(
+            let (hostname, use_sni) = crate::utils::network::openssl_hostname_and_sni(
                 &self.target.hostname,
                 self.starttls_hostname.as_deref(),
             );
@@ -383,20 +383,6 @@ impl GroupTester {
             GroupProbeOutcome::Inconclusive
         }
     }
-}
-
-fn openssl_hostname_and_sni(
-    target_hostname: &str,
-    override_hostname: Option<&str>,
-) -> (String, bool) {
-    let sni_hostname = crate::utils::network::sni_hostname_for_target(
-        target_hostname,
-        override_hostname,
-    );
-    let hostname = sni_hostname
-        .clone()
-        .unwrap_or_else(|| target_hostname.to_string());
-    (hostname, sni_hostname.is_some())
 }
 
 /// Build the human-readable summary for a group enumeration result.
@@ -543,10 +529,4 @@ mod tests {
         assert!(tester.test_all_ips);
     }
 
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
-    }
 }

@@ -220,17 +220,6 @@ impl SessionResumptionTester {
         crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)
     }
 
-    fn openssl_hostname_and_sni(&self) -> (String, bool) {
-        let sni_hostname = crate::utils::network::sni_hostname_for_target(
-            &self.target.hostname,
-            self.sni_hostname.as_deref(),
-        );
-        let hostname = sni_hostname
-            .clone()
-            .unwrap_or_else(|| self.target.hostname.clone());
-        (hostname, sni_hostname.is_some())
-    }
-
     fn build_connector(&self) -> Result<SslConnector> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         // Certificate validity is irrelevant to whether a server offers session
@@ -243,7 +232,10 @@ impl SessionResumptionTester {
 
     fn establish_session_sync(&self, stream: std::net::TcpStream) -> Result<Option<SslSession>> {
         let connector = self.build_connector()?;
-        let (hostname, use_sni) = self.openssl_hostname_and_sni();
+        let (hostname, use_sni) = crate::utils::network::openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
         let ssl_stream = connector
             .configure()?
             .use_server_name_indication(use_sni)
@@ -265,7 +257,10 @@ impl SessionResumptionTester {
         }
 
         let connector = self.build_connector()?;
-        let (hostname, use_sni) = self.openssl_hostname_and_sni();
+        let (hostname, use_sni) = crate::utils::network::openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
         let mut ssl = connector
             .configure()?
             .use_server_name_indication(use_sni)
@@ -525,21 +520,6 @@ mod tests {
         assert!(tester.starttls_server_mode);
         assert_eq!(tester.sni_hostname.as_deref(), Some("tls.example.com"));
         assert_eq!(tester.connect_timeout, Duration::from_secs(7));
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let target = Target::with_ips(
-            "93.184.216.34".to_string(),
-            443,
-            vec![IpAddr::from([93, 184, 216, 34])],
-        )
-        .unwrap();
-
-        let tester = SessionResumptionTester::new(target);
-        let (hostname, use_sni) = tester.openssl_hostname_and_sni();
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
     }
 
     fn install_crypto_provider() {
