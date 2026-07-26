@@ -438,26 +438,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_evaluator_with_violations() {
-        let policy = Policy {
+    fn base_policy() -> Policy {
+        Policy {
             name: "Test Policy".to_string(),
             version: "1.0".to_string(),
             description: None,
             organization: None,
             effective_date: None,
             extends: None,
-            protocols: Some(ProtocolPolicy {
-                required: Some(vec!["TLSv1.3".to_string()]),
-                prohibited: None,
-                action: PolicyAction::Fail,
-            }),
+            protocols: None,
             ciphers: None,
             certificates: None,
             vulnerabilities: None,
             rating: None,
             compliance: None,
             exceptions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_evaluator_with_violations() {
+        let policy = Policy {
+            protocols: Some(ProtocolPolicy {
+                required: Some(vec!["TLSv1.3".to_string()]),
+                prohibited: None,
+                action: PolicyAction::Fail,
+            }),
+            ..base_policy()
         };
 
         let mut results = ScanAssessment {
@@ -478,23 +485,12 @@ mod tests {
     #[test]
     fn test_evaluator_summary_counts_passing_configured_checks() {
         let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
             protocols: Some(ProtocolPolicy {
                 required: Some(vec!["TLSv1.2".to_string()]),
                 prohibited: None,
                 action: PolicyAction::Fail,
             }),
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
+            ..base_policy()
         };
 
         let mut results = ScanAssessment {
@@ -518,22 +514,11 @@ mod tests {
     #[test]
     fn test_evaluator_with_exceptions() {
         let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
             protocols: Some(ProtocolPolicy {
                 required: Some(vec!["TLSv1.3".to_string()]),
                 prohibited: None,
                 action: PolicyAction::Fail,
             }),
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
             exceptions: vec![PolicyException {
                 domain: Some("example.com".to_string()),
                 rules: vec!["protocols.required".to_string()],
@@ -542,6 +527,7 @@ mod tests {
                 approved_by: "Admin".to_string(),
                 ticket: None,
             }],
+            ..base_policy()
         };
 
         let mut results = ScanAssessment {
@@ -562,23 +548,7 @@ mod tests {
 
     #[test]
     fn test_parse_grade_invalid() {
-        let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
-        let evaluator = PolicyEvaluator::new(policy);
+        let evaluator = PolicyEvaluator::new(base_policy());
         let result = evaluator.parse_grade("Z");
         assert!(result.is_err());
     }
@@ -586,23 +556,12 @@ mod tests {
     #[test]
     fn test_rating_min_score_violation() {
         let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
             rating: Some(crate::policy::RatingPolicy {
                 min_grade: None,
                 min_score: Some(90),
                 action: PolicyAction::Fail,
             }),
-            compliance: None,
-            exceptions: Vec::new(),
+            ..base_policy()
         };
 
         let mut results = ScanAssessment {
@@ -636,23 +595,12 @@ mod tests {
     #[test]
     fn test_missing_rating_fails_configured_rating_checks() {
         let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
             rating: Some(crate::policy::RatingPolicy {
                 min_grade: Some("A".to_string()),
                 min_score: Some(90),
                 action: PolicyAction::Fail,
             }),
-            compliance: None,
-            exceptions: Vec::new(),
+            ..base_policy()
         };
         let results = ScanAssessment {
             target: "example.com:443".to_string(),
@@ -693,23 +641,12 @@ mod tests {
 
     fn policy_with_compliance(frameworks: Vec<String>, require_all: bool) -> Policy {
         Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
             compliance: Some(CompliancePolicy {
                 frameworks,
                 require_all,
                 action: PolicyAction::Fail,
             }),
-            exceptions: Vec::new(),
+            ..base_policy()
         }
     }
 
@@ -767,23 +704,7 @@ mod tests {
 
     #[test]
     fn test_parse_grade_valid() {
-        let policy = Policy {
-            name: "Test Policy".to_string(),
-            version: "1.0".to_string(),
-            description: None,
-            organization: None,
-            effective_date: None,
-            extends: None,
-            protocols: None,
-            ciphers: None,
-            certificates: None,
-            vulnerabilities: None,
-            rating: None,
-            compliance: None,
-            exceptions: Vec::new(),
-        };
-
-        let evaluator = PolicyEvaluator::new(policy);
+        let evaluator = PolicyEvaluator::new(base_policy());
         let grade = evaluator.parse_grade("A+").expect("grade should parse");
         assert_eq!(grade, Grade::APlus);
     }
