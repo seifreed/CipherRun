@@ -309,6 +309,11 @@ mod tests {
     use super::*;
     use crate::cli::{ApiServerArgs, CtLogsArgs, DatabaseArgs, MonitoringArgs};
 
+    fn assert_routes_to(args: Args, expected_name: &str) {
+        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
+        assert_eq!(cmd.name(), expected_name);
+    }
+
     #[test]
     fn test_route_pqc_subcommand() {
         let args = Args {
@@ -319,8 +324,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "PqcScanCommand");
+        assert_routes_to(args, "PqcScanCommand");
     }
 
     #[test]
@@ -332,8 +336,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "ApiServerCommand");
+        assert_routes_to(args, "ApiServerCommand");
     }
 
     #[test]
@@ -345,8 +348,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MonitorCommand");
+        assert_routes_to(args, "MonitorCommand");
     }
 
     #[test]
@@ -358,8 +360,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "CtLogsCommand");
+        assert_routes_to(args, "CtLogsCommand");
     }
 
     #[test]
@@ -368,8 +369,7 @@ mod tests {
             compare: Some("1:2".to_string()),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "AnalyticsCommand");
+        assert_routes_to(args, "AnalyticsCommand");
     }
 
     #[test]
@@ -391,8 +391,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "DatabaseCommand");
+        assert_routes_to(args, "DatabaseCommand");
     }
 
     #[test]
@@ -401,8 +400,7 @@ mod tests {
             mx_domain: Some("example.com".to_string()),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MxTestCommand");
+        assert_routes_to(args, "MxTestCommand");
     }
 
     #[test]
@@ -411,8 +409,7 @@ mod tests {
             input_file: Some(std::path::PathBuf::from("targets.txt")),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MassScanCommand");
+        assert_routes_to(args, "MassScanCommand");
     }
 
     #[test]
@@ -421,8 +418,7 @@ mod tests {
             cidr: Some("192.0.2.0/24".to_string()),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MassScanCommand");
+        assert_routes_to(args, "MassScanCommand");
     }
 
     #[test]
@@ -431,8 +427,7 @@ mod tests {
             asn: Some("AS13335".to_string()),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "MassScanCommand");
+        assert_routes_to(args, "MassScanCommand");
     }
 
     #[test]
@@ -507,8 +502,7 @@ mod tests {
             target: Some("example.com:443".to_string()),
             ..Default::default()
         };
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "ScanCommand");
+        assert_routes_to(args, "ScanCommand");
     }
 
     #[test]
@@ -518,8 +512,7 @@ mod tests {
             ..Default::default()
         };
         args.network.scan_all_ips = true;
-        let cmd = CommandRouter::route(args).expect("test assertion should succeed");
-        assert_eq!(cmd.name(), "AnycastScanCommand");
+        assert_routes_to(args, "AnycastScanCommand");
     }
 
     #[test]
