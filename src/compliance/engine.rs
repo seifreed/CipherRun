@@ -171,26 +171,31 @@ mod tests {
         }
     }
 
+    fn deny_sslv2_rule() -> Rule {
+        Rule {
+            denied: vec!["SSLv2".to_string()],
+            ..base_rule("ProtocolVersion")
+        }
+    }
+
+    fn assessment(protocols: Vec<ProtocolTestResult>) -> ScanAssessment {
+        ScanAssessment {
+            target: "test.com:443".to_string(),
+            protocols,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_compliance_engine_evaluation() {
-        let framework = test_framework(
-            "TEST-1",
-            vec![Rule {
-                denied: vec!["SSLv2".to_string()],
-                ..base_rule("ProtocolVersion")
-            }],
-        );
+        let framework = test_framework("TEST-1", vec![deny_sslv2_rule()]);
 
         let engine = ComplianceEngine::new(framework);
 
-        let results = ScanAssessment {
-            target: "test.com:443".to_string(),
-            protocols: vec![
-                protocol_result(Protocol::SSLv2),
-                protocol_result(Protocol::TLS12),
-            ],
-            ..Default::default()
-        };
+        let results = assessment(vec![
+            protocol_result(Protocol::SSLv2),
+            protocol_result(Protocol::TLS12),
+        ]);
 
         let report = engine
             .evaluate(&results)
@@ -206,21 +211,11 @@ mod tests {
 
     #[test]
     fn test_compliance_engine_pass() {
-        let framework = test_framework(
-            "TEST-1",
-            vec![Rule {
-                denied: vec!["SSLv2".to_string()],
-                ..base_rule("ProtocolVersion")
-            }],
-        );
+        let framework = test_framework("TEST-1", vec![deny_sslv2_rule()]);
 
         let engine = ComplianceEngine::new(framework);
 
-        let results = ScanAssessment {
-            target: "test.com:443".to_string(),
-            protocols: vec![protocol_result(Protocol::TLS12)],
-            ..Default::default()
-        };
+        let results = assessment(vec![protocol_result(Protocol::TLS12)]);
 
         let report = engine
             .evaluate(&results)
@@ -238,21 +233,11 @@ mod tests {
     fn test_unknown_rule_type_fails_evaluation() {
         let framework = test_framework(
             "MIXED-1",
-            vec![
-                base_rule("TotallyBogusRuleType"),
-                Rule {
-                    denied: vec!["SSLv2".to_string()],
-                    ..base_rule("ProtocolVersion")
-                },
-            ],
+            vec![base_rule("TotallyBogusRuleType"), deny_sslv2_rule()],
         );
 
         let engine = ComplianceEngine::new(framework);
-        let results = ScanAssessment {
-            target: "test.com:443".to_string(),
-            protocols: vec![protocol_result(Protocol::TLS12)],
-            ..Default::default()
-        };
+        let results = assessment(vec![protocol_result(Protocol::TLS12)]);
 
         let err = engine
             .evaluate(&results)
