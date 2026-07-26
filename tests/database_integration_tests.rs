@@ -33,6 +33,14 @@ fn persisted_scan(results: &ScanResults) -> PersistedScan {
     PersistedScan::from_scan_results(results).expect("scan results should convert for persistence")
 }
 
+fn scan_results(target: &str, scan_time_ms: u64) -> ScanResults {
+    ScanResults {
+        target: target.to_string(),
+        scan_time_ms,
+        ..Default::default()
+    }
+}
+
 async fn test_db() -> CipherRunDatabase {
     let config = common::sqlite::unique_sqlite_config("cipherruntest");
     CipherRunDatabase::new(&config).await.unwrap()
@@ -53,11 +61,7 @@ async fn test_scan_storage_and_retrieval() {
     let db = test_db().await;
 
     // Create sample scan results
-    let mut results = ScanResults {
-        target: "example.com:443".to_string(),
-        scan_time_ms: 1500,
-        ..Default::default()
-    };
+    let mut results = scan_results("example.com:443", 1500);
 
     // Add a protocol
     results
@@ -83,11 +87,7 @@ async fn test_scan_history_limit() {
 
     // Store 5 scans
     for i in 1..=5 {
-        let results = ScanResults {
-            target: "test.com:443".to_string(),
-            scan_time_ms: i * 100,
-            ..Default::default()
-        };
+        let results = scan_results("test.com:443", i * 100);
         db.store_scan(&persisted_scan(&results)).await.unwrap();
     }
 
@@ -107,11 +107,7 @@ async fn test_scan_history_rejects_non_positive_limit() {
     let db = test_db().await;
 
     for i in 1..=2 {
-        let results = ScanResults {
-            target: "limit-validation.com:443".to_string(),
-            scan_time_ms: i * 100,
-            ..Default::default()
-        };
+        let results = scan_results("limit-validation.com:443", i * 100);
         db.store_scan(&persisted_scan(&results)).await.unwrap();
     }
 
@@ -142,11 +138,7 @@ async fn test_scan_history_rejects_non_positive_limit() {
 async fn test_top_domains_rejects_invalid_scan_timestamp() {
     let db = test_db().await;
 
-    let results = ScanResults {
-        target: "invalid-top-domain.test:443".to_string(),
-        scan_time_ms: 100,
-        ..Default::default()
-    };
+    let results = scan_results("invalid-top-domain.test:443", 100);
     db.store_scan(&persisted_scan(&results)).await.unwrap();
     db.pool()
         .execute(
@@ -178,11 +170,7 @@ async fn test_latest_scan_retrieval() {
 
     // Store multiple scans
     for i in 1..=3 {
-        let results = ScanResults {
-            target: "latest.com:443".to_string(),
-            scan_time_ms: i * 1000,
-            ..Default::default()
-        };
+        let results = scan_results("latest.com:443", i * 1000);
         db.store_scan(&persisted_scan(&results)).await.unwrap();
 
         // Small delay to ensure different timestamps
@@ -218,11 +206,7 @@ async fn test_cleanup_old_scans() {
     let db = test_db().await;
 
     // Store a scan
-    let results = ScanResults {
-        target: "cleanup.com:443".to_string(),
-        scan_time_ms: 1000,
-        ..Default::default()
-    };
+    let results = scan_results("cleanup.com:443", 1000);
     db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     // Cleanup scans older than 0 days (should delete all)
@@ -268,11 +252,7 @@ async fn test_cleanup_old_scans_rejects_negative_days() {
 async fn test_cleanup_old_scans_preserves_recent_history_lookup() {
     let db = test_db().await;
 
-    let results = ScanResults {
-        target: "recent.com:443".to_string(),
-        scan_time_ms: 1000,
-        ..Default::default()
-    };
+    let results = scan_results("recent.com:443", 1000);
     db.store_scan(&persisted_scan(&results)).await.unwrap();
 
     let _deleted = db.cleanup_old_scans(365).await.unwrap();
@@ -331,11 +311,7 @@ async fn test_protocol_storage() {
     let db = test_db().await;
 
     // Create scan with multiple protocols
-    let mut results = ScanResults {
-        target: "protocols.com:443".to_string(),
-        scan_time_ms: 2000,
-        ..Default::default()
-    };
+    let mut results = scan_results("protocols.com:443", 2000);
 
     results
         .protocols
@@ -356,11 +332,7 @@ async fn test_vulnerability_storage() {
     let db = test_db().await;
 
     // Create scan with vulnerabilities
-    let mut results = ScanResults {
-        target: "vuln.com:443".to_string(),
-        scan_time_ms: 3000,
-        ..Default::default()
-    };
+    let mut results = scan_results("vuln.com:443", 3000);
 
     results
         .vulnerabilities
@@ -418,11 +390,7 @@ async fn test_multiple_scans_same_target() {
 
     // Store multiple scans for same target
     for i in 1..=5 {
-        let results = ScanResults {
-            target: "multi.com:443".to_string(),
-            scan_time_ms: i * 500,
-            ..Default::default()
-        };
+        let results = scan_results("multi.com:443", i * 500);
         db.store_scan(&persisted_scan(&results)).await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
@@ -442,11 +410,7 @@ async fn test_scan_with_rating() {
     let db = test_db().await;
 
     // Create scan with rating
-    let mut results = ScanResults {
-        target: "rated.com:443".to_string(),
-        scan_time_ms: 2500,
-        ..Default::default()
-    };
+    let mut results = scan_results("rated.com:443", 2500);
 
     results.rating = Some(cipherrun::scanner::RatingResults {
         ssl_rating: Some(cipherrun::rating::RatingResult {
