@@ -3,6 +3,24 @@ use crate::Result;
 use crate::vulnerabilities::Severity;
 use std::collections::HashMap;
 
+fn inconclusive_test_error(
+    vuln_type: VulnerabilityType,
+    error: &crate::TlsError,
+) -> VulnerabilityResult {
+    VulnerabilityResult {
+        vuln_type,
+        vulnerable: false,
+        inconclusive: true,
+        details: format!(
+            "Test error: {} - unable to determine vulnerability status",
+            error
+        ),
+        cve: None,
+        cwe: None,
+        severity: Severity::Info,
+    }
+}
+
 pub(super) fn collect_result(
     results: &mut Vec<VulnerabilityResult>,
     result: Result<VulnerabilityResult>,
@@ -14,18 +32,7 @@ pub(super) fn collect_result(
         Err(e) => {
             tracing::warn!("{} test failed: {}", test_name, e);
             // Add inconclusive result so user knows the test was attempted but failed
-            results.push(VulnerabilityResult {
-                vuln_type,
-                vulnerable: false,
-                inconclusive: true,
-                details: format!(
-                    "Test error: {} - unable to determine vulnerability status",
-                    e
-                ),
-                cve: None,
-                cwe: None,
-                severity: Severity::Info,
-            });
+            results.push(inconclusive_test_error(vuln_type, &e));
         }
     }
 }
@@ -45,18 +52,7 @@ pub(super) fn collect_results(
             // Add inconclusive results for each expected vulnerability type
             // so users know these tests were attempted but failed
             for vuln_type in vuln_types {
-                results.push(VulnerabilityResult {
-                    vuln_type: *vuln_type,
-                    vulnerable: false,
-                    inconclusive: true,
-                    details: format!(
-                        "Test error: {} - unable to determine vulnerability status",
-                        e
-                    ),
-                    cve: None,
-                    cwe: None,
-                    severity: Severity::Info,
-                });
+                results.push(inconclusive_test_error(*vuln_type, &e));
             }
         }
     }
@@ -74,18 +70,7 @@ pub(super) fn collect_optional_result(
         Err(e) => {
             tracing::warn!("{} test failed: {}", test_name, e);
             // Add inconclusive result so user knows the test was attempted but failed
-            results.push(VulnerabilityResult {
-                vuln_type,
-                vulnerable: false,
-                inconclusive: true,
-                details: format!(
-                    "Test error: {} - unable to determine vulnerability status",
-                    e
-                ),
-                cve: None,
-                cwe: None,
-                severity: Severity::Info,
-            });
+            results.push(inconclusive_test_error(vuln_type, &e));
         }
     }
 }
