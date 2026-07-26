@@ -228,6 +228,12 @@ mod tests {
         .expect("target should build")
     }
 
+    fn local_cipher_tester(target: Target) -> CipherTester {
+        CipherTester::new(target)
+            .with_connect_timeout(Duration::from_millis(200))
+            .with_read_timeout(Duration::from_millis(200))
+    }
+
     fn build_fake_server_hello(cipher: u16, session_id_len: usize) -> Vec<u8> {
         let mut body = Vec::new();
         body.push(0x02);
@@ -485,9 +491,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let chosen = tester
             .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
@@ -507,9 +511,7 @@ mod tests {
 
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let err = tester
             .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
@@ -524,9 +526,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 33, 1).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let err = tester
             .get_server_chosen_cipher(Protocol::TLS12, &[0xc02f, 0xc030])
@@ -543,9 +543,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc030, 0, 3).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let ciphers = vec![
             make_cipher("c030", "TLSv1.2", "AES", 256, false, "RSA"),
@@ -616,9 +614,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let mut stream = TcpStream::connect(addr)
             .await
@@ -637,9 +633,7 @@ mod tests {
         let addr = spawn_fragmented_fake_tls_server(0xc02f).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let mut stream = TcpStream::connect(addr)
             .await
@@ -664,9 +658,7 @@ mod tests {
 
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200));
+        let tester = local_cipher_tester(target);
 
         let mut stream = TcpStream::connect(addr)
             .await
@@ -745,9 +737,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 0, 200).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200))
+        let tester = local_cipher_tester(target)
             .with_max_concurrent_tests(4)
             .with_connection_pool_size(0);
 
@@ -804,9 +794,7 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200))
+        let tester = local_cipher_tester(target)
             .with_max_concurrent_tests(4)
             .with_connection_pool_size(0);
 
@@ -829,10 +817,8 @@ mod tests {
         let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
         let target = local_target_for_addr(addr);
 
-        let tester = CipherTester::new(target)
+        let tester = local_cipher_tester(target)
             .test_all(true)
-            .with_connect_timeout(Duration::from_millis(200))
-            .with_read_timeout(Duration::from_millis(200))
             .with_max_concurrent_tests(4)
             .with_connection_pool_size(0);
 
