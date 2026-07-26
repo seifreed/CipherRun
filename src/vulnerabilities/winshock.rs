@@ -247,17 +247,9 @@ impl WinshockTester {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
+    use crate::vulnerabilities::test_support::localhost_target;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_malformed_cke_build() {

@@ -379,17 +379,10 @@ impl LogjamTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::test_support::{spawn_dummy_server, two_ip_localhost_target};
-    use std::net::{IpAddr, TcpListener as StdTcpListener};
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap()
-    }
+    use crate::vulnerabilities::test_support::{
+        localhost_target, spawn_dummy_server, two_ip_localhost_target,
+    };
+    use std::net::TcpListener as StdTcpListener;
 
     fn logjam_result(
         vulnerable: bool,

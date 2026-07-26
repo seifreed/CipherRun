@@ -247,17 +247,7 @@ impl BeastTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::test_support::spawn_dummy_server;
-    use std::net::IpAddr;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap()
-    }
+    use crate::vulnerabilities::test_support::{localhost_target, spawn_dummy_server};
 
     #[test]
     fn test_beast_result_creation() {

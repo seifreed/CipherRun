@@ -21,6 +21,15 @@ fn target_with_ips(hostname: &str, port: u16, ips: [IpAddr; 2]) -> Target {
     Target::with_ips(hostname.to_string(), port, ips.to_vec()).unwrap()
 }
 
+pub(crate) fn localhost_target(port: u16) -> Target {
+    Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec![IpAddr::from([127, 0, 0, 1])],
+    )
+    .unwrap()
+}
+
 pub(crate) async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

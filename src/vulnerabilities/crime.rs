@@ -204,21 +204,12 @@ mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
     use crate::vulnerabilities::test_support::{
-        two_ip_localhost_target, write_u16_at, write_u24_at,
+        localhost_target, two_ip_localhost_target, write_u16_at, write_u24_at,
     };
     use std::io::ErrorKind;
     use std::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::{Duration, sleep};
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     fn crime_tester(target: &Target) -> CrimeTester<'_> {
         CrimeTester::new(target)

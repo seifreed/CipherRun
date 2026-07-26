@@ -172,16 +172,7 @@ fn classify_cbc_handshake_error(error: &str) -> CbcCipherSupportStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::IpAddr;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap()
-    }
+    use crate::vulnerabilities::test_support::localhost_target;
 
     #[test]
     fn test_cbc_handshake_error_without_shared_cipher_is_not_supported() {

@@ -289,19 +289,10 @@ mod tests {
     use super::*;
     use crate::constants::BUFFER_SIZE_DEFAULT;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
-    use crate::vulnerabilities::test_support::two_ip_localhost_target;
+    use crate::vulnerabilities::test_support::{localhost_target, two_ip_localhost_target};
     use std::net::TcpListener;
     use std::time::Duration;
     use tokio::net::TcpListener as TokioTcpListener;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_ccs_probe_addrs_honors_all_ips() {

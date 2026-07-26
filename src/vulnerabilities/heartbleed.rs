@@ -222,19 +222,10 @@ impl<'a> HeartbleedTester<'a> {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, TLS_RECORD_HEADER_SIZE};
-    use crate::vulnerabilities::test_support::{write_u16_at, write_u24_at};
+    use crate::vulnerabilities::test_support::{localhost_target, write_u16_at, write_u24_at};
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap()
-    }
 
     fn short_timeout_tester(target: &Target, test_all_ips: bool) -> HeartbleedTester<'_> {
         HeartbleedTester {

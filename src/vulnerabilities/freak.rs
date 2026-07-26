@@ -128,17 +128,9 @@ impl FreakTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
+    use crate::vulnerabilities::test_support::localhost_target;
+    use std::net::{SocketAddr, TcpListener as StdTcpListener};
     use tokio::net::TcpListener;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_freak_result_details_mentions_cipher_count() {

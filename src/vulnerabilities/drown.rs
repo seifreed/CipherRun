@@ -264,6 +264,7 @@ impl DrownTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vulnerabilities::test_support::localhost_target;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
@@ -334,15 +335,6 @@ mod tests {
                 "{case}"
             );
         }
-    }
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
     }
 
     fn sslv2_response(message_type: u8) -> Vec<u8> {

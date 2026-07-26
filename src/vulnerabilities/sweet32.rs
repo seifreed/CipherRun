@@ -133,16 +133,8 @@ impl Sweet32Tester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr, TcpListener};
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap()
-    }
+    use crate::vulnerabilities::test_support::localhost_target;
+    use std::net::TcpListener;
 
     #[test]
     fn test_sweet32_result_not_vulnerable() {

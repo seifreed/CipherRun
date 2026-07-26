@@ -350,21 +350,11 @@ impl BreachTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::test_support::two_ip_localhost_target;
-    use std::net::{IpAddr, Ipv4Addr};
+    use crate::vulnerabilities::test_support::{localhost_target, two_ip_localhost_target};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
     use tokio_rustls::TlsAcceptor;
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .expect("target should build")
-    }
 
     #[test]
     fn test_breach_probe_addrs_honors_all_ips() {
