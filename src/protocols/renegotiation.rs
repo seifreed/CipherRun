@@ -427,6 +427,11 @@ mod tests {
         response
     }
 
+    fn assert_renegotiation_info_error_contains(response: &[u8], expected: &str) {
+        let err = server_hello::has_renegotiation_info_extension(response).expect_err(expected);
+        assert!(err.to_string().contains(expected), "{err}");
+    }
+
     #[test]
     fn test_renegotiation_result() {
         let result = RenegotiationTestResult {
@@ -588,11 +593,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // truncated before random/session_id
         ];
 
-        let err = server_hello::has_renegotiation_info_extension(&response)
-            .expect_err("truncated ServerHello should fail");
-        assert!(
-            err.to_string()
-                .contains("truncated before minimum renegotiation extension length")
+        assert_renegotiation_info_error_contains(
+            &response,
+            "truncated before minimum renegotiation extension length",
         );
     }
 
@@ -600,10 +603,9 @@ mod tests {
     fn test_has_renegotiation_info_extension_rejects_truncated_extension_data() {
         let response = test_server_hello(&[0xff, 0x01, 0x00, 0x02, 0x01]);
 
-        let err = server_hello::has_renegotiation_info_extension(&response).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("truncated in renegotiation extension data")
+        assert_renegotiation_info_error_contains(
+            &response,
+            "truncated in renegotiation extension data",
         );
     }
 
@@ -612,11 +614,9 @@ mod tests {
         let mut response = test_server_hello(&[0xff, 0x01, 0x00, 0x01]);
         response[48] = 0x06; // claims 6 bytes of extensions
 
-        let err = server_hello::has_renegotiation_info_extension(&response)
-            .expect_err("truncated extension block should fail");
-        assert!(
-            err.to_string()
-                .contains("extension block extends beyond declared length")
+        assert_renegotiation_info_error_contains(
+            &response,
+            "extension block extends beyond declared length",
         );
     }
 
@@ -627,11 +627,9 @@ mod tests {
 
         patch_test_server_hello_lengths(&mut response);
 
-        let err = server_hello::has_renegotiation_info_extension(&response)
-            .expect_err("trailing bytes in ServerHello record should fail");
-        assert!(
-            err.to_string()
-                .contains("ServerHello extension block contains trailing bytes")
+        assert_renegotiation_info_error_contains(
+            &response,
+            "ServerHello extension block contains trailing bytes",
         );
     }
 
@@ -639,21 +637,18 @@ mod tests {
     fn test_has_renegotiation_info_extension_rejects_partial_extension_header() {
         let response = test_server_hello(&[0x00, 0x01, 0x00]); // partial extension header
 
-        let err = server_hello::has_renegotiation_info_extension(&response)
-            .expect_err("partial extension header should fail");
-        assert!(
-            err.to_string()
-                .contains("ServerHello extension block contains trailing bytes")
+        assert_renegotiation_info_error_contains(
+            &response,
+            "ServerHello extension block contains trailing bytes",
         );
     }
 
     #[test]
     fn test_has_renegotiation_info_extension_rejects_non_serverhello() {
-        let err = server_hello::has_renegotiation_info_extension(&[
-            0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28,
-        ])
-        .expect_err("alert responses must be rejected");
-        assert!(err.to_string().contains("handshake type"));
+        assert_renegotiation_info_error_contains(
+            &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28],
+            "handshake type",
+        );
     }
 
     #[test]
@@ -680,12 +675,7 @@ mod tests {
         response[7] = ((handshake_len >> 8) & 0xff) as u8;
         response[8] = (handshake_len & 0xff) as u8;
 
-        let err = server_hello::has_renegotiation_info_extension(&response)
-            .expect_err("truncated extensions length must fail");
-        assert!(
-            err.to_string()
-                .contains("truncated before extensions length")
-        );
+        assert_renegotiation_info_error_contains(&response, "truncated before extensions length");
     }
 
     #[tokio::test]
