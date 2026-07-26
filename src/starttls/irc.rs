@@ -211,10 +211,21 @@ mod tests {
     }
 
     async fn spawn_irc_server() -> (u16, JoinHandle<()>) {
-        spawn_irc_server_with_cap_line(b"CAP * LS :multi-prefix tls\r\n").await
+        spawn_irc_server_with_responses(
+            b"CAP * LS :multi-prefix tls\r\n",
+            Some(b":server 670 Begin TLS\r\n"),
+        )
+        .await
     }
 
     async fn spawn_irc_server_with_cap_line(cap_line: &'static [u8]) -> (u16, JoinHandle<()>) {
+        spawn_irc_server_with_responses(cap_line, Some(b":server 670 Begin TLS\r\n")).await
+    }
+
+    async fn spawn_irc_server_with_responses(
+        cap_line: &'static [u8],
+        starttls_response: Option<&'static [u8]>,
+    ) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -229,13 +240,12 @@ mod tests {
                 let _ = reader.get_mut().write_all(cap_line).await;
                 let _ = reader.get_mut().flush().await;
 
-                line.clear();
-                let _ = reader.read_line(&mut line).await;
-                let _ = reader
-                    .get_mut()
-                    .write_all(b":server 670 Begin TLS\r\n")
-                    .await;
-                let _ = reader.get_mut().flush().await;
+                if let Some(response) = starttls_response {
+                    line.clear();
+                    let _ = reader.read_line(&mut line).await;
+                    let _ = reader.get_mut().write_all(response).await;
+                    let _ = reader.get_mut().flush().await;
+                }
             }
         });
 
@@ -281,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn test_irc_negotiation_does_not_treat_notls_as_tls_capability() {
         let (port, handle) =
-            spawn_irc_server_with_cap_line(b"CAP * LS :multi-prefix notls\r\n").await;
+            spawn_irc_server_with_responses(b"CAP * LS :multi-prefix notls\r\n", None).await;
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("test assertion should succeed");
@@ -298,7 +308,6 @@ mod tests {
             result.is_err(),
             "notls must not be accepted as the tls capability"
         );
-        drop(stream);
 
         let _ = handle.await;
     }
@@ -399,33 +408,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_irc_negotiation_rejects_error_numeric_mentioning_670_in_text() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let mut line = String::new();
-
-                let _ = reader.read_line(&mut line).await;
-                let _ = reader
-                    .get_mut()
-                    .write_all(b"CAP * LS :multi-prefix tls\r\n")
-                    .await;
-                let _ = reader.get_mut().flush().await;
-
-                line.clear();
-                let _ = reader.read_line(&mut line).await;
-                // ERR_STARTTLS (691) whose trailing message contains "670".
-                let _ = reader
-                    .get_mut()
-                    .write_all(b":irc 691 * :STARTTLS failed on port 6670\r\n")
-                    .await;
-                let _ = reader.get_mut().flush().await;
-            }
-        });
+        let (port, handle) = spawn_irc_server_with_responses(
+            b"CAP * LS :multi-prefix tls\r\n",
+            Some(b":irc 691 * :STARTTLS failed on port 6670\r\n"),
+        )
+        .await;
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
@@ -443,24 +430,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_irc_negotiation_missing_starttls() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let port = listener.local_addr().expect("local addr").port();
-
-        let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let mut line = String::new();
-
-                let _ = reader.read_line(&mut line).await;
-                let _ = reader
-                    .get_mut()
-                    .write_all(b"CAP * LS :multi-prefix\r\n")
-                    .await;
-                let _ = reader.get_mut().flush().await;
-            }
-        });
+        let (port, handle) =
+            spawn_irc_server_with_responses(b"CAP * LS :multi-prefix\r\n", None).await;
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
