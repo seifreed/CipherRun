@@ -95,18 +95,26 @@ mod tests {
         ComplianceReport, RequirementResult as ComplianceRequirementResult, Severity, Violation,
     };
 
-    #[test]
-    fn omits_requirements_when_not_detailed() {
-        let framework = ComplianceFramework {
-            id: "pci-dss-v4".to_string(),
-            name: "PCI DSS".to_string(),
-            version: "4.0".to_string(),
+    fn framework(id: &str, name: &str) -> ComplianceFramework {
+        ComplianceFramework {
+            id: id.to_string(),
+            name: name.to_string(),
+            version: "1.0".to_string(),
             description: String::new(),
             organization: String::new(),
             effective_date: None,
             requirements: Vec::new(),
-        };
-        let report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        }
+    }
+
+    fn report(framework: &ComplianceFramework) -> ComplianceReport {
+        ComplianceReport::new(framework, "example.com:443".to_string())
+    }
+
+    #[test]
+    fn omits_requirements_when_not_detailed() {
+        let framework = framework("pci-dss-v4", "PCI DSS");
+        let report = report(&framework);
 
         let response = present_compliance_report(&framework, &report, false);
 
@@ -117,16 +125,8 @@ mod tests {
 
     #[test]
     fn includes_detailed_requirement_mapping() {
-        let framework = ComplianceFramework {
-            id: "pci-dss-v4".to_string(),
-            name: "PCI DSS".to_string(),
-            version: "4.0".to_string(),
-            description: String::new(),
-            organization: String::new(),
-            effective_date: None,
-            requirements: Vec::new(),
-        };
-        let mut report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        let framework = framework("pci-dss-v4", "PCI DSS");
+        let mut report = report(&framework);
         report.add_requirement_result(ComplianceRequirementResult {
             requirement_id: "REQ-1".to_string(),
             name: "Strong TLS".to_string(),
@@ -158,16 +158,8 @@ mod tests {
 
     #[test]
     fn maps_warning_and_not_applicable_statuses() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            version: "1.0".to_string(),
-            description: String::new(),
-            organization: String::new(),
-            effective_date: None,
-            requirements: Vec::new(),
-        };
-        let mut report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        let framework = framework("test", "Test");
+        let mut report = report(&framework);
         report.add_requirement_result(ComplianceRequirementResult {
             requirement_id: "REQ-WARN".to_string(),
             name: "Warn".to_string(),
@@ -202,16 +194,8 @@ mod tests {
 
     #[test]
     fn percentage_is_zero_when_summary_total_is_zero_even_with_details() {
-        let framework = ComplianceFramework {
-            id: "zero".to_string(),
-            name: "Zero".to_string(),
-            version: "1.0".to_string(),
-            description: String::new(),
-            organization: String::new(),
-            effective_date: None,
-            requirements: Vec::new(),
-        };
-        let report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        let framework = framework("zero", "Zero");
+        let report = report(&framework);
 
         let response = present_compliance_report(&framework, &report, true);
 
@@ -228,16 +212,8 @@ mod tests {
 
     #[test]
     fn includes_null_evidence_and_remediation_for_empty_requirement_data() {
-        let framework = ComplianceFramework {
-            id: "detail".to_string(),
-            name: "Detail".to_string(),
-            version: "1.0".to_string(),
-            description: String::new(),
-            organization: String::new(),
-            effective_date: None,
-            requirements: Vec::new(),
-        };
-        let mut report = ComplianceReport::new(&framework, "example.com:443".to_string());
+        let framework = framework("detail", "Detail");
+        let mut report = report(&framework);
         report.add_requirement_result(ComplianceRequirementResult {
             requirement_id: "REQ-EMPTY".to_string(),
             name: "Empty".to_string(),
