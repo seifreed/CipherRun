@@ -1,4 +1,4 @@
-// Cipher tester façade. Public API, data contracts, configuration and tests stay here.
+// Cipher tester façade. Public API, configuration and tests stay here.
 
 #[path = "tester/classification.rs"]
 mod classification;
@@ -6,6 +6,8 @@ mod classification;
 mod connection_pool;
 #[path = "tester/handshake_io.rs"]
 mod handshake_io;
+#[path = "tester/model.rs"]
+mod model;
 #[path = "tester/orchestration.rs"]
 mod orchestration;
 #[path = "tester/preference.rs"]
@@ -17,7 +19,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use super::{CipherStrength, CipherSuite};
@@ -30,6 +31,7 @@ use crate::protocols::Protocol;
 use crate::utils::adaptive::AdaptiveController;
 use crate::utils::network::Target;
 use connection_pool::TlsConnectionPool;
+pub use model::{CipherCounts, CipherTestResult, ProtocolCipherSummary};
 use preference::CipherPreferenceAnalyzer;
 
 type CipherBatchResult = Vec<(CipherSuite, Result<(bool, Option<u64>)>)>;
@@ -46,38 +48,6 @@ const RETRY_BACKOFF_SECS: u64 = 3;
 const SERVER_HELLO_MIN_SIZE: usize = 44;
 const SESSION_ID_LENGTH_OFFSET: usize = 43;
 const CIPHER_SUITE_BASE_OFFSET: usize = 44;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CipherTestResult {
-    pub cipher: CipherSuite,
-    pub supported: bool,
-    pub protocol: Protocol,
-    pub server_preference: Option<usize>,
-    pub handshake_time_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProtocolCipherSummary {
-    pub protocol: Protocol,
-    pub supported_ciphers: Vec<CipherSuite>,
-    pub server_ordered: bool,
-    pub server_preference: Vec<String>,
-    pub preferred_cipher: Option<CipherSuite>,
-    pub counts: CipherCounts,
-    pub avg_handshake_time_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CipherCounts {
-    pub total: usize,
-    pub null_ciphers: usize,
-    pub export_ciphers: usize,
-    pub low_strength: usize,
-    pub medium_strength: usize,
-    pub high_strength: usize,
-    pub forward_secrecy: usize,
-    pub aead: usize,
-}
 
 pub struct CipherTester {
     target: Target,
