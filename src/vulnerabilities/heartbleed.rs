@@ -1,17 +1,17 @@
 // Heartbleed (CVE-2014-0160) vulnerability checker
 
+use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST,
-    TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE, VERSION_TLS_1_2,
+    BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT, TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::{Protocol, handshake::ClientHelloBuilder};
 use crate::utils::network::Target;
-use crate::{Result, TlsError};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+mod heartbeat_probe;
 mod heartbeat_response;
 mod server_hello;
 
@@ -272,54 +272,7 @@ impl<'a> HeartbleedTester<'a> {
 
     /// Send malicious heartbeat request and check for memory leak
     async fn send_malicious_heartbeat(&self, stream: &mut TcpStream) -> Result<HeartbleedResult> {
-        const HEARTBEAT_CLAIMED_PAYLOAD_LEN: usize = 16387; // claimed in TLS record header (3 + 16384)
-        const HEARTBEAT_BYTES_SENT: usize = 8; // actual bytes sent (5 TLS header + 1 type + 2 length)
-        // Minimum suspicious response threshold.
-        // A legitimate heartbeat response echoes our 3 bytes payload plus 3 bytes header (type + length).
-        // TLS record overhead: 5 bytes (content type + version + length).
-        // Total legitimate: ~11 bytes minimum.
-        //
-        // CRITICAL: We must distinguish between legitimate heartbeat responses and memory leaks.
-        // A legitimate Heartbeat Response (type 0x02) would echo our 3 bytes payload + 3 bytes header
-        // = 6 bytes, plus 5 bytes TLS record = 11 bytes total.
-        //
-        // A vulnerable server returns the claimed length (16384 bytes) which is far larger.
-        // We use 16 bytes as threshold to avoid false positives from minimal echo responses
-        // while still catching small leaks (some vulnerable implementations leak ~32-64 bytes).
-        //
-        // Response structure validation:
-        // - Content type must be Heartbeat (0x18)
-        // - Heartbeat message type must be Response (0x02), not Request (0x01)
-        // - Payload length field claims more bytes than we sent
-        //
-        // See: CVE-2014-0160 - heartbeat allows reading up to 64KB of memory.
-        const MIN_SUSPICIOUS_RESPONSE: usize = 16;
-        // Responses below this threshold warrant manual verification warning
-        const WARNING_THRESHOLD: usize = 32;
-
-        // Build malicious heartbeat request.
-        // The TLS record length must encompass the full heartbeat message:
-        // type(1) + length(2) + claimed_payload(0x4000) = 3 + 16384 = 16387 bytes.
-        // A vulnerable server reads past the 3-byte heartbeat header into process memory.
-        let claimed_payload_length: u16 = 0x4000; // 16384 bytes — the malicious claim
-        let heartbeat_msg_len = 3 + claimed_payload_length as usize; // type(1) + length(2) + payload
-        let heartbeat_msg_len =
-            u16::try_from(heartbeat_msg_len).map_err(|_| TlsError::ParseError {
-                message: "Heartbleed heartbeat message length too large".to_string(),
-            })?;
-        let version = VERSION_TLS_1_2.to_be_bytes();
-        let heartbeat_msg_len = heartbeat_msg_len.to_be_bytes();
-        let heartbeat = vec![
-            CONTENT_TYPE_HEARTBEAT,                // Content Type: Heartbeat (0x18)
-            version[0],                            // Version: TLS 1.2 (0x0303)
-            version[1],                            // Version low byte
-            heartbeat_msg_len[0],                  // Record length high byte
-            heartbeat_msg_len[1],                  // Record length low byte
-            HEARTBEAT_REQUEST,                     // Heartbeat request type (0x01)
-            (claimed_payload_length >> 8) as u8,   // Payload length high byte
-            (claimed_payload_length & 0xff) as u8, // Payload length low byte
-        ];
-
+        let heartbeat = heartbeat_probe::malicious_request()?;
         stream.write_all(&heartbeat).await?;
         let result = match self
             .read_complete_tls_record(stream, u16::MAX as usize + TLS_RECORD_HEADER_SIZE)
@@ -330,7 +283,7 @@ impl<'a> HeartbleedTester<'a> {
                 return Ok(HeartbleedResult {
                     vulnerable: false,
                     bytes_received: 0,
-                    bytes_sent: HEARTBEAT_BYTES_SENT,
+                    bytes_sent: heartbeat_probe::BYTES_SENT,
                     details:
                         "Timeout waiting for heartbeat response - server may have closed connection"
                             .to_string(),
@@ -341,7 +294,7 @@ impl<'a> HeartbleedTester<'a> {
                 return Ok(HeartbleedResult {
                     vulnerable: false,
                     bytes_received: 0,
-                    bytes_sent: HEARTBEAT_BYTES_SENT,
+                    bytes_sent: heartbeat_probe::BYTES_SENT,
                     details:
                         "Connection error during heartbeat test - server may have closed connection"
                             .to_string(),
@@ -350,55 +303,7 @@ impl<'a> HeartbleedTester<'a> {
             }
         };
 
-        let n = result.len();
-
-        // Validate response structure
-        let is_valid_heartbeat_response = heartbeat_response::is_valid(&result);
-
-        // If response doesn't look like a valid heartbeat response, it's suspicious
-        // (server might be returning an error or TLS alert)
-        let vulnerable = n >= MIN_SUSPICIOUS_RESPONSE && is_valid_heartbeat_response;
-        let details = if vulnerable {
-            if n < WARNING_THRESHOLD {
-                format!(
-                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes, claimed {} bytes in heartbeat). \
-                     NOTE: Response size is small, manual verification recommended.",
-                    n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN
-                )
-            } else {
-                format!(
-                    "VULNERABLE: Heartbleed detected. Received {} bytes (sent {} bytes, claimed {} bytes). Memory leak confirmed.",
-                    n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN
-                )
-            }
-        } else if n == 0 {
-            "Connection closed by server during heartbeat test - inconclusive. \
-             Server may have rejected malformed heartbeat (not vulnerable) or \
-             may have crashed (potentially vulnerable). Manual verification recommended."
-                .to_string()
-        } else if !is_valid_heartbeat_response && n > 0 {
-            format!(
-                "Not vulnerable - Response does not appear to be a valid heartbeat response. \
-                 Received {} bytes. Manual verification recommended if server returned unexpected data.",
-                n
-            )
-        } else {
-            format!(
-                "Not vulnerable - Received {} bytes (sent {} bytes, claimed {} bytes, threshold: {})",
-                n, HEARTBEAT_BYTES_SENT, HEARTBEAT_CLAIMED_PAYLOAD_LEN, MIN_SUSPICIOUS_RESPONSE
-            )
-        };
-
-        Ok(HeartbleedResult {
-            vulnerable,
-            bytes_received: n,
-            bytes_sent: HEARTBEAT_BYTES_SENT,
-            details,
-            // n=0: server sent nothing after the malicious heartbeat → inconclusive
-            // n 1..MIN_SUSPICIOUS_RESPONSE: ambiguous partial response → inconclusive
-            // n>=MIN_SUSPICIOUS_RESPONSE: enough data to classify
-            tested: n >= MIN_SUSPICIOUS_RESPONSE,
-        })
+        Ok(heartbeat_probe::classify_response(&result))
     }
 
     async fn read_complete_tls_record(
