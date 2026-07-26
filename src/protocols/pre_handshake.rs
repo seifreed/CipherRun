@@ -154,6 +154,15 @@ mod tests {
         PreHandshakeScanner::new(test_target())
     }
 
+    fn assert_parse_error_contains(data: &[u8], expected: &str) {
+        let scanner = test_scanner();
+        let err = match scanner.parse_handshake_response(data) {
+            Ok(_) => panic!("parse should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains(expected), "{err}");
+    }
+
     fn build_handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
         let mut message = Vec::with_capacity(4 + body.len());
         message.push(handshake_type);
@@ -532,18 +541,12 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_truncated_record_header() {
-        let scanner = test_scanner();
         let data = vec![0x16, 0x03, 0x03, 0x00];
-        let err = match scanner.parse_handshake_response(&data) {
-            Ok(_) => panic!("truncated record header should fail"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("TLS record header truncated"));
+        assert_parse_error_contains(&data, "TLS record header truncated");
     }
 
     #[test]
     fn test_parse_handshake_response_record_length_exceeds_buffer() {
-        let scanner = test_scanner();
         let mut record = Vec::new();
         record.push(0x16);
         record.push(0x03);
@@ -551,39 +554,22 @@ mod tests {
         record.extend_from_slice(&10u16.to_be_bytes());
         record.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("truncated record should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("TLS record length exceeds available data")
-        );
+        assert_parse_error_contains(&record, "TLS record length exceeds available data");
     }
 
     #[test]
     fn test_parse_handshake_response_truncated_handshake_message() {
-        let scanner = test_scanner();
         let mut message = Vec::new();
         message.push(0x02);
         message.extend_from_slice(&u24_len(10));
         message.extend_from_slice(&[0x03, 0x03]);
         let record = build_handshake_record(&[message]);
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("truncated handshake message should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Handshake length exceeds available data")
-        );
+        assert_parse_error_contains(&record, "Handshake length exceeds available data");
     }
 
     #[test]
     fn test_parse_handshake_response_rejects_handshake_spanning_records() {
-        let scanner = test_scanner();
-
         let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x06];
         record.extend_from_slice(&[
             0x02, // ServerHello
@@ -592,38 +578,22 @@ mod tests {
         ]);
         record.extend_from_slice(&[0x15, 0x03, 0x03, 0x00, 0x01, 0x00]);
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("cross-record handshake should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Handshake length exceeds available data")
-        );
+        assert_parse_error_contains(&record, "Handshake length exceeds available data");
     }
 
     #[test]
     fn test_parse_handshake_response_certificate_length_exceeds() {
-        let scanner = test_scanner();
         let mut cert_body = Vec::new();
         cert_body.extend_from_slice(&u24_len(6));
         cert_body.extend_from_slice(&u24_len(16));
         let certificate = build_handshake_message(0x0b, &cert_body);
         let record = build_handshake_record(&[certificate]);
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("truncated certificate list should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Certificate list length exceeds available data")
-        );
+        assert_parse_error_contains(&record, "Certificate list length exceeds available data");
     }
 
     #[test]
     fn test_parse_handshake_response_invalid_certificate_der_fails() {
-        let scanner = test_scanner();
         let cert_der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
         let mut cert_body = Vec::new();
         let certs_len = cert_der.len() + 3;
@@ -633,26 +603,14 @@ mod tests {
         let certificate = build_handshake_message(0x0b, &cert_body);
         let record = build_handshake_record(&[certificate]);
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("invalid certificate DER should fail"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("Failed to parse certificate"));
+        assert_parse_error_contains(&record, "Failed to parse certificate");
     }
 
     #[test]
     fn test_parse_handshake_response_rejects_truncated_record() {
-        let scanner = test_scanner();
         // TLS record claims 6 bytes, but only 1 byte of handshake body follows.
         let record = vec![0x16, 0x03, 0x03, 0x00, 0x06, 0x02];
 
-        let err = match scanner.parse_handshake_response(&record) {
-            Ok(_) => panic!("truncated record should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("TLS record length exceeds available data")
-        );
+        assert_parse_error_contains(&record, "TLS record length exceeds available data");
     }
 }
