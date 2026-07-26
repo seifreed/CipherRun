@@ -28,15 +28,14 @@ use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
 use crate::utils::network::Target;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
+mod read_io;
 mod result;
 mod sslv2;
 
 pub use result::DrownTestResult;
-
-const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
 
 /// SSLv2 detection status with granular confidence levels
 ///
@@ -206,10 +205,10 @@ impl DrownTester {
 
         // Read the full SSLv2 response record so fragmented headers do not get
         // misclassified as truncation.
-        let mut buffer = vec![0u8; SSLV2_MAX_RECORD_WITH_HEADER];
+        let mut buffer = read_io::record_buffer();
         match timeout(
             Duration::from_secs(3),
-            Self::read_complete_sslv2_record(&mut stream, &mut buffer),
+            read_io::read_complete_sslv2_record(&mut stream, &mut buffer),
         )
         .await
         {
@@ -258,10 +257,10 @@ impl DrownTester {
 
         // Read the full SSLv2 response record so fragmented headers do not get
         // misclassified as truncation.
-        let mut buffer = vec![0u8; SSLV2_MAX_RECORD_WITH_HEADER];
+        let mut buffer = read_io::record_buffer();
         match timeout(
             Duration::from_secs(3),
-            Self::read_complete_sslv2_record(&mut stream, &mut buffer),
+            read_io::read_complete_sslv2_record(&mut stream, &mut buffer),
         )
         .await
         {
@@ -273,66 +272,6 @@ impl DrownTester {
             }
             _ => Ok(Sslv2Status::Inconclusive),
         }
-    }
-
-    async fn read_complete_sslv2_record(
-        stream: &mut tokio::net::TcpStream,
-        buffer: &mut [u8],
-    ) -> std::io::Result<usize> {
-        use std::io::ErrorKind;
-        use tokio::time::timeout;
-
-        let mut total = 0;
-        while total < buffer.len() {
-            match timeout(Duration::from_secs(3), stream.read(&mut buffer[total..])).await {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => {
-                    total += n;
-                    if total >= 2 {
-                        let Some((header_len, _record_len, record_total)) =
-                            sslv2::record_shape(buffer.get(..total).unwrap_or(&[]))
-                        else {
-                            continue;
-                        };
-                        if total < header_len {
-                            continue;
-                        }
-                        if record_total > buffer.len() {
-                            return Err(std::io::Error::new(
-                                ErrorKind::InvalidData,
-                                "DROWN SSLv2 response length exceeds buffer",
-                            ));
-                        }
-                        if total >= record_total {
-                            break;
-                        }
-                    }
-                }
-                Ok(Err(err))
-                    if total == 0
-                        && matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
-                {
-                    return Ok(0);
-                }
-                Ok(Err(err))
-                    if total > 0
-                        && matches!(
-                            err.kind(),
-                            ErrorKind::TimedOut
-                                | ErrorKind::WouldBlock
-                                | ErrorKind::UnexpectedEof
-                                | ErrorKind::ConnectionReset
-                        ) =>
-                {
-                    break;
-                }
-                Ok(Err(err)) => return Err(err),
-                Err(_) if total > 0 => break,
-                Err(_) => return Ok(0),
-            }
-        }
-
-        Ok(total)
     }
 }
 
