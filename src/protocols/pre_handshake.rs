@@ -150,6 +150,10 @@ mod tests {
         .expect("target should build")
     }
 
+    fn test_scanner() -> PreHandshakeScanner {
+        PreHandshakeScanner::new(test_target())
+    }
+
     fn build_handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
         let mut message = Vec::with_capacity(4 + body.len());
         message.push(handshake_type);
@@ -219,9 +223,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_build() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let client_hello = scanner
             .build_client_hello()
             .expect("test assertion should succeed");
@@ -234,9 +236,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_lengths_match() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let client_hello = scanner
             .build_client_hello()
             .expect("test assertion should succeed");
@@ -251,9 +251,7 @@ mod tests {
 
     #[test]
     fn test_sni_extension() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let sni = scanner
             .build_sni_extension()
             .expect("SNI extension should build");
@@ -265,9 +263,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_server_hello_only() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
         let record = build_handshake_record(&[server_hello]);
@@ -289,9 +285,7 @@ mod tests {
         // Here session_id_len=16, so cipher lives at offset 35+16=51 within the
         // ServerHello body. The old `offset + 34` formula would read into the
         // session_id bytes (0x42) and produce cipher_suite = "0x4242".
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let server_hello_body = build_server_hello_body(0x03, 0x03, 16, 0xc02f, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
         let record = build_handshake_record(&[server_hello]);
@@ -306,9 +300,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_oversized_server_hello_session_id() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let mut server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0x1301, 0x00);
         server_hello_body[34] = 32;
         let server_hello = build_handshake_message(0x02, &server_hello_body);
@@ -331,9 +323,7 @@ mod tests {
         // adversarial), the previous `version_maj - 2` arithmetic underflowed
         // u8 and panicked in debug builds. The replacement match on the u16
         // version field must map to "Unknown (...)" without panicking.
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let server_hello_body = build_server_hello_body(0x01, 0x00, 0, 0x0700, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
         let record = build_handshake_record(&[server_hello]);
@@ -351,8 +341,7 @@ mod tests {
     fn test_parse_handshake_response_maps_known_versions() {
         // Regression test: each supported version bytes-pair maps to its canonical
         // name via the u16 match (not arithmetic subtraction).
-        let target = test_target();
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
 
         for (major, minor, expected) in [
             (0x03u8, 0x00u8, "SSL 3.0"),
@@ -373,9 +362,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_with_certificate() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
 
         let mut params =
             CertificateParams::new(vec!["example.com".to_string()]).expect("params should build");
@@ -389,12 +376,7 @@ mod tests {
         let server_hello_body = build_server_hello_body(0x03, 0x03, 0, 0xc02f, 0x00);
         let server_hello = build_handshake_message(0x02, &server_hello_body);
 
-        let mut cert_body = Vec::new();
-        let certs_len = cert_der.len() + 3;
-        cert_body.extend_from_slice(&u24_len(certs_len));
-        cert_body.extend_from_slice(&u24_len(cert_der.len()));
-        cert_body.extend_from_slice(&cert_der);
-        let certificate = build_handshake_message(0x0b, &cert_body);
+        let certificate = build_certificate_record(&cert_der);
 
         let record = build_handshake_record(&[server_hello, certificate]);
 
@@ -548,9 +530,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_skips_non_handshake_records() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let mut record = Vec::new();
         record.push(0x15);
         record.push(0x03);
@@ -567,9 +547,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_truncated_record_header() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let data = vec![0x16, 0x03, 0x03, 0x00];
         let err = match scanner.parse_handshake_response(&data) {
             Ok(_) => panic!("truncated record header should fail"),
@@ -580,9 +558,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_record_length_exceeds_buffer() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let mut record = Vec::new();
         record.push(0x16);
         record.push(0x03);
@@ -602,9 +578,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_truncated_handshake_message() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let mut message = Vec::new();
         message.push(0x02);
         message.extend_from_slice(&u24_len(10));
@@ -623,9 +597,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_handshake_spanning_records() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
 
         let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x06];
         record.extend_from_slice(&[
@@ -647,9 +619,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_certificate_length_exceeds() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let mut cert_body = Vec::new();
         cert_body.extend_from_slice(&u24_len(6));
         cert_body.extend_from_slice(&u24_len(16));
@@ -668,9 +638,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_invalid_certificate_der_fails() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         let cert_der = vec![0x30, 0x03, 0x01, 0x02, 0x03];
         let mut cert_body = Vec::new();
         let certs_len = cert_der.len() + 3;
@@ -689,9 +657,7 @@ mod tests {
 
     #[test]
     fn test_parse_handshake_response_rejects_truncated_record() {
-        let target = test_target();
-
-        let scanner = PreHandshakeScanner::new(target);
+        let scanner = test_scanner();
         // TLS record claims 6 bytes, but only 1 byte of handshake body follows.
         let record = vec![0x16, 0x03, 0x03, 0x00, 0x06, 0x02];
 
