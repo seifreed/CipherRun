@@ -485,45 +485,24 @@ mod tests {
     }
 
     #[test]
-    fn test_count_scts_in_list_invalid_length() {
+    fn test_count_scts_in_list_rejects_malformed_inputs() {
         let verifier = CtVerifier::new(false);
-        // SCT list format: 2-byte total length + SCT entries
-        // This test has a mismatch: declared length (4 bytes) but actual data is shorter
-        // 0x00 0x04 = 4 bytes declared, but only 3 bytes follow (00 05 01)
-        // The function should reject malformed data instead of silently counting 0.
-        let sct_list = vec![0x00, 0x04, 0x00, 0x05, 0x01];
-        let err = verifier
-            .count_scts_in_list(&sct_list)
-            .expect_err("Malformed SCT list should fail");
-        assert!(err.to_string().contains("Malformed SCT list"));
-    }
-
-    #[test]
-    fn test_count_scts_in_list_rejects_trailing_bytes() {
-        let verifier = CtVerifier::new(false);
-        let sct_list = vec![
-            0x00, 0x05, // total length
-            0x00, 0x03, 0x01, 0x02, 0x03, // entry
-            0xff, // trailing byte outside declared length
-        ];
-        let err = verifier
-            .count_scts_in_list(&sct_list)
-            .expect_err("trailing bytes should fail");
-        assert!(err.to_string().contains("trailing bytes"));
-    }
-
-    #[test]
-    fn test_count_scts_in_list_rejects_trailing_entry_byte() {
-        let verifier = CtVerifier::new(false);
-        let sct_list = vec![
-            0x00, 0x06, // total length
-            0x00, 0x03, 0x01, 0x02, 0x03, // entry
-            0xff, // trailing byte inside declared length
-        ];
-        let err = verifier
-            .count_scts_in_list(&sct_list)
-            .expect_err("trailing entry byte should fail");
-        assert!(err.to_string().contains("trailing bytes"));
+        for (sct_list, expected) in [
+            (vec![0x00, 0x04, 0x00, 0x05, 0x01], "Malformed SCT list"),
+            (
+                vec![0x00, 0x05, 0x00, 0x03, 0x01, 0x02, 0x03, 0xff],
+                "trailing bytes",
+            ),
+            (
+                vec![0x00, 0x06, 0x00, 0x03, 0x01, 0x02, 0x03, 0xff],
+                "trailing bytes",
+            ),
+        ] {
+            let err = verifier
+                .count_scts_in_list(&sct_list)
+                .expect_err("malformed SCT list should fail");
+            assert!(err.to_string().contains(expected));
+        }
     }
 
     #[tokio::test]
