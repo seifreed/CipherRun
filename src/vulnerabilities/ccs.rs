@@ -289,6 +289,7 @@ mod tests {
     use super::*;
     use crate::constants::BUFFER_SIZE_DEFAULT;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
+    use crate::vulnerabilities::test_support::two_ip_localhost_target;
     use std::net::TcpListener;
     use std::time::Duration;
     use tokio::net::TcpListener as TokioTcpListener;
@@ -304,12 +305,7 @@ mod tests {
 
     #[test]
     fn test_ccs_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = CcsInjectionTester::new(target.clone())
             .probe_addrs()

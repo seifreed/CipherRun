@@ -1,3 +1,26 @@
+use crate::utils::network::Target;
+use std::net::IpAddr;
+
+pub(crate) fn two_ip_localhost_target(port: u16) -> Target {
+    target_with_ips(
+        "localhost",
+        port,
+        [IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
+    )
+}
+
+pub(crate) fn two_ip_example_target(port: u16) -> Target {
+    target_with_ips(
+        "example.com",
+        port,
+        [IpAddr::from([192, 0, 2, 1]), IpAddr::from([192, 0, 2, 2])],
+    )
+}
+
+fn target_with_ips(hostname: &str, port: u16, ips: [IpAddr; 2]) -> Target {
+    Target::with_ips(hostname.to_string(), port, ips.to_vec()).unwrap()
+}
+
 pub(crate) async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

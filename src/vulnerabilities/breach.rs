@@ -350,6 +350,7 @@ impl BreachTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vulnerabilities::test_support::two_ip_localhost_target;
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -367,12 +368,7 @@ mod tests {
 
     #[test]
     fn test_breach_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = BreachTester::new(target.clone()).probe_addrs().unwrap();
         let all = BreachTester::new(target)

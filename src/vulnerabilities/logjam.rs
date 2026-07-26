@@ -379,7 +379,7 @@ impl LogjamTester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::test_support::spawn_dummy_server;
+    use crate::vulnerabilities::test_support::{spawn_dummy_server, two_ip_localhost_target};
     use std::net::{IpAddr, TcpListener as StdTcpListener};
 
     fn localhost_target(port: u16) -> Target {
@@ -442,12 +442,7 @@ mod tests {
 
     #[test]
     fn test_logjam_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = LogjamTester::new(target.clone()).probe_addrs().unwrap();
         let all = LogjamTester::new(target)

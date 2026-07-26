@@ -202,7 +202,7 @@ impl TicketbleedTester {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE};
-    use crate::vulnerabilities::test_support::write_u24_at;
+    use crate::vulnerabilities::test_support::{two_ip_localhost_target, write_u24_at};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn localhost_target(port: u16) -> Target {
@@ -231,12 +231,7 @@ mod tests {
 
     #[test]
     fn test_ticketbleed_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = TicketbleedTester::new(target.clone())
             .probe_addrs()

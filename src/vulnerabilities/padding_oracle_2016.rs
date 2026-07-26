@@ -270,17 +270,12 @@ impl<'a> PaddingOracle2016Tester<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::test_support::spawn_dummy_server;
+    use crate::vulnerabilities::test_support::{spawn_dummy_server, two_ip_example_target};
     use std::net::IpAddr;
 
     #[test]
     fn test_padding_oracle_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![IpAddr::from([192, 0, 2, 1]), IpAddr::from([192, 0, 2, 2])],
-        )
-        .expect("test assertion should succeed");
+        let target = two_ip_example_target(443);
 
         let first = PaddingOracle2016Tester::new(&target)
             .probe_addrs()

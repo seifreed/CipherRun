@@ -319,6 +319,7 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vulnerabilities::test_support::two_ip_example_target;
     use rustls::client::danger::ServerCertVerifier;
     use std::time::Duration;
 
@@ -337,12 +338,7 @@ mod tests {
 
     #[test]
     fn test_opossum_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
-        )
-        .unwrap();
+        let target = two_ip_example_target(443);
 
         let first = OpossumTester::new(target.clone()).probe_addrs().unwrap();
         assert_eq!(first.len(), 1);

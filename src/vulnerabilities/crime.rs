@@ -203,7 +203,9 @@ impl<'a> CrimeTester<'a> {
 mod tests {
     use super::*;
     use crate::constants::{BUFFER_SIZE_DEFAULT, CONTENT_TYPE_HANDSHAKE};
-    use crate::vulnerabilities::test_support::{write_u16_at, write_u24_at};
+    use crate::vulnerabilities::test_support::{
+        two_ip_localhost_target, write_u16_at, write_u24_at,
+    };
     use std::io::ErrorKind;
     use std::net::TcpListener;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -268,12 +270,7 @@ mod tests {
 
     #[test]
     fn test_crime_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = CrimeTester::new(&target).probe_addrs().unwrap();
         let all = CrimeTester::new(&target)

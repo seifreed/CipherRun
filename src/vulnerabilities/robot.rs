@@ -253,12 +253,12 @@ impl RobotTester {
 mod tests {
     use super::*;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_FINISHED};
+    use crate::vulnerabilities::test_support::two_ip_localhost_target;
     use openssl::asn1::Asn1Time;
     use openssl::hash::MessageDigest;
     use openssl::pkey::PKey;
     use openssl::rsa::Rsa;
     use openssl::x509::{X509Builder, X509NameBuilder};
-    use std::net::IpAddr;
 
     #[test]
     fn test_robot_status() {
@@ -268,12 +268,7 @@ mod tests {
 
     #[test]
     fn test_robot_probe_addrs_honors_all_ips() {
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 2]), IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = two_ip_localhost_target(443);
 
         let single = RobotTester::new(target.clone()).probe_addrs().unwrap();
         let all = RobotTester::new(target)

@@ -1,5 +1,5 @@
 use super::*;
-use crate::vulnerabilities::test_support::spawn_dummy_server;
+use crate::vulnerabilities::test_support::{spawn_dummy_server, two_ip_example_target};
 use std::net::IpAddr;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -70,12 +70,7 @@ fn test_grease_tester_creation() {
 
 #[test]
 fn test_grease_probe_addrs_honors_all_ips() {
-    let target = Target::with_ips(
-        "example.com".to_string(),
-        443,
-        vec![IpAddr::from([192, 0, 2, 1]), IpAddr::from([192, 0, 2, 2])],
-    )
-    .unwrap();
+    let target = two_ip_example_target(443);
 
     let first = GreaseTester::new(target.clone()).probe_addrs().unwrap();
     assert_eq!(first.len(), 1);
