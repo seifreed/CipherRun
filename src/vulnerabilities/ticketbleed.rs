@@ -205,6 +205,15 @@ mod tests {
     use crate::vulnerabilities::test_support::write_u24_at;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_ticketbleed_result() {
         let result = TicketbleedTestResult {
@@ -525,12 +534,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read follow-up hello");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = TicketbleedTester::new(target).test().await.unwrap();
         server.await.expect("server task");
@@ -571,12 +575,7 @@ mod tests {
             let _ = socket.read(&mut buf).await.expect("read follow-up hello");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = TicketbleedTester::new(target).test().await.unwrap();
         server.await.expect("server task");
@@ -648,12 +647,7 @@ mod tests {
                 .expect("write malformed ticket");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = TicketbleedTester::new(target).test().await.unwrap();
         server.await.expect("server task");
@@ -696,12 +690,7 @@ mod tests {
                 .expect("write follow-up server hello");
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let result = TicketbleedTester::new(target).test().await.unwrap();
         server.await.expect("server task");
