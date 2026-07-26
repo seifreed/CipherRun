@@ -78,6 +78,13 @@ async fn history_err(
     .expect_err(message)
 }
 
+fn assert_history_grades(json: &Value, total_scans: usize, grades: &[&str]) {
+    assert_eq!(json["total_scans"], Value::from(total_scans));
+    for (index, grade) in grades.iter().enumerate() {
+        assert_eq!(json["scans"][index]["grade"], Value::from(*grade));
+    }
+}
+
 #[tokio::test]
 async fn test_history_route_returns_not_found_when_no_history_exists() {
     let state = sqlite_state().await;
@@ -98,8 +105,7 @@ async fn test_history_route_returns_inserted_scan() {
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 10).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
+    assert_history_grades(&json, 1, &["A"]);
 }
 
 #[tokio::test]
@@ -109,8 +115,7 @@ async fn test_history_route_filters_by_port() {
     insert_history_scan(&state, "example.com", 8443, 0, "B").await;
 
     let json = history_json(state, "example.com", 8443, 10).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 1, &["B"]);
 }
 
 #[tokio::test]
@@ -121,9 +126,7 @@ async fn test_history_route_applies_limit_and_desc_order() {
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(3));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("B"));
+    assert_history_grades(&json, 3, &["A", "B"]);
 }
 
 #[tokio::test]
@@ -153,8 +156,7 @@ async fn test_history_route_applies_limit_with_matching_port_only() {
     insert_history_scan(&state, "example.com", 443, -5, "A").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
+    assert_history_grades(&json, 2, &["A"]);
 }
 
 #[tokio::test]
@@ -185,10 +187,7 @@ async fn test_history_route_limit_preserves_desc_order_for_same_port() {
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
     let json = history_json(state, "example.com", 8443, 3).await;
-    assert_eq!(json["total_scans"], Value::from(4));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][2]["grade"], Value::from("C"));
+    assert_history_grades(&json, 4, &["A", "B", "C"]);
 }
 
 #[tokio::test]
@@ -199,8 +198,7 @@ async fn test_history_route_limit_one_returns_latest_scan_for_port() {
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(3));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
+    assert_history_grades(&json, 3, &["A"]);
 }
 
 #[tokio::test]
@@ -211,9 +209,7 @@ async fn test_history_route_ignores_other_ports_when_limit_is_high() {
     insert_history_scan(&state, "example.com", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 10).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("A"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["A", "C"]);
 }
 
 #[tokio::test]
@@ -267,8 +263,7 @@ async fn test_history_route_returns_only_matching_port_when_other_port_has_newer
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 10).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 1, &["B"]);
 }
 
 #[tokio::test]
@@ -278,8 +273,7 @@ async fn test_history_route_ignores_newer_matching_port_results_from_other_domai
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 10).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 1, &["B"]);
 }
 
 #[tokio::test]
@@ -289,8 +283,7 @@ async fn test_history_route_limit_one_still_ignores_other_domain_newer_scan() {
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 1, &["B"]);
 }
 
 #[tokio::test]
@@ -315,8 +308,7 @@ async fn test_history_route_limit_one_returns_same_domain_requested_port_only() 
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(1));
-    assert_eq!(json["scans"][0]["grade"], Value::from("C"));
+    assert_history_grades(&json, 1, &["C"]);
 }
 
 #[tokio::test]
@@ -327,9 +319,7 @@ async fn test_history_route_limit_two_ignores_other_domain_even_when_newer() {
     insert_history_scan(&state, "other.example", 443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -340,9 +330,7 @@ async fn test_history_route_limit_two_ignores_newer_other_port_from_same_domain(
     insert_history_scan(&state, "example.com", 8443, 0, "A").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -354,8 +342,7 @@ async fn test_history_route_limit_one_ignores_newer_other_domain_and_other_port_
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 2, &["B"]);
 }
 
 #[tokio::test]
@@ -404,9 +391,7 @@ async fn test_history_route_limit_two_ignores_other_domain_and_other_port_even_w
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(3));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 3, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -418,9 +403,7 @@ async fn test_history_route_limit_two_for_non_default_port_ignores_newer_other_p
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 8443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -432,8 +415,7 @@ async fn test_history_route_limit_one_for_non_default_port_ignores_newer_other_p
     insert_history_scan(&state, "other.example", 8443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 8443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 2, &["B"]);
 }
 
 #[tokio::test]
@@ -481,8 +463,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_newer_non_default
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 2, &["B"]);
 }
 
 #[tokio::test]
@@ -495,9 +476,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_newer_non_default
     insert_history_scan(&state, "other.example", 443, 0, "A+").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(3));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 3, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -556,9 +535,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_same_domain_newer
     insert_history_scan(&state, "example.com", 8443, -1, "A").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -570,8 +547,7 @@ async fn test_history_route_limit_one_for_default_port_ignores_same_domain_newer
     insert_history_scan(&state, "example.com", 8443, -1, "A").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 2, &["B"]);
 }
 
 #[tokio::test]
@@ -582,9 +558,7 @@ async fn test_history_route_limit_two_for_default_port_ignores_only_other_domain
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
     let json = history_json(state, "example.com", 443, 2).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
-    assert_eq!(json["scans"][1]["grade"], Value::from("C"));
+    assert_history_grades(&json, 2, &["B", "C"]);
 }
 
 #[tokio::test]
@@ -595,6 +569,5 @@ async fn test_history_route_limit_one_for_default_port_ignores_only_other_domain
     insert_history_scan(&state, "other.example", 443, -1, "A+").await;
 
     let json = history_json(state, "example.com", 443, 1).await;
-    assert_eq!(json["total_scans"], Value::from(2));
-    assert_eq!(json["scans"][0]["grade"], Value::from("B"));
+    assert_history_grades(&json, 2, &["B"]);
 }
