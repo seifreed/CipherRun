@@ -68,6 +68,24 @@ impl<'a> EarlyDataTester<'a> {
         self
     }
 
+    fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
+        let addrs: Vec<_> = if self.test_all_ips {
+            self.target.socket_addrs()
+        } else {
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
+        };
+        if addrs.is_empty() {
+            Err(crate::TlsError::NoSocketAddresses)
+        } else {
+            Ok(addrs)
+        }
+    }
+
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -221,19 +239,10 @@ impl<'a> EarlyDataTester<'a> {
         config.enable_early_data = true;
         let config = Arc::new(config);
 
-        let addrs: Vec<_> = if self.test_all_ips {
-            self.target.socket_addrs()
-        } else {
-            self.target
-                .socket_addrs()
-                .first()
-                .copied()
-                .into_iter()
-                .collect()
+        let addrs = match self.probe_addrs() {
+            Ok(addrs) => addrs,
+            Err(_) => return Ok(EarlyDataSupportStatus::Inconclusive),
         };
-        if addrs.is_empty() {
-            return Ok(EarlyDataSupportStatus::Inconclusive);
-        }
 
         let mut saw_not_supported = false;
         let mut saw_inconclusive = false;
@@ -425,24 +434,18 @@ impl<'a> EarlyDataTester<'a> {
         config.enable_early_data = true;
         let config = Arc::new(config);
 
-        let addrs: Vec<_> = if self.test_all_ips {
-            self.target.socket_addrs()
-        } else {
-            self.target
-                .socket_addrs()
-                .first()
-                .copied()
-                .into_iter()
-                .collect()
+        let addrs = match self.probe_addrs() {
+            Ok(addrs) => addrs,
+            Err(_) => {
+                return Ok(ReplayTestResult {
+                    tested: false,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details: "Early Data replay test inconclusive - no socket addresses"
+                        .to_string(),
+                });
+            }
         };
-        if addrs.is_empty() {
-            return Ok(ReplayTestResult {
-                tested: false,
-                vulnerable: false,
-                inconclusive: true,
-                details: "Early Data replay test inconclusive - no socket addresses".to_string(),
-            });
-        }
 
         let mut saw_inconclusive = false;
         for addr in addrs {
@@ -486,19 +489,7 @@ impl<'a> EarlyDataTester<'a> {
 
     /// Attempt to connect with TLS 1.3
     async fn connect_tls13(&self) -> Result<Tls13SupportStatus> {
-        let addrs: Vec<_> = if self.test_all_ips {
-            self.target.socket_addrs()
-        } else {
-            self.target
-                .socket_addrs()
-                .first()
-                .copied()
-                .into_iter()
-                .collect()
-        };
-        if addrs.is_empty() {
-            return Err(crate::TlsError::NoSocketAddresses);
-        };
+        let addrs = self.probe_addrs()?;
 
         let domain = crate::utils::network::server_name_for_hostname(&self.target.hostname)?;
         let mut saw_not_supported = false;
