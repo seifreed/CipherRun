@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 mod model;
+pub(crate) mod tls_record;
 pub use model::{Protocol, ProtocolTestResult};
 
 /// TLS extension

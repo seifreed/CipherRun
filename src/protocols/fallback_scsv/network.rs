@@ -1,7 +1,7 @@
 use super::FallbackScsvTester;
 use super::model::ScsvSupport;
 use crate::Result;
-use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_ALERT, TLS_RECORD_HEADER_SIZE};
+use crate::constants::{CONTENT_TYPE_ALERT, TLS_RECORD_HEADER_SIZE};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
@@ -205,7 +205,7 @@ impl FallbackScsvTester<'_> {
             return Ok(None);
         }
 
-        let Some(total_len) = Self::tls_record_total_len(&header)? else {
+        let Some(total_len) = crate::protocols::tls_record::total_len(&header)? else {
             return Ok(None);
         };
         let mut response = vec![0u8; total_len];
@@ -219,24 +219,6 @@ impl FallbackScsvTester<'_> {
         }
 
         Ok(Some(response))
-    }
-
-    fn tls_record_total_len(
-        header: &[u8; TLS_RECORD_HEADER_SIZE],
-    ) -> std::io::Result<Option<usize>> {
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = TLS_RECORD_HEADER_SIZE
-            .checked_add(record_len)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "TLS record length overflow",
-                )
-            })?;
-        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
-            return Ok(None);
-        }
-        Ok(Some(total_len))
     }
 
     pub(super) fn baseline_fallback_accepted(
@@ -286,27 +268,6 @@ impl FallbackScsvTester<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_tls_record_total_len_rejects_oversized_record() {
-        let max_record_len = crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD
-            - crate::constants::TLS_RECORD_HEADER_SIZE;
-        let allowed = max_record_len as u16;
-        let rejected = (max_record_len + 1) as u16;
-
-        let allowed_header = [0x16, 0x03, 0x03, (allowed >> 8) as u8, allowed as u8];
-        assert_eq!(
-            FallbackScsvTester::tls_record_total_len(&allowed_header).expect("length should parse"),
-            Some(crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD)
-        );
-
-        let rejected_header = [0x16, 0x03, 0x03, (rejected >> 8) as u8, rejected as u8];
-        assert_eq!(
-            FallbackScsvTester::tls_record_total_len(&rejected_header)
-                .expect("length should parse"),
-            None
-        );
-    }
 
     #[test]
     fn test_aggregate_scsv_inconclusive_wins_over_not_supported() {

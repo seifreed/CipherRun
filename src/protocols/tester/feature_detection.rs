@@ -1,8 +1,8 @@
 use super::ProtocolTester;
 use crate::Result;
 use crate::constants::{
-    BUFFER_SIZE_MAX_TLS_RECORD, BUFFER_SIZE_MAX_WITH_OVERHEAD, CONTENT_TYPE_HANDSHAKE,
-    HANDSHAKE_TYPE_SERVER_HELLO, TLS_RECORD_HEADER_SIZE,
+    BUFFER_SIZE_MAX_TLS_RECORD, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_SERVER_HELLO,
+    TLS_RECORD_HEADER_SIZE,
 };
 use crate::protocols::{
     Protocol,
@@ -248,7 +248,7 @@ impl ProtocolTester {
             return Ok(None);
         }
 
-        let Some(total_len) = Self::tls_record_total_len(&header)? else {
+        let Some(total_len) = crate::protocols::tls_record::total_len(&header)? else {
             return Ok(None);
         };
 
@@ -262,24 +262,6 @@ impl ProtocolTester {
             return Ok(None);
         }
         Ok(Some(record))
-    }
-
-    fn tls_record_total_len(
-        header: &[u8; TLS_RECORD_HEADER_SIZE],
-    ) -> std::io::Result<Option<usize>> {
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = TLS_RECORD_HEADER_SIZE
-            .checked_add(record_len)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "TLS record length overflow",
-                )
-            })?;
-        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
-            return Ok(None);
-        }
-        Ok(Some(total_len))
     }
 
     fn server_hello_payload_len(record: &[u8]) -> Option<usize> {
@@ -327,23 +309,6 @@ impl ProbeAggregate {
 #[cfg(test)]
 mod tests {
     use super::{ProbeAggregate, *};
-
-    #[test]
-    fn test_tls_record_total_len_accepts_full_fragment_with_header() {
-        let record_len = BUFFER_SIZE_MAX_TLS_RECORD as u16;
-        let header = [
-            CONTENT_TYPE_HANDSHAKE,
-            0x03,
-            0x03,
-            (record_len >> 8) as u8,
-            record_len as u8,
-        ];
-
-        assert_eq!(
-            ProtocolTester::tls_record_total_len(&header).expect("length should parse"),
-            Some(TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_MAX_TLS_RECORD)
-        );
-    }
 
     #[test]
     fn test_server_hello_payload_len_accepts_full_fragment() {

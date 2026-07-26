@@ -1,7 +1,7 @@
 // Signature Algorithm Enumeration
 
 use crate::Result;
-use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_RECORD_HEADER_SIZE};
+use crate::constants::TLS_RECORD_HEADER_SIZE;
 use crate::utils::network::Target;
 use serde::{Deserialize, Serialize};
 
@@ -72,24 +72,6 @@ impl SignatureTester {
         } else {
             addrs.first().copied().into_iter().collect()
         }
-    }
-
-    fn tls_record_total_len(
-        header: &[u8; TLS_RECORD_HEADER_SIZE],
-    ) -> std::io::Result<Option<usize>> {
-        let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-        let total_len = TLS_RECORD_HEADER_SIZE
-            .checked_add(record_len)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "signature record length overflow",
-                )
-            })?;
-        if total_len > BUFFER_SIZE_MAX_WITH_OVERHEAD {
-            return Ok(None);
-        }
-        Ok(Some(total_len))
     }
 
     pub async fn enumerate_signatures(&self) -> Result<SignatureEnumerationResult> {
@@ -189,7 +171,7 @@ impl SignatureTester {
                         return Ok::<Option<Vec<u8>>, std::io::Error>(None);
                     }
 
-                    let Some(total_len) = Self::tls_record_total_len(&header)? else {
+                    let Some(total_len) = crate::protocols::tls_record::total_len(&header)? else {
                         return Ok::<Option<Vec<u8>>, std::io::Error>(None);
                     };
                     let mut response = vec![0u8; total_len];
@@ -300,26 +282,6 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-
-    #[test]
-    fn test_signature_record_total_len_rejects_oversized_record() {
-        let max_record_len = crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD
-            - crate::constants::TLS_RECORD_HEADER_SIZE;
-        let allowed = max_record_len as u16;
-        let rejected = (max_record_len + 1) as u16;
-
-        let allowed_header = [0x16, 0x03, 0x03, (allowed >> 8) as u8, allowed as u8];
-        assert_eq!(
-            SignatureTester::tls_record_total_len(&allowed_header).expect("length should parse"),
-            Some(crate::constants::BUFFER_SIZE_MAX_WITH_OVERHEAD)
-        );
-
-        let rejected_header = [0x16, 0x03, 0x03, (rejected >> 8) as u8, rejected as u8];
-        assert_eq!(
-            SignatureTester::tls_record_total_len(&rejected_header).expect("length should parse"),
-            None
-        );
-    }
 
     #[tokio::test]
     async fn test_signature_enumeration_success_sets_supported() {
