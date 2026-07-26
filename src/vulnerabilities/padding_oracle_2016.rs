@@ -27,6 +27,16 @@ pub(super) enum CbcSupportStatus {
     Inconclusive,
 }
 
+impl CbcSupportStatus {
+    fn merge(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::Supported, _) | (_, Self::Supported) => Self::Supported,
+            (Self::Inconclusive, _) | (_, Self::Inconclusive) => Self::Inconclusive,
+            _ => Self::NotSupported,
+        }
+    }
+}
+
 fn classify_cbc_handshake_error(
     error: openssl::ssl::HandshakeError<std::net::TcpStream>,
 ) -> CbcSupportStatus {
@@ -130,18 +140,6 @@ impl<'a> PaddingOracle2016Tester<'a> {
         }
     }
 
-    fn merge_cbc_status(best: CbcSupportStatus, next: CbcSupportStatus) -> CbcSupportStatus {
-        match (best, next) {
-            (CbcSupportStatus::Supported, _) | (_, CbcSupportStatus::Supported) => {
-                CbcSupportStatus::Supported
-            }
-            (CbcSupportStatus::Inconclusive, _) | (_, CbcSupportStatus::Inconclusive) => {
-                CbcSupportStatus::Inconclusive
-            }
-            _ => CbcSupportStatus::NotSupported,
-        }
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -187,7 +185,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
     async fn check_aes_cbc_support(&self) -> Result<CbcSupportStatus> {
         let mut best = CbcSupportStatus::NotSupported;
         for addr in self.probe_addrs()? {
-            best = Self::merge_cbc_status(best, self.check_aes_cbc_support_addr(addr).await?);
+            best = best.merge(self.check_aes_cbc_support_addr(addr).await?);
             if best == CbcSupportStatus::Supported {
                 break;
             }
@@ -391,17 +389,11 @@ mod tests {
     #[test]
     fn test_padding_oracle_merge_preserves_inconclusive_status() {
         assert_eq!(
-            PaddingOracle2016Tester::merge_cbc_status(
-                CbcSupportStatus::NotSupported,
-                CbcSupportStatus::Inconclusive,
-            ),
+            CbcSupportStatus::NotSupported.merge(CbcSupportStatus::Inconclusive),
             CbcSupportStatus::Inconclusive
         );
         assert_eq!(
-            PaddingOracle2016Tester::merge_cbc_status(
-                CbcSupportStatus::Inconclusive,
-                CbcSupportStatus::Supported,
-            ),
+            CbcSupportStatus::Inconclusive.merge(CbcSupportStatus::Supported),
             CbcSupportStatus::Supported
         );
     }
