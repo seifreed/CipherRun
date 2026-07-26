@@ -366,35 +366,24 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[test]
-    fn test_classify_grease_response_rejects_malformed_alert_length() {
-        let response = [0x15, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46];
-        match classify_grease_response(&response) {
-            GreaseTestOutcome::Inconclusive(reason) => {
-                assert!(reason.contains("Malformed TLS alert record length"));
+    fn test_classify_grease_response_rejects_malformed_inputs() {
+        for (response, expected) in [
+            (
+                vec![0x15, 0x03, 0x03, 0x00, 0x03, 0x02, 0x46],
+                "Malformed TLS alert record length",
+            ),
+            (
+                vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00],
+                "record length does not match buffer length",
+            ),
+            (vec![0x16, 0x03, 0x03, 0x00, 0x01, 0x02], "ServerHello"),
+        ] {
+            match classify_grease_response(&response) {
+                GreaseTestOutcome::Inconclusive(reason) => {
+                    assert!(reason.contains(expected));
+                }
+                _ => panic!("expected inconclusive"),
             }
-            _ => panic!("expected inconclusive"),
-        }
-    }
-
-    #[test]
-    fn test_classify_grease_response_rejects_trailing_bytes() {
-        let response = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46, 0x00];
-        match classify_grease_response(&response) {
-            GreaseTestOutcome::Inconclusive(reason) => {
-                assert!(reason.contains("record length does not match buffer length"));
-            }
-            _ => panic!("expected inconclusive"),
-        }
-    }
-
-    #[test]
-    fn test_classify_grease_response_rejects_truncated_serverhello() {
-        let response = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
-        match classify_grease_response(&response) {
-            GreaseTestOutcome::Inconclusive(reason) => {
-                assert!(reason.contains("ServerHello"));
-            }
-            _ => panic!("expected inconclusive"),
         }
     }
 
