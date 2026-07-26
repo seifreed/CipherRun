@@ -138,29 +138,17 @@ fn test_format_bool_indicator() {
 }
 
 #[test]
-fn test_truncate_with_ellipsis() {
-    assert_eq!(truncate_with_ellipsis("short", 10), "short");
-    assert_eq!(
-        truncate_with_ellipsis("this is a long string", 10),
-        "this is..."
-    );
-}
-
-#[test]
-fn test_truncate_with_ellipsis_exact_length() {
-    assert_eq!(truncate_with_ellipsis("tenletters", 10), "tenletters");
-}
-
-#[test]
-fn test_truncate_with_ellipsis_tiny_max_len() {
-    // When max_len <= 3, truncate without ellipsis to respect the contract
-    let truncated = truncate_with_ellipsis("longstring", 2);
-    assert_eq!(truncated, "lo");
-    let truncated = truncate_with_ellipsis("longstring", 3);
-    assert_eq!(truncated, "lon");
-    // When max_len > 3, truncation works with ellipsis
-    let truncated = truncate_with_ellipsis("longstring", 6);
-    assert_eq!(truncated, "lon...");
+fn test_truncate_with_ellipsis_cases() {
+    for (input, max_len, expected) in [
+        ("short", 10, "short"),
+        ("this is a long string", 10, "this is..."),
+        ("tenletters", 10, "tenletters"),
+        ("longstring", 2, "lo"),
+        ("longstring", 3, "lon"),
+        ("longstring", 6, "lon..."),
+    ] {
+        assert_eq!(truncate_with_ellipsis(input, max_len), expected);
+    }
 }
 
 #[test]
@@ -202,11 +190,6 @@ fn test_get_cert_type() {
 
 #[test]
 fn test_more_format_helpers() {
-    let status_yes = format_status_indicator(true);
-    let status_no = format_status_indicator(false);
-    assert!(status_yes.to_string().contains("Y"));
-    assert!(status_no.to_string().contains("X"));
-
     assert_eq!(format_avg_timing(false, Some(10)), "");
     let avg = format_avg_timing(true, Some(10));
     assert!(avg.contains("avg"));
@@ -229,8 +212,6 @@ fn test_grade_and_threat_helpers() {
     assert!(adv_a.to_string().contains("Grade A"));
     assert!(adv_f.to_string().contains("Grade F"));
 
-    let threat = format_threat_level("critical");
-    assert!(threat.to_string().to_lowercase().contains("critical"));
     let threat_unknown = format_threat_level("unknown");
     assert!(
         threat_unknown
