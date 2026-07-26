@@ -227,6 +227,15 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .unwrap()
+    }
+
     async fn spawn_heartbeat_server(response_size: usize) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -404,12 +413,7 @@ mod tests {
     #[tokio::test]
     async fn test_heartbleed_unexpected_response_is_inconclusive() {
         let port = spawn_heartbeat_alert_server().await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
 
         let result = tester
@@ -443,12 +447,7 @@ mod tests {
             let _ = timeout(Duration::from_millis(500), socket.read(&mut buffer)).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester {
             target: &target,
             sni_hostname: None,
@@ -481,12 +480,7 @@ mod tests {
             let _ = timeout(Duration::from_millis(500), socket.read(&mut buffer)).await;
         });
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester {
             target: &target,
             sni_hostname: None,
@@ -687,12 +681,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_malicious_heartbeat_detects_leak() {
         let port = spawn_heartbeat_server(256).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
         let addr = target
             .socket_addrs()
@@ -708,12 +697,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_malicious_heartbeat_reads_split_record() {
         let port = spawn_split_heartbeat_server(256, 12).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
         let addr = target
             .socket_addrs()
@@ -735,12 +719,7 @@ mod tests {
         // but we use 0 bytes to simulate a server that closes the connection immediately
         // or returns an error without leaking memory
         let port = spawn_heartbeat_server(0).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap();
+        let target = localhost_target(port);
         let tester = HeartbleedTester::new(&target);
         let addr = target
             .socket_addrs()
