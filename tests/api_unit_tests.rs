@@ -8,8 +8,26 @@
 //! requiring the full router. These tests can run even if there are
 //! compilation errors in other parts of the codebase.
 
-use cipherrun::api::{ApiConfig, Permission};
+use cipherrun::api::{ApiConfig, Permission, models::request::ScanOptions};
 use std::collections::HashMap;
+
+fn assert_scan_options(
+    options: &ScanOptions,
+    expected: (bool, bool, bool, bool, bool, bool, bool),
+) {
+    assert_eq!(
+        (
+            options.test_protocols,
+            options.test_ciphers,
+            options.test_vulnerabilities,
+            options.analyze_certificates,
+            options.test_http_headers,
+            options.client_simulation,
+            options.full_scan,
+        ),
+        expected
+    );
+}
 
 // ============================================================================
 // Configuration Tests
@@ -225,50 +243,24 @@ fn test_api_error_response_with_details() {
 
 #[test]
 fn test_scan_options_default() {
-    use cipherrun::api::models::request::ScanOptions;
-
     let options = ScanOptions::default();
-    assert!(!options.test_protocols);
-    assert!(!options.test_ciphers);
-    assert!(!options.test_vulnerabilities);
-    assert!(!options.analyze_certificates);
-    assert!(!options.test_http_headers);
-    assert!(!options.client_simulation);
-    assert!(!options.full_scan);
+    assert_scan_options(&options, (false, false, false, false, false, false, false));
 }
 
 #[test]
 fn test_scan_options_quick() {
-    use cipherrun::api::models::request::ScanOptions;
-
     let options = ScanOptions::quick();
-    assert!(options.test_protocols);
-    assert!(!options.test_ciphers);
-    assert!(!options.test_vulnerabilities);
-    assert!(options.analyze_certificates);
-    assert!(!options.test_http_headers);
-    assert!(!options.client_simulation);
-    assert!(!options.full_scan);
+    assert_scan_options(&options, (true, false, false, true, false, false, false));
 }
 
 #[test]
 fn test_scan_options_full() {
-    use cipherrun::api::models::request::ScanOptions;
-
     let options = ScanOptions::full();
-    assert!(options.test_protocols);
-    assert!(options.test_ciphers);
-    assert!(options.test_vulnerabilities);
-    assert!(options.analyze_certificates);
-    assert!(options.test_http_headers);
-    assert!(options.client_simulation);
-    assert!(options.full_scan);
+    assert_scan_options(&options, (true, true, true, true, true, true, true));
 }
 
 #[test]
 fn test_scan_options_custom() {
-    use cipherrun::api::models::request::ScanOptions;
-
     let options = ScanOptions {
         test_protocols: true,
         test_ciphers: true,
@@ -284,13 +276,7 @@ fn test_scan_options_custom() {
         ip: None,
     };
 
-    assert!(options.test_protocols);
-    assert!(options.test_ciphers);
-    assert!(!options.test_vulnerabilities);
-    assert!(options.analyze_certificates);
-    assert!(!options.test_http_headers);
-    assert!(!options.client_simulation);
-    assert!(!options.full_scan);
+    assert_scan_options(&options, (true, true, false, true, false, false, false));
 }
 
 // ============================================================================
