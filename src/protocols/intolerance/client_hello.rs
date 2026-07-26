@@ -30,7 +30,10 @@ impl IntoleranceTester {
         self.add_ec_point_formats_extension(&mut extensions);
         self.add_signature_algorithms_extension(&mut extensions)?;
 
-        buf.put_u16(Self::u16_len(extensions.len(), "extensions")?);
+        buf.put_u16(crate::protocols::tls_vector::u16_len(
+            extensions.len(),
+            "extensions",
+        )?);
         buf.put_slice(&extensions);
         self.finalize_client_hello(buf)
     }
@@ -61,10 +64,16 @@ impl IntoleranceTester {
         };
 
         extensions.put_u16(0x0015);
-        extensions.put_u16(Self::u16_len(padding_needed, "padding extension")?);
+        extensions.put_u16(crate::protocols::tls_vector::u16_len(
+            padding_needed,
+            "padding extension",
+        )?);
         extensions.put_slice(&vec![0u8; padding_needed]);
 
-        buf.put_u16(Self::u16_len(extensions.len(), "extensions")?);
+        buf.put_u16(crate::protocols::tls_vector::u16_len(
+            extensions.len(),
+            "extensions",
+        )?);
         buf.put_slice(&extensions);
         self.finalize_client_hello(buf)
     }
@@ -76,7 +85,10 @@ impl IntoleranceTester {
         let mut extensions = BytesMut::new();
         self.add_sni_extension(&mut extensions, "invalid.nonexistent.example.com")?;
 
-        buf.put_u16(Self::u16_len(extensions.len(), "extensions")?);
+        buf.put_u16(crate::protocols::tls_vector::u16_len(
+            extensions.len(),
+            "extensions",
+        )?);
         buf.put_slice(&extensions);
         self.finalize_client_hello(buf)
     }
@@ -103,7 +115,10 @@ impl IntoleranceTester {
         buf.put_slice(&[0u8; 28]);
         buf.put_u8(0);
 
-        buf.put_u16(Self::u16_byte_len(ciphers.len(), "cipher suites")?);
+        buf.put_u16(crate::protocols::tls_vector::u16_byte_len(
+            ciphers.len(),
+            "cipher suites",
+        )?);
         for cipher in ciphers {
             buf.put_u16(cipher);
         }
@@ -122,11 +137,16 @@ impl IntoleranceTester {
         let hs_length = result.len() - hs_length_pos - 3;
 
         if let Some(len_bytes) = result.get_mut(length_pos..length_pos + 2) {
-            len_bytes.copy_from_slice(&Self::u16_len(total_length, "TLS record")?.to_be_bytes());
+            len_bytes.copy_from_slice(
+                &crate::protocols::tls_vector::u16_len(total_length, "TLS record")?.to_be_bytes(),
+            );
         }
 
         if let Some(len_bytes) = result.get_mut(hs_length_pos..hs_length_pos + 3) {
-            len_bytes.copy_from_slice(&Self::u24_len(hs_length, "handshake")?);
+            len_bytes.copy_from_slice(&crate::protocols::tls_vector::u24_len(
+                hs_length,
+                "handshake",
+            )?);
         }
 
         Ok(result)
@@ -135,7 +155,7 @@ impl IntoleranceTester {
     pub(super) fn add_sni_extension(&self, buf: &mut BytesMut, hostname: &str) -> Result<()> {
         buf.put_u16(EXTENSION_SERVER_NAME);
 
-        let hostname_len = Self::u16_len(hostname.len(), "SNI hostname")?;
+        let hostname_len = crate::protocols::tls_vector::u16_len(hostname.len(), "SNI hostname")?;
         let list_len = hostname_len
             .checked_add(3)
             .ok_or_else(|| TlsError::Other("SNI hostname exceeds maximum length".to_string()))?;
@@ -154,7 +174,8 @@ impl IntoleranceTester {
     pub(super) fn add_supported_groups_extension(&self, buf: &mut BytesMut) -> Result<()> {
         buf.put_u16(EXTENSION_SUPPORTED_GROUPS);
         let curves = vec![0x0017, 0x0018, 0x0019];
-        let curves_len = Self::u16_byte_len(curves.len(), "supported groups")?;
+        let curves_len =
+            crate::protocols::tls_vector::u16_byte_len(curves.len(), "supported groups")?;
         buf.put_u16(curves_len.checked_add(2).ok_or_else(|| {
             TlsError::Other("supported groups extension exceeds maximum length".to_string())
         })?);
@@ -182,7 +203,8 @@ impl IntoleranceTester {
             (0x05, 0x03),
         ];
 
-        let algorithms_len = Self::u16_byte_len(algorithms.len(), "signature algorithms")?;
+        let algorithms_len =
+            crate::protocols::tls_vector::u16_byte_len(algorithms.len(), "signature algorithms")?;
         buf.put_u16(algorithms_len.checked_add(2).ok_or_else(|| {
             TlsError::Other("signature algorithms extension exceeds maximum length".to_string())
         })?);
@@ -192,26 +214,5 @@ impl IntoleranceTester {
             buf.put_u8(sig);
         }
         Ok(())
-    }
-
-    fn u16_len(len: usize, context: &str) -> Result<u16> {
-        u16::try_from(len).map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))
-    }
-
-    fn u16_byte_len(items: usize, context: &str) -> Result<u16> {
-        let bytes = items
-            .checked_mul(2)
-            .ok_or_else(|| TlsError::Other(format!("{context} exceeds maximum length")))?;
-        Self::u16_len(bytes, context)
-    }
-
-    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-        let len = u32::try_from(len)
-            .map_err(|_| TlsError::Other(format!("{context} exceeds maximum length")))?;
-        if len > 0x00ff_ffff {
-            return Err(TlsError::Other(format!("{context} exceeds maximum length")));
-        }
-        let bytes = len.to_be_bytes();
-        Ok([bytes[1], bytes[2], bytes[3]])
     }
 }

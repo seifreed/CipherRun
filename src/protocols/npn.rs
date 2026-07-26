@@ -177,39 +177,29 @@ impl NpnTester {
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
         if let Some(len_bytes) = hello.get_mut(ext_pos..ext_pos + 2) {
-            len_bytes.copy_from_slice(&Self::u16_len(ext_len, "NPN extensions")?.to_be_bytes());
+            len_bytes.copy_from_slice(
+                &crate::protocols::tls_vector::u16_len(ext_len, "NPN extensions")?.to_be_bytes(),
+            );
         }
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
         if let Some(len_bytes) = hello.get_mut(hs_len_pos..hs_len_pos + 3) {
-            len_bytes.copy_from_slice(&Self::u24_len(hs_len, "NPN handshake")?);
+            len_bytes.copy_from_slice(&crate::protocols::tls_vector::u24_len(
+                hs_len,
+                "NPN handshake",
+            )?);
         }
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
         if let Some(len_bytes) = hello.get_mut(len_pos..len_pos + 2) {
-            len_bytes.copy_from_slice(&Self::u16_len(rec_len, "NPN record")?.to_be_bytes());
+            len_bytes.copy_from_slice(
+                &crate::protocols::tls_vector::u16_len(rec_len, "NPN record")?.to_be_bytes(),
+            );
         }
 
         Ok(hello)
-    }
-
-    fn u16_len(len: usize, context: &str) -> Result<u16> {
-        u16::try_from(len)
-            .map_err(|_| crate::TlsError::Other(format!("{context} exceeds maximum length")))
-    }
-
-    fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
-        let len = u32::try_from(len)
-            .map_err(|_| crate::TlsError::Other(format!("{context} exceeds maximum length")))?;
-        if len > 0x00ff_ffff {
-            return Err(crate::TlsError::Other(format!(
-                "{context} exceeds maximum length"
-            )));
-        }
-        let bytes = len.to_be_bytes();
-        Ok([bytes[1], bytes[2], bytes[3]])
     }
 }
 
