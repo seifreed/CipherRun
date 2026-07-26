@@ -131,9 +131,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compliance_engine_evaluation() {
-        let framework = ComplianceFramework {
+    fn base_rule(rule_type: &str) -> Rule {
+        Rule {
+            rule_type: rule_type.to_string(),
+            allowed: vec![],
+            denied: vec![],
+            allowed_patterns: vec![],
+            denied_patterns: vec![],
+            preferred_patterns: vec![],
+            min_rsa_bits: None,
+            min_ecc_bits: None,
+            required: None,
+            require_valid_chain: None,
+            require_unexpired: None,
+            require_hostname_match: None,
+            require_revocation_check: None,
+            max_days_until_expiration: None,
+            custom_params: HashMap::new(),
+        }
+    }
+
+    fn test_framework(requirement_id: &str, rules: Vec<Rule>) -> ComplianceFramework {
+        ComplianceFramework {
             id: "test".to_string(),
             name: "Test Framework".to_string(),
             version: "1.0".to_string(),
@@ -141,31 +160,26 @@ mod tests {
             organization: "Test Org".to_string(),
             effective_date: None,
             requirements: vec![Requirement {
-                id: "TEST-1".to_string(),
+                id: requirement_id.to_string(),
                 name: "No SSLv2".to_string(),
                 description: "SSLv2 must not be enabled".to_string(),
                 category: "Protocol Security".to_string(),
                 severity: Severity::Critical,
                 remediation: "Disable SSLv2".to_string(),
-                rules: vec![Rule {
-                    rule_type: "ProtocolVersion".to_string(),
-                    allowed: vec![],
-                    denied: vec!["SSLv2".to_string()],
-                    allowed_patterns: vec![],
-                    denied_patterns: vec![],
-                    preferred_patterns: vec![],
-                    min_rsa_bits: None,
-                    min_ecc_bits: None,
-                    required: None,
-                    require_valid_chain: None,
-                    require_unexpired: None,
-                    require_hostname_match: None,
-                    require_revocation_check: None,
-                    max_days_until_expiration: None,
-                    custom_params: HashMap::new(),
-                }],
+                rules,
             }],
-        };
+        }
+    }
+
+    #[test]
+    fn test_compliance_engine_evaluation() {
+        let framework = test_framework(
+            "TEST-1",
+            vec![Rule {
+                denied: vec!["SSLv2".to_string()],
+                ..base_rule("ProtocolVersion")
+            }],
+        );
 
         let engine = ComplianceEngine::new(framework);
 
@@ -192,39 +206,13 @@ mod tests {
 
     #[test]
     fn test_compliance_engine_pass() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![Requirement {
-                id: "TEST-1".to_string(),
-                name: "No SSLv2".to_string(),
-                description: "SSLv2 must not be enabled".to_string(),
-                category: "Protocol Security".to_string(),
-                severity: Severity::Critical,
-                remediation: "Disable SSLv2".to_string(),
-                rules: vec![Rule {
-                    rule_type: "ProtocolVersion".to_string(),
-                    allowed: vec![],
-                    denied: vec!["SSLv2".to_string()],
-                    allowed_patterns: vec![],
-                    denied_patterns: vec![],
-                    preferred_patterns: vec![],
-                    min_rsa_bits: None,
-                    min_ecc_bits: None,
-                    required: None,
-                    require_valid_chain: None,
-                    require_unexpired: None,
-                    require_hostname_match: None,
-                    require_revocation_check: None,
-                    max_days_until_expiration: None,
-                    custom_params: HashMap::new(),
-                }],
+        let framework = test_framework(
+            "TEST-1",
+            vec![Rule {
+                denied: vec!["SSLv2".to_string()],
+                ..base_rule("ProtocolVersion")
             }],
-        };
+        );
 
         let engine = ComplianceEngine::new(framework);
 
@@ -248,58 +236,16 @@ mod tests {
 
     #[test]
     fn test_unknown_rule_type_fails_evaluation() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![Requirement {
-                id: "MIXED-1".to_string(),
-                name: "Mixed rule types".to_string(),
-                description: "One unknown, one valid".to_string(),
-                category: "Test".to_string(),
-                severity: Severity::Medium,
-                remediation: "n/a".to_string(),
-                rules: vec![
-                    Rule {
-                        rule_type: "TotallyBogusRuleType".to_string(),
-                        allowed: vec![],
-                        denied: vec![],
-                        allowed_patterns: vec![],
-                        denied_patterns: vec![],
-                        preferred_patterns: vec![],
-                        min_rsa_bits: None,
-                        min_ecc_bits: None,
-                        required: None,
-                        require_valid_chain: None,
-                        require_unexpired: None,
-                        require_hostname_match: None,
-                        require_revocation_check: None,
-                        max_days_until_expiration: None,
-                        custom_params: HashMap::new(),
-                    },
-                    Rule {
-                        rule_type: "ProtocolVersion".to_string(),
-                        allowed: vec![],
-                        denied: vec!["SSLv2".to_string()],
-                        allowed_patterns: vec![],
-                        denied_patterns: vec![],
-                        preferred_patterns: vec![],
-                        min_rsa_bits: None,
-                        min_ecc_bits: None,
-                        required: None,
-                        require_valid_chain: None,
-                        require_unexpired: None,
-                        require_hostname_match: None,
-                        require_revocation_check: None,
-                        max_days_until_expiration: None,
-                        custom_params: HashMap::new(),
-                    },
-                ],
-            }],
-        };
+        let framework = test_framework(
+            "MIXED-1",
+            vec![
+                base_rule("TotallyBogusRuleType"),
+                Rule {
+                    denied: vec!["SSLv2".to_string()],
+                    ..base_rule("ProtocolVersion")
+                },
+            ],
+        );
 
         let engine = ComplianceEngine::new(framework);
         let results = ScanAssessment {
