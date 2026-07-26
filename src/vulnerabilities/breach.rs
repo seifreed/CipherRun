@@ -426,51 +426,6 @@ mod tests {
     }
 
     #[test]
-    fn test_breach_result_creation() {
-        let result = BreachTestResult {
-            vulnerable: true,
-            compression_enabled: true,
-            dynamic_content: true,
-            sensitive_data_reflection: true,
-            inconclusive: false,
-            details: "Test".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert!(result.compression_enabled);
-        assert!(result.dynamic_content);
-        assert!(result.sensitive_data_reflection);
-    }
-
-    #[test]
-    fn test_breach_not_vulnerable_no_compression() {
-        let result = BreachTestResult {
-            vulnerable: false,
-            compression_enabled: false,
-            dynamic_content: true,
-            sensitive_data_reflection: true,
-            inconclusive: false,
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(!result.vulnerable);
-        // Even with dynamic content and sensitive data, not vulnerable without compression
-    }
-
-    #[test]
-    fn test_breach_partial_vulnerability() {
-        let result = BreachTestResult {
-            vulnerable: false,
-            compression_enabled: true,
-            dynamic_content: false,
-            sensitive_data_reflection: true,
-            inconclusive: false,
-            details: "Partial".to_string(),
-        };
-        // Needs all three conditions for full vulnerability
-        assert!(!result.vulnerable);
-        assert!(result.compression_enabled);
-    }
-
-    #[test]
     fn test_detect_sensitive_patterns_is_case_insensitive() {
         assert!(http_analysis::detect_sensitive_patterns(
             r#"<input NAME="CSRFToken" value="abc">"#
