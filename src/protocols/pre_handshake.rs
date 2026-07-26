@@ -128,11 +128,8 @@ mod tests {
     use tokio::time::sleep;
 
     fn u24_len(len: usize) -> [u8; 3] {
-        [
-            ((len >> 16) & 0xff) as u8,
-            ((len >> 8) & 0xff) as u8,
-            (len & 0xff) as u8,
-        ]
+        crate::protocols::tls_vector::u24_len(len, "test handshake")
+            .expect("test handshake length fits in u24")
     }
 
     fn build_handshake_message(handshake_type: u8, body: &[u8]) -> Vec<u8> {
