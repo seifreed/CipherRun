@@ -382,6 +382,15 @@ mod tests {
     use crate::vulnerabilities::test_support::spawn_dummy_server;
     use std::net::{IpAddr, TcpListener as StdTcpListener};
 
+    fn localhost_target(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_logjam_result_not_vulnerable() {
         let result = LogjamTestResult {
@@ -480,12 +489,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(port);
 
         let tester = LogjamTester::new(target);
         let result = tester.test().await.unwrap();
@@ -501,12 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_logjam_local_cipher_setup_failure_is_inconclusive() {
         let addr = spawn_dummy_server(1).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = LogjamTester::new(target);
         let result = tester.test_cipher("not-a-real-cipher").await.unwrap();
@@ -517,12 +516,7 @@ mod tests {
     #[tokio::test]
     async fn test_logjam_transport_anomaly_is_inconclusive() {
         let addr = spawn_dummy_server(1).await;
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
+        let target = localhost_target(addr.port());
 
         let tester = LogjamTester::new(target);
         let result = tester.test_cipher("DHE-RSA-AES128-SHA").await.unwrap();
