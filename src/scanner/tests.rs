@@ -40,6 +40,10 @@ fn empty_aggregated_result() -> crate::scanner::aggregation::AggregatedScanResul
     }
 }
 
+fn example_target(ips: Vec<std::net::IpAddr>) -> Target {
+    Target::with_ips("example.com".to_string(), 443, ips).expect("test assertion should succeed")
+}
+
 #[test]
 fn test_scan_results_json() {
     let results = ScanResults {
@@ -991,8 +995,7 @@ fn test_build_conservative_multi_ip_result() {
     };
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip]),
         per_ip_results,
         total_ips: 1,
         successful_scans: 1,
@@ -1049,8 +1052,7 @@ fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified(
     let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip]),
         per_ip_results,
         total_ips: 1,
         successful_scans: 1,
@@ -1105,8 +1107,7 @@ fn test_build_conservative_multi_ip_result_respects_disable_rating() {
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip]),
         per_ip_results,
         total_ips: 1,
         successful_scans: 1,
@@ -1182,8 +1183,7 @@ fn test_build_conservative_multi_ip_result_aggregates_probe_metadata() {
     let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip1, ip2]),
         per_ip_results,
         total_ips: 2,
         successful_scans: 2,
@@ -1260,8 +1260,7 @@ fn test_build_conservative_multi_ip_result_saturates_probe_attempts() {
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip1, ip2]),
         per_ip_results,
         total_ips: 2,
         successful_scans: 2,
@@ -1336,8 +1335,7 @@ fn test_build_conservative_multi_ip_result_keeps_success_with_failed_ips() {
     let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip1, ip2]),
         per_ip_results,
         total_ips: 2,
         successful_scans: 1,
@@ -1424,8 +1422,7 @@ fn test_build_conservative_multi_ip_result_uses_stable_probe_fallback() {
     let aggregated = empty_aggregated_result();
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip_high, ip_low])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip_high, ip_low]),
         per_ip_results,
         total_ips: 2,
         successful_scans: 2,
@@ -1478,8 +1475,7 @@ fn test_build_conservative_multi_ip_result_partial_success_without_probe_attempt
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip]),
         per_ip_results,
         total_ips: 1,
         successful_scans: 1,
@@ -1549,8 +1545,7 @@ fn test_build_conservative_multi_ip_result_partial_success_preserves_unknown_pro
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip1, ip2])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip1, ip2]),
         per_ip_results,
         total_ips: 2,
         successful_scans: 1,
@@ -1690,8 +1685,7 @@ fn test_build_conservative_multi_ip_result_clears_unaggregated_residual_sections
     );
 
     let report = crate::scanner::multi_ip::MultiIpScanReport {
-        target: Target::with_ips("example.com".to_string(), 443, vec![ip])
-            .expect("test assertion should succeed"),
+        target: example_target(vec![ip]),
         per_ip_results,
         total_ips: 1,
         successful_scans: 1,
