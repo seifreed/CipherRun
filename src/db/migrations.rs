@@ -308,15 +308,18 @@ mod tests {
     use super::*;
     use crate::db::config::DatabaseConfig;
     use sqlx::Row;
-    use std::path::PathBuf;
+
+    async fn sqlite_pool() -> DatabasePool {
+        let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
+        DatabasePool::new(&config)
+            .await
+            .expect("test assertion should succeed")
+    }
 
     #[tokio::test]
     async fn test_migrations_with_sqlite() {
         // Use in-memory database for testing
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let pool = sqlite_pool().await;
 
         // Note: This test will only work if migrations directory exists
         // In a real scenario, you would have proper test fixtures
@@ -326,10 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revert_last_sqlite_migration_drops_revocation_json() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let pool = sqlite_pool().await;
 
         run_migrations(&pool)
             .await
@@ -361,10 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revert_last_sqlite_migration_preserves_child_rows() {
-        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
-            .await
-            .expect("test assertion should succeed");
+        let pool = sqlite_pool().await;
 
         run_migrations(&pool)
             .await
