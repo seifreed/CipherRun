@@ -1,25 +1,25 @@
 // JSON Output Module
 
-use crate::Result;
-use crate::scanner::ScanResults;
 use crate::scanner::multi_ip::MultiIpScanReport;
+use crate::scanner::ScanResults;
+use crate::Result;
+
+fn serialize_json<T: serde::Serialize + ?Sized>(value: &T, pretty: bool) -> Result<String> {
+    if pretty {
+        Ok(serde_json::to_string_pretty(value)?)
+    } else {
+        Ok(serde_json::to_string(value)?)
+    }
+}
 
 /// Generate JSON output from scan results
 pub fn generate_json(results: &ScanResults, pretty: bool) -> Result<String> {
-    if pretty {
-        Ok(serde_json::to_string_pretty(results)?)
-    } else {
-        Ok(serde_json::to_string(results)?)
-    }
+    serialize_json(results, pretty)
 }
 
 /// Generate JSON output from multi-IP scan report
 pub fn generate_multi_ip_json(report: &MultiIpScanReport, pretty: bool) -> Result<String> {
-    if pretty {
-        Ok(serde_json::to_string_pretty(report)?)
-    } else {
-        Ok(serde_json::to_string(report)?)
-    }
+    serialize_json(report, pretty)
 }
 
 /// Write JSON to file
@@ -85,6 +85,15 @@ mod tests {
             vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
         )
         .expect("test assertion should succeed")
+    }
+
+    fn successful_ip_scan(ip: IpAddr, scan_duration_ms: u64) -> SingleIpScanResult {
+        SingleIpScanResult {
+            ip,
+            scan_result: ScanResults::default(),
+            scan_duration_ms,
+            error: None,
+        }
     }
 
     #[test]
@@ -172,15 +181,7 @@ mod tests {
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let mut per_ip_results = HashMap::new();
-        per_ip_results.insert(
-            ip,
-            SingleIpScanResult {
-                ip,
-                scan_result: ScanResults::default(),
-                scan_duration_ms: 10,
-                error: None,
-            },
-        );
+        per_ip_results.insert(ip, successful_ip_scan(ip, 10));
 
         let report = MultiIpScanReport {
             target,
@@ -211,24 +212,8 @@ mod tests {
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
-            per_ip_results.insert(
-                ip1,
-                SingleIpScanResult {
-                    ip: ip1,
-                    scan_result: ScanResults::default(),
-                    scan_duration_ms: 10,
-                    error: None,
-                },
-            );
-            per_ip_results.insert(
-                ip2,
-                SingleIpScanResult {
-                    ip: ip2,
-                    scan_result: ScanResults::default(),
-                    scan_duration_ms: 20,
-                    error: None,
-                },
-            );
+            per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
+            per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
 
             let mut fingerprints = HashMap::new();
             fingerprints.insert(ip1, "aaa111".to_string());
@@ -258,24 +243,8 @@ mod tests {
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
-            per_ip_results.insert(
-                ip2,
-                SingleIpScanResult {
-                    ip: ip2,
-                    scan_result: ScanResults::default(),
-                    scan_duration_ms: 20,
-                    error: None,
-                },
-            );
-            per_ip_results.insert(
-                ip1,
-                SingleIpScanResult {
-                    ip: ip1,
-                    scan_result: ScanResults::default(),
-                    scan_duration_ms: 10,
-                    error: None,
-                },
-            );
+            per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
+            per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
 
             let mut fingerprints = HashMap::new();
             fingerprints.insert(ip2, "bbb222".to_string());
@@ -314,43 +283,11 @@ mod tests {
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
             if reverse {
-                per_ip_results.insert(
-                    ip2,
-                    SingleIpScanResult {
-                        ip: ip2,
-                        scan_result: ScanResults::default(),
-                        scan_duration_ms: 20,
-                        error: None,
-                    },
-                );
-                per_ip_results.insert(
-                    ip1,
-                    SingleIpScanResult {
-                        ip: ip1,
-                        scan_result: ScanResults::default(),
-                        scan_duration_ms: 10,
-                        error: None,
-                    },
-                );
+                per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
+                per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
             } else {
-                per_ip_results.insert(
-                    ip1,
-                    SingleIpScanResult {
-                        ip: ip1,
-                        scan_result: ScanResults::default(),
-                        scan_duration_ms: 10,
-                        error: None,
-                    },
-                );
-                per_ip_results.insert(
-                    ip2,
-                    SingleIpScanResult {
-                        ip: ip2,
-                        scan_result: ScanResults::default(),
-                        scan_duration_ms: 20,
-                        error: None,
-                    },
-                );
+                per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
+                per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
             }
 
             let mut fingerprints = HashMap::new();
