@@ -226,6 +226,11 @@ mod tests {
         .expect("test assertion should succeed")
     }
 
+    fn target_for_addr(addr: std::net::SocketAddr) -> Target {
+        Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build")
+    }
+
     fn heartbeat_server_hello_record() -> Vec<u8> {
         let mut hello = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x03,
@@ -442,8 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_sslv2_protocol_success_with_dummy_server() {
         let addr = spawn_sslv2_dummy_server().await;
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(200))
             .with_read_timeout(Duration::from_millis(200));
@@ -464,8 +468,7 @@ mod tests {
         // would have answered, so a close can never mask genuine support. This
         // mirrors the legacy-TLS probe and keeps the result stable across runs.
         let addr = spawn_close_server().await;
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(200))
             .with_read_timeout(Duration::from_millis(200));
@@ -546,8 +549,7 @@ mod tests {
     #[tokio::test]
     async fn test_detect_heartbeat_extension_returns_none_on_close() {
         let addr = spawn_close_server().await;
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -582,8 +584,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -622,8 +623,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -666,8 +666,7 @@ mod tests {
             }
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
             .with_read_timeout(Duration::from_millis(100));
@@ -690,8 +689,7 @@ mod tests {
             let _ = listener.accept().await;
         });
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target).with_connect_timeout(Duration::from_millis(100));
 
         let accepts_tcp = tester
@@ -738,8 +736,7 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
         drop(listener);
 
-        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
-            .expect("target should build");
+        let target = target_for_addr(addr);
         let tester = ProtocolTester::new(target).with_connect_timeout(Duration::from_millis(100));
 
         let accepts_tcp = tester
