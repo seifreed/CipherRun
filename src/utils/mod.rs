@@ -22,6 +22,7 @@ pub mod retry;
 pub mod reverse_ptr;
 pub mod sneaky;
 pub mod sni_generator;
+pub(crate) mod target_addrs;
 pub mod timing;
 
 // MEDIUM PRIORITY Features (11-15)

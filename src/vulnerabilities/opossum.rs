@@ -65,20 +65,7 @@ impl OpossumTester {
     }
 
     fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
-        let addrs = self.target.socket_addrs();
-        if self.test_all_ips {
-            if addrs.is_empty() {
-                Err(crate::TlsError::NoSocketAddresses)
-            } else {
-                Ok(addrs)
-            }
-        } else {
-            addrs
-                .first()
-                .copied()
-                .map(|addr| vec![addr])
-                .ok_or(crate::TlsError::NoSocketAddresses)
-        }
+        crate::utils::target_addrs::socket_addrs_for_probe(&self.target, self.test_all_ips)
     }
 
     /// Connect, upgrading via STARTTLS first for plaintext-first services.

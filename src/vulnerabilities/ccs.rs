@@ -60,21 +60,7 @@ impl CcsInjectionTester {
     }
 
     fn probe_addrs(&self) -> Result<Vec<std::net::SocketAddr>> {
-        let addrs: Vec<_> = if self.test_all_ips {
-            self.target.socket_addrs()
-        } else {
-            self.target
-                .socket_addrs()
-                .first()
-                .copied()
-                .into_iter()
-                .collect()
-        };
-        if addrs.is_empty() {
-            Err(crate::TlsError::NoSocketAddresses)
-        } else {
-            Ok(addrs)
-        }
+        crate::utils::target_addrs::socket_addrs_for_probe(&self.target, self.test_all_ips)
     }
 
     /// Test for CCS Injection vulnerability
