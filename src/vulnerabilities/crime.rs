@@ -15,7 +15,11 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
+mod outcome;
 mod server_hello;
+
+use outcome::CompressionProbeStatus;
+pub use outcome::CrimeTestResult;
 
 /// CRIME vulnerability tester
 pub struct CrimeTester<'a> {
@@ -24,13 +28,6 @@ pub struct CrimeTester<'a> {
     starttls_server_mode: bool,
     starttls_hostname: Option<String>,
     test_all_ips: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompressionProbeStatus {
-    Enabled,
-    Disabled,
-    Inconclusive,
 }
 
 #[cfg(test)]
@@ -49,16 +46,6 @@ fn write_u24_at(data: &mut [u8], offset: usize, value: usize) {
             ((value >> 8) & 0xff) as u8,
             (value & 0xff) as u8,
         ]);
-}
-
-impl CompressionProbeStatus {
-    fn is_enabled(self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-
-    fn is_inconclusive(self) -> bool {
-        matches!(self, Self::Inconclusive)
-    }
 }
 
 impl<'a> CrimeTester<'a> {
@@ -108,20 +95,6 @@ impl<'a> CrimeTester<'a> {
         }
     }
 
-    fn merge_probe_status(
-        current: CompressionProbeStatus,
-        next: CompressionProbeStatus,
-    ) -> CompressionProbeStatus {
-        match (current, next) {
-            (CompressionProbeStatus::Enabled, _) | (_, CompressionProbeStatus::Enabled) => {
-                CompressionProbeStatus::Enabled
-            }
-            (CompressionProbeStatus::Inconclusive, _)
-            | (_, CompressionProbeStatus::Inconclusive) => CompressionProbeStatus::Inconclusive,
-            _ => CompressionProbeStatus::Disabled,
-        }
-    }
-
     /// Connect, upgrading via STARTTLS first for plaintext-first services.
     async fn starttls_connect(
         &self,
@@ -147,34 +120,10 @@ impl<'a> CrimeTester<'a> {
         let tls_compression = self.test_tls_compression().await?;
         let spdy_compression = self.test_spdy_compression().await?;
 
-        let tls_compression_enabled = tls_compression.is_enabled();
-        let spdy_compression_enabled = spdy_compression.is_enabled();
-        let vulnerable = tls_compression_enabled || spdy_compression_enabled;
-        let inconclusive = !vulnerable
-            && (tls_compression.is_inconclusive() || spdy_compression.is_inconclusive());
-
-        let details = if vulnerable {
-            let mut parts = Vec::new();
-            if tls_compression_enabled {
-                parts.push("TLS compression enabled");
-            }
-            if spdy_compression_enabled {
-                parts.push("SPDY compression enabled");
-            }
-            format!("Vulnerable to CRIME (CVE-2012-4929): {}", parts.join(", "))
-        } else if inconclusive {
-            "CRIME test inconclusive - unable to determine TLS/SPDY compression status".to_string()
-        } else {
-            "Not vulnerable - TLS/SPDY compression disabled".to_string()
-        };
-
-        Ok(CrimeTestResult {
-            vulnerable,
-            inconclusive,
-            tls_compression_enabled,
-            spdy_compression_enabled,
-            details,
-        })
+        Ok(CrimeTestResult::from_probe_statuses(
+            tls_compression,
+            spdy_compression,
+        ))
     }
 
     /// Test if TLS compression is enabled
@@ -185,7 +134,7 @@ impl<'a> CrimeTester<'a> {
     async fn test_tls_compression(&self) -> Result<CompressionProbeStatus> {
         let mut status = CompressionProbeStatus::Disabled;
         for addr in self.probe_addrs()? {
-            status = Self::merge_probe_status(status, self.test_tls_compression_addr(addr).await?);
+            status = status.merge(self.test_tls_compression_addr(addr).await?);
             if status == CompressionProbeStatus::Enabled {
                 break;
             }
@@ -250,7 +199,7 @@ impl<'a> CrimeTester<'a> {
     async fn test_spdy_compression(&self) -> Result<CompressionProbeStatus> {
         let mut status = CompressionProbeStatus::Disabled;
         for addr in self.probe_addrs()? {
-            status = Self::merge_probe_status(status, self.test_spdy_compression_addr(addr).await?);
+            status = status.merge(self.test_spdy_compression_addr(addr).await?);
             if status == CompressionProbeStatus::Enabled {
                 break;
             }
@@ -362,16 +311,6 @@ impl<'a> CrimeTester<'a> {
     }
 }
 
-/// CRIME test result
-#[derive(Debug, Clone)]
-pub struct CrimeTestResult {
-    pub vulnerable: bool,
-    pub inconclusive: bool,
-    pub tls_compression_enabled: bool,
-    pub spdy_compression_enabled: bool,
-    pub details: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,10 +342,7 @@ mod tests {
     #[test]
     fn test_crime_merge_keeps_inconclusive_over_disabled() {
         assert_eq!(
-            CrimeTester::merge_probe_status(
-                CompressionProbeStatus::Disabled,
-                CompressionProbeStatus::Inconclusive,
-            ),
+            CompressionProbeStatus::Disabled.merge(CompressionProbeStatus::Inconclusive),
             CompressionProbeStatus::Inconclusive
         );
     }
