@@ -7,12 +7,11 @@
 
 use crate::Result;
 use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_HANDSHAKE_TIMEOUT};
-use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+mod client_hello;
 mod read_io;
 mod result;
 
@@ -184,7 +183,7 @@ impl WinshockTester {
         };
 
         // Send normal ClientHello first
-        let client_hello = self.build_client_hello()?;
+        let client_hello = client_hello::tls12_rsa()?;
         if client_hello.is_empty() {
             return Ok(MalformedHandshakeStatus::Inconclusive);
         }
@@ -241,13 +240,6 @@ impl WinshockTester {
             }
             _ => Ok(MalformedHandshakeStatus::Inconclusive),
         }
-    }
-
-    /// Build standard ClientHello using ClientHelloBuilder
-    fn build_client_hello(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
-        builder.for_rsa_key_exchange();
-        builder.build_minimal()
     }
 
     /// Build malformed ClientKeyExchange that triggers Winshock
@@ -314,17 +306,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_builder_structure() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap();
-
-        let tester = WinshockTester::new(target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::tls12_rsa().expect("ClientHello should build");
 
         assert!(hello.len() > 40);
         assert_eq!(hello[0], 0x16); // Handshake record
