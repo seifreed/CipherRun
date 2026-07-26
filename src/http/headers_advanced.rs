@@ -522,12 +522,15 @@ fn directive_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
+    fn hsts_header(name: &str, value: &str) -> HashMap<String, String> {
+        HashMap::from([(name.to_string(), value.to_string())])
+    }
+
     #[test]
     fn test_parse_hsts_full() {
-        let mut headers = HashMap::new();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=31536000; includeSubDomains; preload".to_string(),
+        let headers = hsts_header(
+            "strict-transport-security",
+            "max-age=31536000; includeSubDomains; preload",
         );
 
         let hsts = parse_hsts(&headers);
@@ -542,10 +545,9 @@ mod tests {
     fn test_parse_hsts_accepts_quoted_max_age() {
         // RFC 6797 permits a quoted-string directive value. A quoted max-age must
         // parse and grade like its unquoted equivalent, not be treated as missing.
-        let mut headers = HashMap::new();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=\"31536000\"; includeSubDomains; preload".to_string(),
+        let headers = hsts_header(
+            "strict-transport-security",
+            "max-age=\"31536000\"; includeSubDomains; preload",
         );
 
         let hsts = parse_hsts(&headers);
@@ -557,11 +559,7 @@ mod tests {
     fn test_parse_hsts_max_age_zero_grades_f() {
         // max-age=0 deletes the HSTS policy (RFC 6797 §6.1.1): the host is not
         // protected and must not grade better than one with no HSTS at all.
-        let mut headers = HashMap::new();
-        headers.insert(
-            "strict-transport-security".to_string(),
-            "max-age=0; includeSubDomains".to_string(),
-        );
+        let headers = hsts_header("strict-transport-security", "max-age=0; includeSubDomains");
 
         let hsts = parse_hsts(&headers);
         assert_eq!(hsts.max_age, Some(0));
@@ -574,10 +572,9 @@ mod tests {
 
     #[test]
     fn test_parse_hsts_is_case_insensitive() {
-        let mut headers = HashMap::new();
-        headers.insert(
-            "Strict-Transport-Security".to_string(),
-            "Max-Age=31536000; IncludeSubDomains; Preload".to_string(),
+        let headers = hsts_header(
+            "Strict-Transport-Security",
+            "Max-Age=31536000; IncludeSubDomains; Preload",
         );
 
         let hsts = parse_hsts(&headers);
