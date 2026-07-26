@@ -74,6 +74,64 @@ mod tests {
         result
     }
 
+    async fn negotiate_with_smtp_server(
+        greeting: &'static [u8],
+        ehlo_response: &'static [u8],
+        starttls_response: Option<&'static [u8]>,
+    ) -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to localhost");
+        let addr = listener
+            .local_addr()
+            .expect("test listener should have local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept connection");
+            stream
+                .write_all(greeting)
+                .await
+                .expect("test server should write response");
+
+            let mut buffer = vec![0u8; 256];
+            let _ = stream
+                .read(&mut buffer)
+                .await
+                .expect("test should read EHLO");
+            stream
+                .write_all(ehlo_response)
+                .await
+                .expect("test server should write EHLO response");
+
+            if let Some(response) = starttls_response {
+                let _ = stream
+                    .read(&mut buffer)
+                    .await
+                    .expect("test should read STARTTLS");
+                stream
+                    .write_all(response)
+                    .await
+                    .expect("test server should write STARTTLS response");
+            } else {
+                let _ = stream.read(&mut buffer).await;
+            }
+        });
+
+        let mut client = TcpStream::connect(addr)
+            .await
+            .expect("test client should connect");
+        let result = SmtpNegotiator::new("example.com".to_string())
+            .negotiate_starttls(&mut client)
+            .await;
+        drop(client);
+
+        server.await.expect("test server task should complete");
+        result
+    }
+
     #[test]
     fn test_smtp_negotiator_creation() {
         let negotiator = SmtpNegotiator::new("example.com".to_string());
@@ -104,155 +162,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_smtp_negotiate_starttls_success() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"220 ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-
-            stream
-                .write_all(b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n")
-                .await
-                .expect("test server should write response");
-
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read data");
-            stream
-                .write_all(b"220 Ready to start TLS\r\n")
-                .await
-                .expect("test server should write response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = SmtpNegotiator::new("example.com".to_string());
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        let result = negotiate_with_smtp_server(
+            b"220 ready\r\n",
+            b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n",
+            Some(b"220 Ready to start TLS\r\n"),
+        )
+        .await;
         assert!(result.is_ok());
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_smtp_negotiate_starttls_succeeds_with_multiline_greeting() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            // Multiline 220 banner (RFC 5321 §4.2): continuation lines use a
-            // dash after the code, the final line a space. A single-line read
-            // would leave the trailing lines buffered and break EHLO parsing.
-            stream
-                .write_all(
-                    b"220-mail.example.com ESMTP Postfix\r\n220-banner line\r\n220 ready\r\n",
-                )
-                .await
-                .expect("test server should write greeting");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read EHLO");
-            stream
-                .write_all(b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n")
-                .await
-                .expect("test server should write EHLO response");
-
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read STARTTLS");
-            stream
-                .write_all(b"220 Ready to start TLS\r\n")
-                .await
-                .expect("test server should write STARTTLS response");
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = SmtpNegotiator::new("example.com".to_string());
-        let result = negotiator.negotiate_starttls(&mut client).await;
+        // Multiline 220 banner (RFC 5321 §4.2): continuation lines use a
+        // dash after the code, the final line a space. A single-line read
+        // would leave the trailing lines buffered and break EHLO parsing.
+        let result = negotiate_with_smtp_server(
+            b"220-mail.example.com ESMTP Postfix\r\n220-banner line\r\n220 ready\r\n",
+            b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n",
+            Some(b"220 Ready to start TLS\r\n"),
+        )
+        .await;
         assert!(
             result.is_ok(),
             "multiline 220 greeting must not break STARTTLS detection: {result:?}"
         );
-
-        server.await.expect("test server task should complete");
     }
 
     #[tokio::test]
     async fn test_smtp_does_not_treat_nostarttls_as_starttls_capability() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("test listener should bind to localhost");
-        let addr = listener
-            .local_addr()
-            .expect("test listener should have local addr");
-
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener
-                .accept()
-                .await
-                .expect("test server should accept connection");
-            stream
-                .write_all(b"220 ready\r\n")
-                .await
-                .expect("test server should write response");
-
-            let mut buffer = vec![0u8; 256];
-            let _ = stream
-                .read(&mut buffer)
-                .await
-                .expect("test should read EHLO");
-
-            stream
-                .write_all(b"250-localhost\r\n250-NOSTARTTLS\r\n250 OK\r\n")
-                .await
-                .expect("test server should write capabilities");
-
-            let _ = stream.read(&mut buffer).await;
-        });
-
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("test client should connect");
-        let negotiator = SmtpNegotiator::new("example.com".to_string());
-        let err = negotiator
-            .negotiate_starttls(&mut client)
-            .await
-            .expect_err("NOSTARTTLS must not enable STARTTLS");
+        let err = negotiate_with_smtp_server(
+            b"220 ready\r\n",
+            b"250-localhost\r\n250-NOSTARTTLS\r\n250 OK\r\n",
+            None,
+        )
+        .await
+        .expect_err("NOSTARTTLS must not enable STARTTLS");
         assert!(format!("{err}").contains("does not support STARTTLS"));
-        drop(client);
-
-        server.await.expect("test server task should complete");
     }
 }
