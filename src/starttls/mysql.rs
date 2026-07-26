@@ -8,6 +8,11 @@ use tokio::net::TcpStream;
 
 const MAX_MYSQL_STARTTLS_PACKET_SIZE: u32 = 64 * 1024;
 
+fn packet_header(length: u32, sequence: u8) -> [u8; 4] {
+    let length = length.to_le_bytes();
+    [length[0], length[1], length[2], sequence]
+}
+
 /// MySQL STARTTLS negotiator
 pub struct MysqlNegotiator;
 
@@ -65,8 +70,7 @@ impl MysqlNegotiator {
                 protocol: "MySQL".to_string(),
                 details: format!("Packet too large to send: {} bytes", payload.len()),
             })?;
-        let length = length.to_le_bytes();
-        let header = [length[0], length[1], length[2], sequence];
+        let header = packet_header(length, sequence);
 
         stream.write_all(&header).await?;
         stream.write_all(payload).await?;
@@ -191,6 +195,17 @@ mod tests {
         assert_eq!(negotiator.protocol(), StarttlsProtocol::MYSQL);
     }
 
+    fn minimal_handshake(capabilities: [u8; 2]) -> Vec<u8> {
+        let mut handshake = Vec::new();
+        handshake.push(0x0a); // protocol version 10
+        handshake.extend_from_slice(b"5\0"); // version string "5" + null
+        handshake.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // conn_id
+        handshake.extend_from_slice(&[0x00; 8]); // auth_plugin_data_part_1
+        handshake.push(0x00); // filler
+        handshake.extend_from_slice(&capabilities);
+        handshake
+    }
+
     #[tokio::test]
     async fn test_mysql_packet_roundtrip() {
         use tokio::net::TcpListener;
@@ -207,12 +222,7 @@ mod tests {
 
             let payload = vec![0x01, 0x02, 0x03, 0x04];
             let len = payload.len() as u32;
-            let header = [
-                (len & 0xff) as u8,
-                ((len >> 8) & 0xff) as u8,
-                ((len >> 16) & 0xff) as u8,
-                0x00,
-            ];
+            let header = packet_header(len, 0);
 
             socket.write_all(&header).await.unwrap();
             socket.write_all(&payload).await.unwrap();
@@ -259,12 +269,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let len = MAX_MYSQL_STARTTLS_PACKET_SIZE + 1;
-            let header = [
-                (len & 0xff) as u8,
-                ((len >> 8) & 0xff) as u8,
-                ((len >> 16) & 0xff) as u8,
-                0x00,
-            ];
+            let header = packet_header(len, 0);
             socket.write_all(&header).await.unwrap();
         });
 
@@ -295,21 +300,10 @@ mod tests {
             // Build a minimal valid MySQL Handshake v10 packet:
             // protocol_version(1) + version_string("5\0") + conn_id(4) +
             // auth_data(8) + filler(1) + capability_flags(2, with CLIENT_SSL)
-            let mut handshake = Vec::new();
-            handshake.push(0x0a); // protocol version 10
-            handshake.extend_from_slice(b"5\0"); // version string "5" + null
-            handshake.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // conn_id
-            handshake.extend_from_slice(&[0x00; 8]); // auth_plugin_data_part_1
-            handshake.push(0x00); // filler
-            handshake.extend_from_slice(&[0x00, 0x08]); // capability_flags: 0x0800 (CLIENT_SSL)
+            let handshake = minimal_handshake([0x00, 0x08]);
 
             let len = handshake.len() as u32;
-            let header = [
-                (len & 0xff) as u8,
-                ((len >> 8) & 0xff) as u8,
-                ((len >> 16) & 0xff) as u8,
-                0x00,
-            ];
+            let header = packet_header(len, 0);
             socket.write_all(&header).await.unwrap();
             socket.write_all(&handshake).await.unwrap();
 
@@ -352,21 +346,10 @@ mod tests {
             let (mut socket, _) = listener.accept().await.unwrap();
 
             // Build a minimal valid MySQL Handshake v10 without CLIENT_SSL
-            let mut handshake = Vec::new();
-            handshake.push(0x0a); // protocol version 10
-            handshake.extend_from_slice(b"5\0"); // version string "5" + null
-            handshake.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // conn_id
-            handshake.extend_from_slice(&[0x00; 8]); // auth_plugin_data_part_1
-            handshake.push(0x00); // filler
-            handshake.extend_from_slice(&[0x00, 0x00]); // capability_flags: no SSL
+            let handshake = minimal_handshake([0x00, 0x00]);
 
             let len = handshake.len() as u32;
-            let header = [
-                (len & 0xff) as u8,
-                ((len >> 8) & 0xff) as u8,
-                ((len >> 16) & 0xff) as u8,
-                0x00,
-            ];
+            let header = packet_header(len, 0);
             socket.write_all(&header).await.unwrap();
             socket.write_all(&handshake).await.unwrap();
         });
@@ -397,12 +380,7 @@ mod tests {
 
             let handshake = vec![0x01, 0x02];
             let len = handshake.len() as u32;
-            let header = [
-                (len & 0xff) as u8,
-                ((len >> 8) & 0xff) as u8,
-                ((len >> 16) & 0xff) as u8,
-                0x00,
-            ];
+            let header = packet_header(len, 0);
             socket.write_all(&header).await.unwrap();
             socket.write_all(&handshake).await.unwrap();
         });
