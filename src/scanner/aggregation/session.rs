@@ -205,18 +205,7 @@ mod tests {
             ..Default::default()
         };
         // Explicitly include a protocol list with protocols to avoid accidental fallback.
-        scan_ip1.protocols = vec![ProtocolTestResult {
-            protocol: Protocol::TLS13,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 0,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }];
+        scan_ip1.protocols = vec![protocol_result(Protocol::TLS13, true, true, 0)];
 
         let scan_ip2 = ScanResults {
             advanced: Some(AdvancedResults {
@@ -269,29 +258,15 @@ mod tests {
         let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
 
         let protocols_ip1 = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
             session_resumption_caching: Some(true),
             session_resumption_tickets: Some(true),
-            secure_renegotiation: None,
+            ..protocol_result(Protocol::TLS12, true, true, 1)
         }];
 
         let protocols_ip2 = vec![ProtocolTestResult {
-            protocol: Protocol::TLS12,
-            supported: true,
-            inconclusive: false,
-            preferred: true,
-            ciphers_count: 1,
-            handshake_time_ms: None,
-            heartbeat_enabled: None,
             session_resumption_caching: Some(false),
             session_resumption_tickets: None,
-            secure_renegotiation: None,
+            ..protocol_result(Protocol::TLS12, true, true, 1)
         }];
 
         let mut results = HashMap::new();
@@ -341,55 +316,27 @@ mod tests {
 
         let protocols_ip1 = vec![
             ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 1,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
                 session_resumption_caching: Some(false),
                 session_resumption_tickets: Some(false),
-                secure_renegotiation: None,
+                ..protocol_result(Protocol::TLS12, true, false, 1)
             },
             ProtocolTestResult {
-                protocol: Protocol::TLS13,
-                supported: true,
-                inconclusive: false,
-                preferred: true,
-                ciphers_count: 1,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
                 session_resumption_caching: Some(true),
                 session_resumption_tickets: Some(true),
-                secure_renegotiation: None,
+                ..protocol_result(Protocol::TLS13, true, true, 1)
             },
         ];
 
         let protocols_ip2 = vec![
             ProtocolTestResult {
-                protocol: Protocol::TLS12,
-                supported: true,
-                inconclusive: false,
-                preferred: false,
-                ciphers_count: 1,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
                 session_resumption_caching: Some(true),
                 session_resumption_tickets: Some(true),
-                secure_renegotiation: None,
+                ..protocol_result(Protocol::TLS12, true, false, 1)
             },
             ProtocolTestResult {
-                protocol: Protocol::TLS13,
-                supported: true,
-                inconclusive: false,
-                preferred: true,
-                ciphers_count: 1,
-                handshake_time_ms: None,
-                heartbeat_enabled: None,
                 session_resumption_caching: Some(true),
                 session_resumption_tickets: Some(true),
-                secure_renegotiation: None,
+                ..protocol_result(Protocol::TLS13, true, true, 1)
             },
         ];
 

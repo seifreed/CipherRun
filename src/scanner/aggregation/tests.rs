@@ -167,7 +167,7 @@ pub(crate) fn make_summary(protocol: Protocol, ciphers: Vec<CipherSuite>) -> Pro
     }
 }
 
-fn protocol_result(
+pub(crate) fn protocol_result(
     protocol: Protocol,
     supported: bool,
     preferred: bool,
