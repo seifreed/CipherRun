@@ -3,8 +3,8 @@ use crate::application::ScanAssessment;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::validator::ValidationResult;
-use crate::ciphers::CipherSuite;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+use crate::ciphers::CipherSuite;
 use crate::compliance::Rule;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::scanner::CertificateAnalysisResult;
@@ -80,6 +80,47 @@ fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
         session_resumption_caching: None,
         session_resumption_tickets: None,
         secure_renegotiation: None,
+    }
+}
+
+fn cipher_assessment(protocol: Protocol, cipher: CipherSuite) -> ScanAssessment {
+    let mut ciphers = HashMap::new();
+    ciphers.insert(
+        protocol,
+        ProtocolCipherSummary {
+            protocol,
+            supported_ciphers: vec![cipher],
+            server_ordered: false,
+            server_preference: vec![],
+            preferred_cipher: None,
+            counts: CipherCounts::default(),
+            avg_handshake_time_ms: None,
+        },
+    );
+    ScanAssessment {
+        ciphers,
+        ..Default::default()
+    }
+}
+
+fn tls13_cipher(
+    hexcode: &str,
+    name: &str,
+    protocol: &str,
+    encryption: &str,
+    mac: &str,
+) -> CipherSuite {
+    CipherSuite {
+        hexcode: hexcode.to_string(),
+        openssl_name: name.to_string(),
+        iana_name: name.to_string(),
+        protocol: protocol.to_string(),
+        key_exchange: "".to_string(),
+        authentication: "any".to_string(),
+        encryption: encryption.to_string(),
+        mac: mac.to_string(),
+        bits: 128,
+        export: false,
     }
 }
 
@@ -210,35 +251,16 @@ fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() 
         ..base_rule("ForwardSecrecy")
     };
 
-    let cipher = CipherSuite {
-        hexcode: "0x1301".to_string(),
-        openssl_name: "tls_aes_128_gcm_sha256".to_string(),
-        iana_name: "tls_aes_128_gcm_sha256".to_string(),
-        protocol: "tlsv1.3".to_string(),
-        key_exchange: "".to_string(),
-        authentication: "any".to_string(),
-        encryption: "aesgcm".to_string(),
-        mac: "aead".to_string(),
-        bits: 128,
-        export: false,
-    };
-    let mut ciphers = HashMap::new();
-    ciphers.insert(
+    let results = cipher_assessment(
         Protocol::TLS13,
-        ProtocolCipherSummary {
-            protocol: Protocol::TLS13,
-            supported_ciphers: vec![cipher],
-            server_ordered: false,
-            server_preference: vec![],
-            preferred_cipher: None,
-            counts: CipherCounts::default(),
-            avg_handshake_time_ms: None,
-        },
+        tls13_cipher(
+            "0x1301",
+            "tls_aes_128_gcm_sha256",
+            "tlsv1.3",
+            "aesgcm",
+            "aead",
+        ),
     );
-    let results = ScanAssessment {
-        ciphers,
-        ..Default::default()
-    };
 
     let violations = ComplianceChecker::check_forward_secrecy(&rule, &results)
         .expect("test assertion should succeed");
@@ -252,35 +274,10 @@ fn test_check_forward_secrecy_uses_protocol_bucket_for_tls13_ciphers() {
         ..base_rule("ForwardSecrecy")
     };
 
-    let cipher = CipherSuite {
-        hexcode: "0x00c6".to_string(),
-        openssl_name: "TLS_SM4_GCM_SM3".to_string(),
-        iana_name: "TLS_SM4_GCM_SM3".to_string(),
-        protocol: "TLS-1-3".to_string(),
-        key_exchange: "".to_string(),
-        authentication: "any".to_string(),
-        encryption: "SM4-GCM".to_string(),
-        mac: "AEAD".to_string(),
-        bits: 128,
-        export: false,
-    };
-    let mut ciphers = HashMap::new();
-    ciphers.insert(
+    let results = cipher_assessment(
         Protocol::TLS13,
-        ProtocolCipherSummary {
-            protocol: Protocol::TLS13,
-            supported_ciphers: vec![cipher],
-            server_ordered: false,
-            server_preference: vec![],
-            preferred_cipher: None,
-            counts: CipherCounts::default(),
-            avg_handshake_time_ms: None,
-        },
+        tls13_cipher("0x00c6", "TLS_SM4_GCM_SM3", "TLS-1-3", "SM4-GCM", "AEAD"),
     );
-    let results = ScanAssessment {
-        ciphers,
-        ..Default::default()
-    };
 
     let violations = ComplianceChecker::check_forward_secrecy(&rule, &results)
         .expect("test assertion should succeed");
@@ -289,35 +286,16 @@ fn test_check_forward_secrecy_uses_protocol_bucket_for_tls13_ciphers() {
 
 #[test]
 fn test_check_ciphers_exact_lists_are_case_insensitive() {
-    let cipher = CipherSuite {
-        hexcode: "0x1301".to_string(),
-        openssl_name: "TLS_AES_128_GCM_SHA256".to_string(),
-        iana_name: "TLS_AES_128_GCM_SHA256".to_string(),
-        protocol: "TLSv1.3".to_string(),
-        key_exchange: "".to_string(),
-        authentication: "any".to_string(),
-        encryption: "aesgcm".to_string(),
-        mac: "aead".to_string(),
-        bits: 128,
-        export: false,
-    };
-    let mut ciphers = HashMap::new();
-    ciphers.insert(
+    let results = cipher_assessment(
         Protocol::TLS13,
-        ProtocolCipherSummary {
-            protocol: Protocol::TLS13,
-            supported_ciphers: vec![cipher],
-            server_ordered: false,
-            server_preference: vec![],
-            preferred_cipher: None,
-            counts: CipherCounts::default(),
-            avg_handshake_time_ms: None,
-        },
+        tls13_cipher(
+            "0x1301",
+            "TLS_AES_128_GCM_SHA256",
+            "TLSv1.3",
+            "aesgcm",
+            "aead",
+        ),
     );
-    let results = ScanAssessment {
-        ciphers,
-        ..Default::default()
-    };
 
     let allowed_rule = Rule {
         allowed: vec!["tls_aes_128_gcm_sha256".to_string()],
@@ -345,35 +323,21 @@ fn preferred_rule() -> Rule {
 }
 
 fn assessment_with_single_cipher(iana: &str, openssl: &str) -> ScanAssessment {
-    let cipher = CipherSuite {
-        hexcode: "0x1301".to_string(),
-        openssl_name: openssl.to_string(),
-        iana_name: iana.to_string(),
-        protocol: "TLSv1.2".to_string(),
-        key_exchange: "ECDHE".to_string(),
-        authentication: "RSA".to_string(),
-        encryption: "aes".to_string(),
-        mac: "sha".to_string(),
-        bits: 128,
-        export: false,
-    };
-    let mut ciphers = HashMap::new();
-    ciphers.insert(
+    cipher_assessment(
         Protocol::TLS12,
-        ProtocolCipherSummary {
-            protocol: Protocol::TLS12,
-            supported_ciphers: vec![cipher],
-            server_ordered: false,
-            server_preference: vec![],
-            preferred_cipher: None,
-            counts: CipherCounts::default(),
-            avg_handshake_time_ms: None,
+        CipherSuite {
+            hexcode: "0x1301".to_string(),
+            openssl_name: openssl.to_string(),
+            iana_name: iana.to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "aes".to_string(),
+            mac: "sha".to_string(),
+            bits: 128,
+            export: false,
         },
-    );
-    ScanAssessment {
-        ciphers,
-        ..Default::default()
-    }
+    )
 }
 
 #[test]
