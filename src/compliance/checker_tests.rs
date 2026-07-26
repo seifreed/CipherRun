@@ -3,8 +3,8 @@ use crate::application::ScanAssessment;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
 use crate::certificates::validator::ValidationResult;
-use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::ciphers::CipherSuite;
+use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::compliance::Rule;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::scanner::CertificateAnalysisResult;
@@ -92,6 +92,13 @@ fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
     }
 }
 
+fn protocol_assessment(protocols: &[Protocol]) -> ScanAssessment {
+    ScanAssessment {
+        protocols: protocols.iter().cloned().map(protocol_result).collect(),
+        ..Default::default()
+    }
+}
+
 fn cipher_assessment(protocol: Protocol, cipher: CipherSuite) -> ScanAssessment {
     let mut ciphers = HashMap::new();
     ciphers.insert(
@@ -160,13 +167,7 @@ fn test_check_protocols_denied() {
         ..base_rule("ProtocolVersion")
     };
 
-    let results = ScanAssessment {
-        protocols: vec![
-            protocol_result(Protocol::SSLv2),
-            protocol_result(Protocol::TLS12),
-        ],
-        ..Default::default()
-    };
+    let results = protocol_assessment(&[Protocol::SSLv2, Protocol::TLS12]);
 
     let violations =
         ComplianceChecker::check_protocols(&rule, &results).expect("test assertion should succeed");
@@ -181,13 +182,7 @@ fn test_check_protocols_allowed() {
         ..base_rule("ProtocolVersion")
     };
 
-    let results = ScanAssessment {
-        protocols: vec![
-            protocol_result(Protocol::TLS10),
-            protocol_result(Protocol::TLS12),
-        ],
-        ..Default::default()
-    };
+    let results = protocol_assessment(&[Protocol::TLS10, Protocol::TLS12]);
 
     let violations =
         ComplianceChecker::check_protocols(&rule, &results).expect("test assertion should succeed");
@@ -202,10 +197,7 @@ fn test_check_protocols_allowed_names_are_normalized() {
         ..base_rule("ProtocolVersion")
     };
 
-    let results = ScanAssessment {
-        protocols: vec![protocol_result(Protocol::TLS12)],
-        ..Default::default()
-    };
+    let results = protocol_assessment(&[Protocol::TLS12]);
 
     let violations =
         ComplianceChecker::check_protocols(&rule, &results).expect("test assertion should succeed");
@@ -219,10 +211,7 @@ fn test_check_protocols_denied_names_are_normalized() {
         ..base_rule("ProtocolVersion")
     };
 
-    let results = ScanAssessment {
-        protocols: vec![protocol_result(Protocol::SSLv3)],
-        ..Default::default()
-    };
+    let results = protocol_assessment(&[Protocol::SSLv3]);
 
     let violations =
         ComplianceChecker::check_protocols(&rule, &results).expect("test assertion should succeed");
