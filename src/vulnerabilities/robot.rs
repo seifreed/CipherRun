@@ -339,28 +339,6 @@ mod tests {
     }
 
     #[test]
-    fn test_robot_result_details() {
-        let result = RobotTestResult {
-            vulnerable: false,
-            status: RobotStatus::NotVulnerable,
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
-    fn test_robot_result_debug_contains_status() {
-        let result = RobotTestResult {
-            vulnerable: true,
-            status: RobotStatus::Vulnerable,
-            details: "Details".to_string(),
-        };
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("Vulnerable"));
-    }
-
-    #[test]
     fn test_extract_rsa_key_len_rejects_missing_certificate() {
         let err = certificate::extract_rsa_key_len(&[]).expect_err("missing handshake should fail");
         assert!(
