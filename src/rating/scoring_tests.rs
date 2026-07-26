@@ -1,4 +1,6 @@
 use super::*;
+use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
+use std::collections::HashMap;
 
 fn protocol_result(protocol: Protocol, preferred: bool, ciphers_count: usize) -> ProtocolTestResult {
     ProtocolTestResult {
@@ -128,8 +130,6 @@ fn test_sslv2_forces_grade_f_in_calculate() {
     // SSLv2 support must produce Grade F even when cipher/key-exchange scores are high.
     // Before fix: (0×30 + 100×30 + 100×40)/100 = 70 → Grade B (wrong).
     // After fix: protocol_score==0 triggers early-return with Grade F.
-    use std::collections::HashMap;
-
     let protocols = vec![
         protocol_result(Protocol::SSLv2, false, 20),
         protocol_result(Protocol::TLS13, true, 5),
@@ -161,8 +161,6 @@ fn test_user_reported_issue_fix() {
     // User reported: Protocol 100%, Key Exchange 95%, Cipher 95%
     // Expected: A+ (96) with TLS 1.3, A- (84) without TLS 1.3
     // Was getting: B (76) due to incorrect weights and TLS_FALLBACK penalty
-
-    use std::collections::HashMap;
 
     // With TLS 1.3 supported
     let protocols_with_tls13 = vec![
@@ -205,8 +203,6 @@ fn test_user_reported_issue_fix() {
 fn test_inconclusive_vulnerability_does_not_penalize_grade() {
     // A vulnerability the scanner could not confirm (inconclusive) is surfaced
     // in the report but must not tank the grade on unconfirmed evidence.
-    use std::collections::HashMap;
-
     let protocols_with_tls13 = vec![
         protocol_result(Protocol::TLS12, false, 10),
         protocol_result(Protocol::TLS13, true, 5),
@@ -250,8 +246,6 @@ fn test_confirmed_critical_vulnerability_penalizes_grade() {
     // Counterpart to the inconclusive test: a CONFIRMED critical vulnerability
     // must still apply the full penalty, so the inconclusive skip cannot mask
     // real findings.
-    use std::collections::HashMap;
-
     let protocols_with_tls13 = vec![protocol_result(Protocol::TLS13, true, 5)];
     let ciphers = HashMap::new();
 
@@ -282,8 +276,6 @@ fn test_confirmed_critical_vulnerability_penalizes_grade() {
 #[test]
 fn test_tls13_overall_score_cap() {
     // Without TLS 1.3, the OVERALL score should be capped at 84 (A-)
-    use std::collections::HashMap;
-
     let protocols_without_tls13 = vec![protocol_result(Protocol::TLS12, true, 10)];
 
     let ciphers = HashMap::new();
@@ -336,9 +328,6 @@ fn test_certificate_score_with_issues() {
 
 #[test]
 fn test_key_exchange_score_penalty_for_low_fs() {
-    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-    use std::collections::HashMap;
-
     let summary = ProtocolCipherSummary {
         protocol: Protocol::TLS12,
         supported_ciphers: Vec::new(),
@@ -362,9 +351,6 @@ fn test_key_exchange_score_penalty_for_low_fs() {
 
 #[test]
 fn test_key_exchange_score_handles_extreme_cipher_counts() {
-    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-    use std::collections::HashMap;
-
     let summary = ProtocolCipherSummary {
         protocol: Protocol::TLS12,
         supported_ciphers: Vec::new(),
@@ -388,9 +374,6 @@ fn test_key_exchange_score_handles_extreme_cipher_counts() {
 
 #[test]
 fn test_cipher_strength_score_export_ciphers_zero() {
-    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-    use std::collections::HashMap;
-
     let summary = ProtocolCipherSummary {
         protocol: Protocol::TLS12,
         supported_ciphers: Vec::new(),
@@ -414,9 +397,6 @@ fn test_cipher_strength_score_export_ciphers_zero() {
 
 #[test]
 fn test_cipher_strength_score_counts_medium_strength_as_weak() {
-    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-    use std::collections::HashMap;
-
     // All ciphers medium-strength: weak_percentage is 100%, which must incur the
     // 75%+ weak penalty (-20) plus the <50% AEAD penalty (-5) -> 75.
     let summary = ProtocolCipherSummary {
@@ -446,9 +426,6 @@ fn test_cipher_strength_score_counts_medium_strength_as_weak() {
 
 #[test]
 fn test_cipher_strength_score_handles_extreme_weak_counts() {
-    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
-    use std::collections::HashMap;
-
     let summary = ProtocolCipherSummary {
         protocol: Protocol::TLS12,
         supported_ciphers: Vec::new(),
@@ -479,8 +456,6 @@ fn supported_protocol(protocol: Protocol) -> ProtocolTestResult {
 
 #[test]
 fn test_tls10_support_caps_grade_at_b() {
-    use std::collections::HashMap;
-
     // Strong modern config (TLS 1.2 + 1.3) that would otherwise score A/A+,
     // but TLS 1.0 is still enabled, so SSL Labs caps the grade at B.
     let protocols = vec![
@@ -504,8 +479,6 @@ fn test_tls10_support_caps_grade_at_b() {
 
 #[test]
 fn test_tls11_support_caps_grade_at_b() {
-    use std::collections::HashMap;
-
     let protocols = vec![
         supported_protocol(Protocol::TLS11),
         supported_protocol(Protocol::TLS12),
@@ -524,8 +497,6 @@ fn test_tls11_support_caps_grade_at_b() {
 
 #[test]
 fn test_sslv3_support_caps_grade_at_c() {
-    use std::collections::HashMap;
-
     // SSL 3.0 is worse than TLS 1.0: the lower C cap must win even though TLS
     // 1.0 is also offered.
     let protocols = vec![
@@ -548,8 +519,6 @@ fn test_sslv3_support_caps_grade_at_c() {
 
 #[test]
 fn test_modern_protocols_not_capped_by_legacy_rule() {
-    use std::collections::HashMap;
-
     // No deprecated protocols: the legacy caps must not apply.
     let protocols = vec![
         supported_protocol(Protocol::TLS12),
