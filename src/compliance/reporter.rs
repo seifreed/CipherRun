@@ -395,9 +395,8 @@ mod tests {
         Violation,
     };
 
-    #[test]
-    fn test_to_json() {
-        let framework = ComplianceFramework {
+    fn test_framework() -> ComplianceFramework {
+        ComplianceFramework {
             id: "test".to_string(),
             name: "Test Framework".to_string(),
             version: "1.0".to_string(),
@@ -405,10 +404,19 @@ mod tests {
             organization: "Test Org".to_string(),
             effective_date: None,
             requirements: vec![],
-        };
+        }
+    }
 
-        let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
+    fn finalized_report(framework: &ComplianceFramework) -> ComplianceReport {
+        let mut report = ComplianceReport::new(framework, "test.com:443".to_string());
         report.finalize();
+        report
+    }
+
+    #[test]
+    fn test_to_json() {
+        let framework = test_framework();
+        let report = finalized_report(&framework);
 
         let json = Reporter::to_json(&report, false).expect("test assertion should succeed");
         assert!(json.contains("test.com:443"));
@@ -417,18 +425,8 @@ mod tests {
 
     #[test]
     fn test_to_csv() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        };
-
-        let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
-        report.finalize();
+        let framework = test_framework();
+        let report = finalized_report(&framework);
 
         let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
         assert!(csv.contains("Requirement ID,Name,Category"));
@@ -436,15 +434,7 @@ mod tests {
 
     #[test]
     fn test_to_csv_neutralizes_formula_cells() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        };
+        let framework = test_framework();
 
         let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
         report.add_requirement_result(RequirementResult {
@@ -474,15 +464,7 @@ mod tests {
 
     #[test]
     fn test_to_html_escapes_injected_markup_in_target() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        };
+        let framework = test_framework();
 
         let report = ComplianceReport::new(
             &framework,
