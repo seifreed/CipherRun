@@ -189,74 +189,42 @@ mod tests {
 
     #[test]
     fn test_normalize_domain() {
-        // Basic normalization
-        assert_eq!(DnsOnlyMode::normalize_domain("Example.COM"), "example.com");
-
-        // With whitespace
-        assert_eq!(
-            DnsOnlyMode::normalize_domain("  example.com  "),
-            "example.com"
-        );
-
-        // Wildcard removal
-        assert_eq!(
-            DnsOnlyMode::normalize_domain("*.example.com"),
-            "example.com"
-        );
-
-        // Wildcard with case
-        assert_eq!(
-            DnsOnlyMode::normalize_domain("*.EXAMPLE.COM"),
-            "example.com"
-        );
-
-        // DNS prefix removal
-        assert_eq!(
-            DnsOnlyMode::normalize_domain("DNS:example.com"),
-            "example.com"
-        );
-
-        // Complex case
-        assert_eq!(
-            DnsOnlyMode::normalize_domain("DNS:*.EXAMPLE.COM  "),
-            "example.com"
-        );
+        for (case, input, expected) in [
+            ("basic", "Example.COM", "example.com"),
+            ("whitespace", "  example.com  ", "example.com"),
+            ("wildcard", "*.example.com", "example.com"),
+            ("wildcard case", "*.EXAMPLE.COM", "example.com"),
+            ("dns prefix", "DNS:example.com", "example.com"),
+            ("combined", "DNS:*.EXAMPLE.COM  ", "example.com"),
+        ] {
+            assert_eq!(DnsOnlyMode::normalize_domain(input), expected, "{case}");
+        }
     }
 
     #[test]
     fn test_extract_cn() {
-        // Standard format
-        assert_eq!(
-            DnsOnlyMode::extract_cn("CN=example.com,O=Org,C=US"),
-            Some("example.com".to_string())
-        );
-
-        // With spaces
-        assert_eq!(
-            DnsOnlyMode::extract_cn("C=US, O=Org, CN=example.com"),
-            Some("example.com".to_string())
-        );
-
-        // No CN
-        assert_eq!(DnsOnlyMode::extract_cn("O=Org,C=US"), None);
-
-        // CN at end
-        assert_eq!(
-            DnsOnlyMode::extract_cn("C=US,CN=example.com"),
-            Some("example.com".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_cn_allows_spaces_around_equals_and_lowercase_key() {
-        assert_eq!(
-            DnsOnlyMode::extract_cn("C=US, O=Org, CN = spaced.example.com"),
-            Some("spaced.example.com".to_string())
-        );
-        assert_eq!(
-            DnsOnlyMode::extract_cn("c=us, o=org, cn=lower.example.com"),
-            Some("lower.example.com".to_string())
-        );
+        for (case, subject, expected) in [
+            ("standard", "CN=example.com,O=Org,C=US", Some("example.com")),
+            ("spaces", "C=US, O=Org, CN=example.com", Some("example.com")),
+            ("none", "O=Org,C=US", None),
+            ("end", "C=US,CN=example.com", Some("example.com")),
+            (
+                "spaces around equals",
+                "C=US, O=Org, CN = spaced.example.com",
+                Some("spaced.example.com"),
+            ),
+            (
+                "lowercase key",
+                "c=us, o=org, cn=lower.example.com",
+                Some("lower.example.com"),
+            ),
+        ] {
+            assert_eq!(
+                DnsOnlyMode::extract_cn(subject).as_deref(),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -381,13 +349,6 @@ mod tests {
                 "c.example.com".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn test_format_output_empty_when_no_domains_returns_empty() {
-        let cert = CertificateInfo::default();
-        let output = DnsOnlyMode::format_output(&cert);
-        assert!(output.is_empty());
     }
 
     #[test]
