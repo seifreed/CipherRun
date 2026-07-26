@@ -81,17 +81,28 @@ fn extract_cn_from_subject(subject: &str) -> String {
 mod tests {
     use super::*;
 
+    fn view(subject: &str, not_after: DateTime<Utc>) -> CertificateView {
+        CertificateView {
+            fingerprint: "fp".to_string(),
+            subject: subject.to_string(),
+            issuer: "Example CA".to_string(),
+            not_before: Utc::now(),
+            not_after,
+            san_json: None,
+            hostnames: Vec::new(),
+        }
+    }
+
     #[test]
     fn summary_extracts_common_name_and_expiry() {
         let now = Utc::now();
         let summary = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: "C=US, O=Example, CN=example.com".to_string(),
-            issuer: "Example CA".to_string(),
-            not_before: now,
-            not_after: now + chrono::Duration::days(10),
             san_json: Some("[\"example.com\",\"www.example.com\"]".to_string()),
             hostnames: vec!["example.com".to_string()],
+            ..view(
+                "C=US, O=Example, CN=example.com",
+                now + chrono::Duration::days(10),
+            )
         })
         .expect("valid SAN JSON should present");
 
@@ -103,15 +114,10 @@ mod tests {
     #[test]
     fn summary_extracts_common_name_with_spaces_around_equals() {
         let now = Utc::now();
-        let summary = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: "C=US, O=Example, CN = spaced.example.com".to_string(),
-            issuer: "Example CA".to_string(),
-            not_before: now,
-            not_after: now + chrono::Duration::days(10),
-            san_json: None,
-            hostnames: Vec::new(),
-        })
+        let summary = present_certificate_summary(view(
+            "C=US, O=Example, CN = spaced.example.com",
+            now + chrono::Duration::days(10),
+        ))
         .expect("empty SAN should present");
 
         assert_eq!(summary.common_name, "spaced.example.com");
@@ -129,13 +135,8 @@ mod tests {
     fn summary_rejects_invalid_san_json() {
         let now = Utc::now();
         let err = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: "CN=example.com".to_string(),
-            issuer: "Example CA".to_string(),
-            not_before: now,
-            not_after: now + chrono::Duration::days(90),
             san_json: Some("not-json".to_string()),
-            hostnames: Vec::new(),
+            ..view("CN=example.com", now + chrono::Duration::days(90))
         })
         .expect_err("invalid SAN JSON should fail");
 
@@ -184,16 +185,8 @@ mod tests {
     fn summary_falls_back_when_subject_has_no_cn_separator() {
         let now = Utc::now();
         let subject = "example.com";
-        let summary = present_certificate_summary(CertificateView {
-            fingerprint: "fp".to_string(),
-            subject: subject.to_string(),
-            issuer: "Example CA".to_string(),
-            not_before: now,
-            not_after: now + chrono::Duration::days(120),
-            san_json: None,
-            hostnames: Vec::new(),
-        })
-        .expect("empty SAN should present");
+        let summary = present_certificate_summary(view(subject, now + chrono::Duration::days(120)))
+            .expect("empty SAN should present");
 
         assert_eq!(summary.common_name, subject);
     }
