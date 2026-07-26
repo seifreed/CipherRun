@@ -15,6 +15,7 @@ use std::time::Duration;
 mod result;
 
 pub use result::LogjamTestResult;
+use result::{LogjamProbeStatus, WeakDhStatus};
 
 /// LOGJAM vulnerability tester
 pub struct LogjamTester {
@@ -39,35 +40,6 @@ const EXPORT_DH_CIPHER_SUITES: &[u16] = &[0x0014, 0x0011, 0x0063, 0x0065];
 
 /// Protocol versions under which export DH suites were historically offered.
 const EXPORT_DH_PROBE_PROTOCOLS: &[Protocol] = &[Protocol::TLS10, Protocol::SSLv3];
-
-/// Outcome of probing a single cipher for connectivity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LogjamProbeStatus {
-    Supported,
-    NotSupported,
-    Inconclusive,
-}
-
-/// Outcome of measuring the server's ephemeral DH parameter size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WeakDhStatus {
-    /// DH parameters below the secure minimum; carries the measured key size.
-    Weak {
-        bits: u32,
-    },
-    Strong,
-    Inconclusive,
-}
-
-impl WeakDhStatus {
-    fn is_weak(self) -> bool {
-        matches!(self, Self::Weak { .. })
-    }
-
-    fn is_inconclusive(self) -> bool {
-        matches!(self, Self::Inconclusive)
-    }
-}
 
 impl LogjamTester {
     pub fn new(target: Target) -> Self {

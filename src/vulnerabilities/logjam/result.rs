@@ -1,4 +1,33 @@
-use super::{MIN_SECURE_DH_BITS, WeakDhStatus};
+use super::MIN_SECURE_DH_BITS;
+
+/// Outcome of probing a single cipher for connectivity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LogjamProbeStatus {
+    Supported,
+    NotSupported,
+    Inconclusive,
+}
+
+/// Outcome of measuring the server's ephemeral DH parameter size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WeakDhStatus {
+    /// DH parameters below the secure minimum; carries the measured key size.
+    Weak {
+        bits: u32,
+    },
+    Strong,
+    Inconclusive,
+}
+
+impl WeakDhStatus {
+    fn is_weak(self) -> bool {
+        matches!(self, Self::Weak { .. })
+    }
+
+    fn is_inconclusive(self) -> bool {
+        matches!(self, Self::Inconclusive)
+    }
+}
 
 /// LOGJAM test result.
 #[derive(Debug, Clone)]
