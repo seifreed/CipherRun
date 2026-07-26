@@ -253,42 +253,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cache_stats() {
-        let cache = DnsCache::new(Duration::from_secs(60));
-
-        cache
-            .insert(
-                "example.com".to_string(),
-                vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
-            )
-            .await;
-
-        let stats = cache.stats().await;
-        assert_eq!(stats.total_entries, 1);
-        assert_eq!(stats.active_entries, 1);
-        assert_eq!(stats.expired_entries, 0);
-    }
-
-    #[tokio::test]
-    async fn test_cache_stats_expired_entries() {
-        let cache = DnsCache::new(Duration::from_millis(50));
-
-        cache
-            .insert(
-                "example.com".to_string(),
-                vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
-            )
-            .await;
-
-        tokio::time::sleep(Duration::from_millis(80)).await;
-
-        let stats = cache.stats().await;
-        assert_eq!(stats.total_entries, 1);
-        assert_eq!(stats.active_entries, 0);
-        assert_eq!(stats.expired_entries, 1);
-    }
-
-    #[tokio::test]
     async fn test_cleanup_expired_none_removed() {
         let cache = DnsCache::new(Duration::from_secs(60));
         cache
@@ -325,9 +289,12 @@ mod tests {
         let stats = cache.stats().await;
         assert_eq!(stats.total_entries, 1);
         assert_eq!(stats.active_entries, 1);
+        assert_eq!(stats.expired_entries, 0);
 
         tokio::time::sleep(Duration::from_millis(60)).await;
         let stats = cache.stats().await;
+        assert_eq!(stats.total_entries, 1);
+        assert_eq!(stats.active_entries, 0);
         assert_eq!(stats.expired_entries, 1);
     }
 
