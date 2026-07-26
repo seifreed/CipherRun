@@ -34,10 +34,6 @@ fn assert_route_name(args: Args, expected: &str) {
     assert_eq!(route_name(args), expected);
 }
 
-fn route_command(args: Args) -> Box<dyn Command> {
-    CommandRouter::route(args).unwrap()
-}
-
 fn validate_ok(args: Args) {
     assert!(CommandRouter::validate_routing(&args).is_ok());
 }
@@ -564,66 +560,6 @@ fn test_router_analytics_multiple_operations() {
 }
 
 // ============================================================================
-// Command Trait Object Tests
-// ============================================================================
-
-#[test]
-fn test_command_trait_object_from_router() {
-    let args = build_args(|args| {
-        args.target = Some("example.com:443".to_string());
-    });
-    let cmd = route_command(args);
-    // Verify we can call trait methods on the boxed command
-    assert_eq!(cmd.name(), "ScanCommand");
-}
-
-#[test]
-fn test_command_trait_object_api_server() {
-    let cmd = route_command(build_args(|args| args.api_server.enable = true));
-    assert_eq!(cmd.name(), "ApiServerCommand");
-}
-
-#[test]
-fn test_command_trait_object_monitor() {
-    let cmd = route_command(build_args(|args| args.monitoring.enable = true));
-    assert_eq!(cmd.name(), "MonitorCommand");
-}
-
-#[test]
-fn test_command_trait_object_ct_logs() {
-    let cmd = route_command(build_args(|args| args.ct_logs.enable = true));
-    assert_eq!(cmd.name(), "CtLogsCommand");
-}
-
-#[test]
-fn test_command_trait_object_analytics() {
-    let cmd = route_command(build_args(|args| args.compare = Some("1:2".to_string())));
-    assert_eq!(cmd.name(), "AnalyticsCommand");
-}
-
-#[test]
-fn test_command_trait_object_database() {
-    let cmd = route_command(build_args(|args| args.database.init = true));
-    assert_eq!(cmd.name(), "DatabaseCommand");
-}
-
-#[test]
-fn test_command_trait_object_mx_test() {
-    let cmd = route_command(build_args(|args| {
-        args.mx_domain = Some("example.com".to_string())
-    }));
-    assert_eq!(cmd.name(), "MxTestCommand");
-}
-
-#[test]
-fn test_command_trait_object_mass_scan() {
-    let cmd = route_command(build_args(|args| {
-        args.input_file = Some(PathBuf::from("targets.txt"))
-    }));
-    assert_eq!(cmd.name(), "MassScanCommand");
-}
-
-// ============================================================================
 // Edge Case Tests
 // ============================================================================
 
@@ -797,58 +733,4 @@ fn test_database_command_with_multiple_operations() {
     });
     let cmd = DatabaseCommand::new(args);
     assert_eq!(cmd.name(), "DatabaseCommand");
-}
-
-// ============================================================================
-// Comprehensive Routing Coverage Tests
-// ============================================================================
-
-#[test]
-fn test_comprehensive_routing_coverage_all_commands() {
-    // Test that we can route to every command type
-    let command_configs = vec![
-        (
-            build_args(|args| args.api_server.enable = true),
-            "ApiServerCommand",
-        ),
-        (
-            build_args(|args| args.monitoring.enable = true),
-            "MonitorCommand",
-        ),
-        (
-            build_args(|args| args.ct_logs.enable = true),
-            "CtLogsCommand",
-        ),
-        (
-            build_args(|args| args.compare = Some("1:2".to_string())),
-            "AnalyticsCommand",
-        ),
-        (
-            build_args(|args| args.database.init = true),
-            "DatabaseCommand",
-        ),
-        (
-            build_args(|args| args.mx_domain = Some("example.com".to_string())),
-            "MxTestCommand",
-        ),
-        (
-            build_args(|args| args.input_file = Some(PathBuf::from("targets.txt"))),
-            "MassScanCommand",
-        ),
-        (
-            build_args(|args| args.target = Some("example.com:443".to_string())),
-            "ScanCommand",
-        ),
-    ];
-
-    for (args, expected_name) in command_configs {
-        let cmd = CommandRouter::route(args).unwrap();
-        assert_eq!(
-            cmd.name(),
-            expected_name,
-            "Expected {} but got {}",
-            expected_name,
-            cmd.name()
-        );
-    }
 }
