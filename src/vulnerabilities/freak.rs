@@ -141,37 +141,11 @@ mod tests {
     }
 
     #[test]
-    fn test_freak_result_not_vulnerable() {
-        let result = FreakTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            export_ciphers: vec![],
-            details: "Not vulnerable".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.export_ciphers.is_empty());
-    }
-
-    #[test]
-    fn test_freak_result_vulnerable() {
-        let result = FreakTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            export_ciphers: vec!["EXP-RC4-MD5".to_string()],
-            details: "Vulnerable".to_string(),
-        };
-        assert!(result.vulnerable);
-        assert_eq!(result.export_ciphers.len(), 1);
-    }
-
-    #[test]
     fn test_freak_result_details_mentions_cipher_count() {
-        let result = FreakTestResult {
-            vulnerable: true,
-            inconclusive: false,
-            export_ciphers: vec!["EXP-RC4-MD5".to_string(), "EXP-RC2-CBC-MD5".to_string()],
-            details: "Vulnerable to FREAK (CVE-2015-0204) - Server supports 2 RSA export cipher(s): EXP-RC4-MD5, EXP-RC2-CBC-MD5".to_string(),
-        };
+        let result = FreakTestResult::from_export_probe(
+            vec!["EXP-RC4-MD5".to_string(), "EXP-RC2-CBC-MD5".to_string()],
+            false,
+        );
         assert!(result.details.contains("2 RSA export cipher"));
     }
 
@@ -233,28 +207,5 @@ mod tests {
             "inactive target must not be reported as a clean FREAK pass: {}",
             result.details
         );
-    }
-
-    #[test]
-    fn test_freak_result_details() {
-        let result = FreakTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            export_ciphers: Vec::new(),
-            details: "No export ciphers".to_string(),
-        };
-        assert!(result.details.contains("No export"));
-    }
-
-    #[test]
-    fn test_freak_result_not_vulnerable_details_text() {
-        let result = FreakTestResult {
-            vulnerable: false,
-            inconclusive: false,
-            export_ciphers: Vec::new(),
-            details: "Not vulnerable - No RSA export ciphers supported".to_string(),
-        };
-        assert!(!result.vulnerable);
-        assert!(result.details.contains("Not vulnerable"));
     }
 }
