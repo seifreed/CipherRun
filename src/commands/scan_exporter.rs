@@ -600,13 +600,7 @@ mod tests {
         fs::write(&path, "=== SCAN SUMMARY ===\nTarget\nold\n")
             .expect("seed csv should be written");
 
-        let args = Args {
-            output: crate::cli::OutputArgs {
-                append: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let args = append_args();
         let exporter = ScanExporter::new(&args);
         exporter
             .write_text_file(
