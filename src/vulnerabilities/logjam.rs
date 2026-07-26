@@ -193,8 +193,10 @@ impl LogjamTester {
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
-        let (hostname, use_sni) =
-            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
+        let (hostname, use_sni) = crate::utils::network::openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
@@ -331,8 +333,10 @@ impl LogjamTester {
 
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, handshake_timeout)?;
-        let (hostname, use_sni) =
-            openssl_hostname_and_sni(&self.target.hostname, self.sni_hostname.as_deref());
+        let (hostname, use_sni) = crate::utils::network::openssl_hostname_and_sni(
+            &self.target.hostname,
+            self.sni_hostname.as_deref(),
+        );
 
         // Wrap blocking SSL operations in spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
@@ -384,18 +388,6 @@ impl LogjamTester {
 
         Ok(result)
     }
-}
-
-fn openssl_hostname_and_sni(
-    target_hostname: &str,
-    override_hostname: Option<&str>,
-) -> (String, bool) {
-    let sni_hostname =
-        crate::utils::network::sni_hostname_for_target(target_hostname, override_hostname);
-    let hostname = sni_hostname
-        .clone()
-        .unwrap_or_else(|| target_hostname.to_string());
-    (hostname, sni_hostname.is_some())
 }
 
 #[cfg(test)]
@@ -460,20 +452,6 @@ mod tests {
         };
         assert!(result.vulnerable);
         assert!(result.details.contains("Export-grade"));
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", None);
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_uses_override() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34", Some("example.com"));
-        assert_eq!(hostname, "example.com");
-        assert!(use_sni);
     }
 
     #[test]

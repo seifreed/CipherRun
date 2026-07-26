@@ -811,7 +811,7 @@ pub async fn test_cipher_support_outcome(
     Ok(result)
 }
 
-fn openssl_hostname_and_sni(
+pub(crate) fn openssl_hostname_and_sni(
     target_hostname: &str,
     override_hostname: Option<&str>,
 ) -> (String, bool) {

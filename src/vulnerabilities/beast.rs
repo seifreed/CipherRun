@@ -133,7 +133,8 @@ impl BeastTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
+        let (hostname, use_sni) =
+            crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
         tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to whether the server accepts a
@@ -180,7 +181,8 @@ impl BeastTester {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, TLS_HANDSHAKE_TIMEOUT)?;
 
-        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
+        let (hostname, use_sni) =
+            crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
         tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to CBC cipher support over SSL 3.0;
@@ -240,14 +242,6 @@ impl BeastTester {
         .await
         .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
     }
-}
-
-fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
-    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
-    let hostname = sni_hostname
-        .clone()
-        .unwrap_or_else(|| target_hostname.to_string());
-    (hostname, sni_hostname.is_some())
 }
 
 #[cfg(test)]
@@ -330,12 +324,5 @@ mod tests {
     #[test]
     fn test_ssl3_setup_failure_is_inconclusive() {
         assert_eq!(ssl3_setup_inconclusive(), BeastProbeStatus::Inconclusive);
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
     }
 }

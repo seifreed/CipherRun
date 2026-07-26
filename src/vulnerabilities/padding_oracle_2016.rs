@@ -210,7 +210,8 @@ impl<'a> PaddingOracle2016Tester<'a> {
         let std_stream =
             crate::utils::network::into_blocking_std_stream(stream, self.connect_timeout)?;
 
-        let (hostname, use_sni) = openssl_hostname_and_sni(&self.target.hostname);
+        let (hostname, use_sni) =
+            crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
         tokio::task::spawn_blocking(move || -> Result<CbcSupportStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to CBC cipher support; a verifying
@@ -277,14 +278,6 @@ impl<'a> PaddingOracle2016Tester<'a> {
                 .to_string(),
         })
     }
-}
-
-fn openssl_hostname_and_sni(target_hostname: &str) -> (String, bool) {
-    let sni_hostname = crate::utils::network::sni_hostname_for_target(target_hostname, None);
-    let hostname = sni_hostname
-        .clone()
-        .unwrap_or_else(|| target_hostname.to_string());
-    (hostname, sni_hostname.is_some())
 }
 
 #[cfg(test)]
@@ -356,13 +349,6 @@ mod tests {
             average_invalid_timing_ms: 0.0,
         };
         assert!(result.details.contains("Not vulnerable"));
-    }
-
-    #[test]
-    fn test_openssl_hostname_and_sni_omits_sni_for_ip_targets() {
-        let (hostname, use_sni) = openssl_hostname_and_sni("93.184.216.34");
-        assert_eq!(hostname, "93.184.216.34");
-        assert!(!use_sni);
     }
 
     #[test]
