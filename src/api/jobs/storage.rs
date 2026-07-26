@@ -203,12 +203,26 @@ mod tests {
     use std::fs::File;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_file_storage() {
+    fn temp_storage() -> (TempDir, FileJobStorage) {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
         let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        (temp_dir, storage)
+    }
 
-        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+    fn test_job() -> ScanJob {
+        ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None)
+    }
+
+    fn write_job(temp_dir: &TempDir, job: &ScanJob) {
+        let json = serde_json::to_string(job).expect("test assertion should succeed");
+        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
+            .expect("test assertion should succeed");
+    }
+
+    #[test]
+    fn test_file_storage() {
+        let (temp_dir, storage) = temp_storage();
+        let job = test_job();
 
         // Save
         storage
@@ -232,8 +246,7 @@ mod tests {
 
     #[test]
     fn test_load_all_jobs_reports_corrupt_job_file() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
         std::fs::write(temp_dir.path().join(format!("{job_id}.json")), "{not-json")
             .expect("test assertion should succeed");
@@ -247,8 +260,7 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_oversized_file_before_read() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
         let path = temp_dir.path().join(format!("{job_id}.json"));
         let file = File::create(&path).expect("test assertion should succeed");
@@ -265,8 +277,7 @@ mod tests {
 
     #[test]
     fn test_load_all_jobs_rejects_oversized_file_before_read() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
         let path = temp_dir.path().join(format!("{job_id}.json"));
         let file = File::create(&path).expect("test assertion should succeed");
@@ -293,9 +304,8 @@ mod tests {
 
     #[test]
     fn test_save_job_rejects_oversized_serialized_job() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.status = ScanStatus::Failed;
         job.completed_at = Some(chrono::Utc::now());
         job.error = Some("x".repeat(MAX_JOB_FILE_BYTES as usize));
@@ -310,9 +320,8 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_payload_id_mismatch() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         let file_id = job.id.clone();
         job.id = Uuid::new_v4().to_string();
 
@@ -329,14 +338,11 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_out_of_range_progress() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.progress = 101;
 
-        let json = serde_json::to_string(&job).expect("test assertion should succeed");
-        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
-            .expect("test assertion should succeed");
+        write_job(&temp_dir, &job);
 
         let err = storage
             .load_job(&job.id)
@@ -347,16 +353,13 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_completed_job_without_results() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.status = ScanStatus::Completed;
         job.progress = 100;
         job.completed_at = Some(chrono::Utc::now());
 
-        let json = serde_json::to_string(&job).expect("test assertion should succeed");
-        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
-            .expect("test assertion should succeed");
+        write_job(&temp_dir, &job);
 
         let err = storage
             .load_job(&job.id)
@@ -367,15 +370,12 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_failed_job_without_error() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.status = ScanStatus::Failed;
         job.completed_at = Some(chrono::Utc::now());
 
-        let json = serde_json::to_string(&job).expect("test assertion should succeed");
-        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
-            .expect("test assertion should succeed");
+        write_job(&temp_dir, &job);
 
         let err = storage
             .load_job(&job.id)
@@ -386,14 +386,11 @@ mod tests {
 
     #[test]
     fn test_load_job_rejects_terminal_job_without_completed_at() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.status = ScanStatus::Cancelled;
 
-        let json = serde_json::to_string(&job).expect("test assertion should succeed");
-        std::fs::write(temp_dir.path().join(format!("{}.json", job.id)), json)
-            .expect("test assertion should succeed");
+        write_job(&temp_dir, &job);
 
         let err = storage
             .load_job(&job.id)
@@ -404,9 +401,8 @@ mod tests {
 
     #[test]
     fn test_save_job_rejects_unloadable_terminal_job() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
         job.status = ScanStatus::Completed;
         job.progress = 100;
         job.completed_at = Some(chrono::Utc::now());
@@ -421,9 +417,8 @@ mod tests {
 
     #[test]
     fn test_load_all_jobs_rejects_invalid_or_mismatched_file_ids() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
-        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let (temp_dir, storage) = temp_storage();
+        let job = test_job();
         let json = serde_json::to_string(&job).expect("test assertion should succeed");
         std::fs::write(temp_dir.path().join("not-a-job-id.json"), json)
             .expect("test assertion should succeed");
@@ -437,10 +432,9 @@ mod tests {
 
     #[test]
     fn test_file_storage_rejects_invalid_job_ids() {
-        let temp_dir = TempDir::new().expect("test assertion should succeed");
-        let storage = FileJobStorage::new(temp_dir.path()).expect("test assertion should succeed");
+        let (temp_dir, storage) = temp_storage();
 
-        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let mut job = test_job();
         job.id = "../outside".to_string();
 
         assert!(storage.save_job(&job).is_err());
