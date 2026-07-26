@@ -363,6 +363,19 @@ mod tests {
             .expect("test assertion should succeed")
     }
 
+    fn prohibited_signature_violations(
+        prohibited: &str,
+        signature_algorithm: &str,
+    ) -> Vec<PolicyViolation> {
+        let policy = CertificatePolicy {
+            prohibited_signature_algorithms: Some(vec![prohibited.to_string()]),
+            ..base_policy()
+        };
+        let mut cert_result = create_test_cert_result();
+        cert_result.chain.certificates[0].signature_algorithm = signature_algorithm.to_string();
+        violations(&policy, Some(&cert_result))
+    }
+
     #[test]
     fn test_min_key_size_violation() {
         let policy = CertificatePolicy {
@@ -473,15 +486,7 @@ mod tests {
 
     #[test]
     fn test_prohibited_signature_algorithm_violation() {
-        let policy = CertificatePolicy {
-            prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
-            ..base_policy()
-        };
-
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
-
-        let violations = violations(&policy, Some(&cert_result));
+        let violations = prohibited_signature_violations("SHA1", "SHA1-RSA");
 
         assert_eq!(
             violations[0].rule_path,
@@ -491,15 +496,7 @@ mod tests {
 
     #[test]
     fn test_prohibited_signature_algorithm_trims_policy_values() {
-        let policy = CertificatePolicy {
-            prohibited_signature_algorithms: Some(vec![" sha1 ".to_string()]),
-            ..base_policy()
-        };
-
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].signature_algorithm = "SHA1-RSA".to_string();
-
-        let violations = violations(&policy, Some(&cert_result));
+        let violations = prohibited_signature_violations(" sha1 ", "SHA1-RSA");
 
         assert_eq!(
             violations[0].rule_path,
@@ -509,15 +506,7 @@ mod tests {
 
     #[test]
     fn test_prohibited_signature_algorithm_matches_hyphenated_alias() {
-        let policy = CertificatePolicy {
-            prohibited_signature_algorithms: Some(vec!["SHA1".to_string()]),
-            ..base_policy()
-        };
-
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
-
-        let violations = violations(&policy, Some(&cert_result));
+        let violations = prohibited_signature_violations("SHA1", "SHA-1-RSA");
 
         assert_eq!(violations.len(), 1);
         assert_eq!(
@@ -528,15 +517,7 @@ mod tests {
 
     #[test]
     fn test_prohibited_signature_algorithm_rejects_partial_match() {
-        let policy = CertificatePolicy {
-            prohibited_signature_algorithms: Some(vec!["HA1".to_string()]),
-            ..base_policy()
-        };
-
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].signature_algorithm = "SHA-1-RSA".to_string();
-
-        let violations = violations(&policy, Some(&cert_result));
+        let violations = prohibited_signature_violations("HA1", "SHA-1-RSA");
 
         assert!(violations.is_empty(), "{violations:?}");
     }
