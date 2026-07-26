@@ -9,8 +9,6 @@ use crate::constants::{
     CONTENT_TYPE_CHANGE_CIPHER_SPEC, CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE,
     HANDSHAKE_TYPE_FINISHED, TLS_HANDSHAKE_TIMEOUT, VERSION_TLS_1_0,
 };
-use crate::protocols::Protocol;
-use crate::protocols::handshake::ClientHelloBuilder;
 use crate::utils::network::Target;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +16,7 @@ use tokio::time::timeout;
 
 mod alert_signal;
 mod certificate;
+mod client_hello;
 mod oracle_analysis;
 mod result;
 
@@ -210,7 +209,7 @@ impl RobotTester {
         };
 
         // Send ClientHello
-        let client_hello = self.build_client_hello()?;
+        let client_hello = client_hello::tls10_rsa()?;
         stream.write_all(&client_hello).await?;
 
         // Read until ServerHelloDone so the full certificate chain is in the buffer,
@@ -263,13 +262,6 @@ impl RobotTester {
 
         self.read_first_response_record(&mut stream, Duration::from_secs(2))
             .await
-    }
-
-    /// Build ClientHello with RSA key exchange using ClientHelloBuilder
-    fn build_client_hello(&self) -> Result<Vec<u8>> {
-        let mut builder = ClientHelloBuilder::new(Protocol::TLS10);
-        builder.for_rsa_key_exchange();
-        builder.build_minimal()
     }
 
     /// Build ClientKeyExchange with invalid RSA padding, sized for the server's actual key length.
@@ -468,16 +460,7 @@ mod tests {
 
     #[test]
     fn test_build_client_hello_non_empty() {
-        let target = Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .unwrap();
-        let tester = RobotTester::new(target);
-        let hello = tester
-            .build_client_hello()
-            .expect("ClientHello should build");
+        let hello = client_hello::tls10_rsa().expect("ClientHello should build");
         assert!(!hello.is_empty());
         assert_eq!(hello.first(), Some(&CONTENT_TYPE_HANDSHAKE));
     }
