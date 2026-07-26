@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tokio::time::timeout;
 
 mod replay;
+mod result_analysis;
 
 /// Information about early data size from server
 #[derive(Debug, Clone)]
@@ -126,113 +127,28 @@ impl<'a> EarlyDataTester<'a> {
 
     /// Test for 0-RTT / Early Data replay vulnerability
     pub async fn test(&self) -> Result<EarlyDataTestResult> {
-        let mut issues = Vec::new();
-        let mut vulnerable = false;
-
         // Test 1: Check if server supports early_data extension
         let early_data_support = self.test_early_data_support().await?;
         let supports_early_data = matches!(early_data_support, EarlyDataSupportStatus::Supported);
 
         if matches!(early_data_support, EarlyDataSupportStatus::Inconclusive) {
-            return Ok(EarlyDataTestResult {
-                vulnerable: false,
-                supports_early_data: false,
-                accepts_replayed_data: false,
-                max_early_data_size: None,
-                issues: vec![
-                    "Early Data test inconclusive - unable to determine TLS 1.3 early_data support"
-                        .to_string(),
-                ],
-                details:
-                    "Early Data test inconclusive - target did not provide a usable TLS response"
-                        .to_string(),
-                inconclusive: true,
-            });
+            return Ok(result_analysis::early_data_support_inconclusive());
         }
 
         if !supports_early_data {
-            return Ok(EarlyDataTestResult {
-                vulnerable: false,
-                supports_early_data: false,
-                accepts_replayed_data: false,
-                max_early_data_size: None,
-                issues: vec!["Server does not support TLS 1.3 early_data extension".to_string()],
-                details: "Not vulnerable - Server does not support 0-RTT / early data".to_string(),
-                inconclusive: false,
-            });
+            return Ok(result_analysis::early_data_not_supported());
         }
-
-        issues.push("Server supports TLS 1.3 early_data extension (0x002a)".to_string());
 
         // Test 2: Check max_early_data_size
         let early_data_info = self.get_max_early_data_size().await?;
-        if let Some(size) = early_data_info.max_early_data_size
-            && size > 0
-        {
-            if early_data_info.is_estimated {
-                issues.push(format!(
-                    "Server likely accepts up to {} bytes of early data (estimated, actual value requires session ticket parsing)",
-                    size
-                ));
-            } else {
-                issues.push(format!("Server accepts up to {} bytes of early data", size));
-            }
-        }
 
         // Test 3: Attempt to replay 0-RTT data
         let replay_result = self.test_replay_attack().await?;
 
-        if replay_result.inconclusive {
-            issues.push(
-                "⚠️ 0-RTT replay test is inconclusive - manual testing recommended".to_string(),
-            );
-            issues.push(replay_result.details.clone());
-        } else if replay_result.vulnerable {
-            vulnerable = true;
-            issues.push(
-                "⚠️ Server accepts replayed 0-RTT data without proper anti-replay protection"
-                    .to_string(),
-            );
-            issues.push("This can allow replay attacks on sensitive operations".to_string());
-        } else if replay_result.tested {
-            issues.push("✓ Server appears to have anti-replay mechanisms in place".to_string());
-        }
-
-        let details = if vulnerable {
-            format!(
-                "Vulnerable to 0-RTT replay attacks - Server supports early_data and accepts replayed requests. \
-                max_early_data_size: {}. Server should implement anti-replay mechanisms (single-use tickets, \
-                time-based checks, or nonce tracking).",
-                early_data_info
-                    .max_early_data_size
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            )
-        } else if replay_result.inconclusive {
-            format!(
-                "Inconclusive 0-RTT replay test - Server supports TLS 1.3 with early_data (max: {}). \
-                Full replay testing was not performed. Potential vulnerability exists if server \
-                lacks anti-replay mechanisms (single-use tickets, time-based checks, nonce tracking).",
-                early_data_info
-                    .max_early_data_size
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            )
-        } else if supports_early_data {
-            "Server supports 0-RTT but appears to have anti-replay protection enabled".to_string()
-        } else {
-            "Not vulnerable - Server does not support 0-RTT / early data".to_string()
-        };
-
-        Ok(EarlyDataTestResult {
-            vulnerable,
-            supports_early_data,
-            accepts_replayed_data: replay_result.vulnerable,
-            max_early_data_size: early_data_info.max_early_data_size,
-            issues,
-            details,
-            inconclusive: replay_result.inconclusive,
-        })
+        Ok(result_analysis::supported_early_data_result(
+            &early_data_info,
+            &replay_result,
+        ))
     }
 
     /// Test if the server accepts TLS 1.3 0-RTT / early data.
