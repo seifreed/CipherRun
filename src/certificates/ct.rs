@@ -448,40 +448,19 @@ mod tests {
     }
 
     #[test]
-    fn test_count_scts_in_extension_value_rejects_trailing_der_bytes() {
+    fn test_count_scts_in_extension_value_rejects_malformed_inputs() {
         let verifier = CtVerifier::new(false);
-        let sct_list = [0x00, 0x00];
-        let mut ext_value = vec![0x04, sct_list.len() as u8];
-        ext_value.extend_from_slice(&sct_list);
-        ext_value.push(0xff);
+        for (ext_value, expected) in [
+            (vec![0x04, 0x02, 0x00, 0x00, 0xff], "trailing bytes"),
+            (vec![0x04, 0x01, 0x00], "too short"),
+            (vec![0x04, 0x82, 0x00], "invalid inner OCTET STRING"),
+        ] {
+            let err = verifier
+                .count_scts_in_extension_value(&ext_value)
+                .expect_err("malformed SCT extension value should fail");
 
-        let err = verifier
-            .count_scts_in_extension_value(&ext_value)
-            .expect_err("trailing DER bytes should fail");
-
-        assert!(err.to_string().contains("trailing bytes"));
-    }
-
-    #[test]
-    fn test_count_scts_in_extension_value_rejects_short_list() {
-        let verifier = CtVerifier::new(false);
-
-        let err = verifier
-            .count_scts_in_extension_value(&[0x04, 0x01, 0x00])
-            .expect_err("short SCT list should fail");
-
-        assert!(err.to_string().contains("too short"));
-    }
-
-    #[test]
-    fn test_count_scts_in_extension_value_rejects_malformed_der_octet_string() {
-        let verifier = CtVerifier::new(false);
-
-        let err = verifier
-            .count_scts_in_extension_value(&[0x04, 0x82, 0x00])
-            .expect_err("malformed DER OCTET STRING should fail");
-
-        assert!(err.to_string().contains("invalid inner OCTET STRING"));
+            assert!(err.to_string().contains(expected));
+        }
     }
 
     #[test]
