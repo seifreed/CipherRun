@@ -283,18 +283,27 @@ protocols:
         .to_string()
     }
 
+    fn policy_state() -> (tempfile::TempDir, Arc<AppState>) {
+        let dir = tempfile::tempdir().expect("policy dir should be created");
+        let state = build_state(dir.path().to_path_buf());
+        (dir, state)
+    }
+
+    fn policy_request(name: impl Into<String>, rules: impl Into<String>) -> PolicyRequest {
+        PolicyRequest {
+            name: name.into(),
+            description: None,
+            rules: rules.into(),
+            enabled: true,
+        }
+    }
+
     #[tokio::test]
     async fn test_create_and_get_policy() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
+        let (_dir, state) = policy_state();
 
-        let request = PolicyRequest {
-            name: "Test Policy".to_string(),
-            description: Some("Test policy description".to_string()),
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let mut request = policy_request("Test Policy", sample_policy_yaml());
+        request.description = Some("Test policy description".to_string());
 
         let (_, Json(created)) = create_policy(State(state.clone()), Json(request))
             .await
@@ -308,85 +317,48 @@ protocols:
         assert_eq!(fetched.id, created.id);
         assert_eq!(fetched.name, "Test Policy");
         assert!(fetched.rules.contains("protocols"));
-
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_create_policy_invalid_yaml() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_invalid");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let request = PolicyRequest {
-            name: "Broken Policy".to_string(),
-            description: None,
-            rules: "not: [valid".to_string(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let request = policy_request("Broken Policy", "not: [valid");
 
         let err = create_policy(State(state), Json(request))
             .await
             .expect_err("invalid policy should error");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_create_policy_rejects_empty_request_name() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_empty_name");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let request = PolicyRequest {
-            name: " \t ".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let request = policy_request(" \t ", sample_policy_yaml());
 
         let err = create_policy(State(state), Json(request))
             .await
             .expect_err("empty request name should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_create_policy_rejects_name_without_filename_characters() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_symbol_name");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let request = PolicyRequest {
-            name: "...".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let request = policy_request("...", sample_policy_yaml());
 
         let err = create_policy(State(state), Json(request))
             .await
             .expect_err("policy name without usable filename characters should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_create_policy_rejects_filename_too_long_before_write() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_long_name");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let request = PolicyRequest {
-            name: "a".repeat(MAX_POLICY_ID_BYTES + 1),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (dir, state) = policy_state();
+        let request = policy_request("a".repeat(MAX_POLICY_ID_BYTES + 1), sample_policy_yaml());
 
         let err = create_policy(State(state), Json(request))
             .await
@@ -394,42 +366,29 @@ protocols:
 
         assert!(matches!(err, ApiError::BadRequest(_)));
         assert!(
-            std::fs::read_dir(&policy_dir)
+            std::fs::read_dir(dir.path())
                 .expect("policy dir should exist")
                 .next()
                 .is_none(),
             "invalid request must not create a policy file"
         );
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_get_policy_missing() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_missing");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        std::fs::create_dir_all(&policy_dir).expect("policy dir should be created");
-        let state = build_state(policy_dir.clone());
+        let (_dir, state) = policy_state();
 
         let err = get_policy(State(state), Path("missing".to_string()))
             .await
             .expect_err("missing policy should error");
 
         assert!(matches!(err, ApiError::NotFound(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_evaluate_policy_rejects_empty_scan_options() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_empty");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let create_request = PolicyRequest {
-            name: "Test Policy".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let create_request = policy_request("Test Policy", sample_policy_yaml());
         let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
             .await
             .expect("policy creation should succeed");
@@ -446,21 +405,12 @@ protocols:
         .expect_err("empty scan options should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_evaluate_policy_rejects_invalid_common_options() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_invalid");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let create_request = PolicyRequest {
-            name: "Test Policy".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let create_request = policy_request("Test Policy", sample_policy_yaml());
         let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
             .await
             .expect("policy creation should succeed");
@@ -481,21 +431,12 @@ protocols:
         .expect_err("invalid scan options should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_evaluate_policy_maps_runtime_invalid_input_to_bad_request() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_invalid_ip");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let create_request = PolicyRequest {
-            name: "Test Policy".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let create_request = policy_request("Test Policy", sample_policy_yaml());
         let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
             .await
             .expect("policy creation should succeed");
@@ -516,21 +457,12 @@ protocols:
         .expect_err("invalid IP override should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[tokio::test]
     async fn test_evaluate_policy_rejects_private_target() {
-        let policy_dir = std::env::temp_dir().join("cipherrun_policy_tests_evaluate_private");
-        let _ = std::fs::remove_dir_all(&policy_dir);
-        let state = build_state(policy_dir.clone());
-
-        let create_request = PolicyRequest {
-            name: "Test Policy".to_string(),
-            description: None,
-            rules: sample_policy_yaml(),
-            enabled: true,
-        };
+        let (_dir, state) = policy_state();
+        let create_request = policy_request("Test Policy", sample_policy_yaml());
         let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
             .await
             .expect("policy creation should succeed");
@@ -550,7 +482,6 @@ protocols:
         .expect_err("private target should fail");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
-        let _ = std::fs::remove_dir_all(&policy_dir);
     }
 
     #[test]
