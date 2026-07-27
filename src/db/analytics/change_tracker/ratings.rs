@@ -1,18 +1,9 @@
 // ChangeTracker rating-change detection
 
 use super::*;
+use crate::db::analytics::rating_category::rating_category_rank;
 
 impl ChangeTracker {
-    fn rating_category_rank(category: &str) -> usize {
-        match category {
-            "certificate" => 0,
-            "protocol" => 1,
-            "key_exchange" => 2,
-            "cipher" => 3,
-            _ => 4,
-        }
-    }
-
     fn rating_detail(rating: &RatingRecord) -> String {
         let mut details = vec![
             format!("score={}", rating.score),
@@ -80,8 +71,8 @@ impl ChangeTracker {
             .chain(ratings2_by_category.keys().cloned())
             .collect();
         categories.sort_by(|a, b| {
-            Self::rating_category_rank(a)
-                .cmp(&Self::rating_category_rank(b))
+            rating_category_rank(a)
+                .cmp(&rating_category_rank(b))
                 .then_with(|| a.cmp(b))
         });
         categories.dedup();

@@ -4,19 +4,10 @@ use super::{
     CertificateDiff, CipherDiff, ComparisonSummary, ComponentRatingDiff, ProtocolDiff, RatingDiff,
     ScanComparator, VulnerabilityDiff,
 };
+use crate::db::analytics::rating_category::rating_category_rank;
 use crate::db::connection::DatabasePool;
 use crate::db::{RatingRecord, ScanRecord};
 use std::collections::BTreeMap;
-
-fn rating_category_rank(category: &str) -> usize {
-    match category {
-        "certificate" => 0,
-        "protocol" => 1,
-        "key_exchange" => 2,
-        "cipher" => 3,
-        _ => 4,
-    }
-}
 
 impl ScanComparator {
     pub(crate) async fn compare_ratings(
