@@ -119,34 +119,9 @@ impl TrendAnalyzer {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::{insert_scan, setup_db};
+    use super::super::test_support::{insert_protocol, insert_scan, setup_db};
     use super::super::trend_analyzer::TrendAnalyzer;
-    use crate::db::{BindValue, CipherRunDatabase};
     use chrono::{Duration, Utc};
-
-    async fn insert_protocol(
-        db: &CipherRunDatabase,
-        scan_id: i64,
-        name: &str,
-        enabled: bool,
-        preferred: bool,
-    ) {
-        let mut qb = db.pool().query_builder();
-        let query = qb.insert_query(
-            "protocols",
-            &["scan_id", "protocol_name", "enabled", "preferred"],
-        );
-        let bindings = vec![
-            BindValue::Int64(scan_id),
-            BindValue::String(name.to_string()),
-            BindValue::Bool(enabled),
-            BindValue::Bool(preferred),
-        ];
-        db.pool()
-            .execute(&query, bindings)
-            .await
-            .expect("test assertion should succeed");
-    }
 
     #[test]
     fn test_generate_protocol_summary() {

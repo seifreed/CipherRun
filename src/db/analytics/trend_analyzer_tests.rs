@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::analytics::test_support::{insert_scan, setup_db};
+use crate::db::analytics::test_support::{insert_cipher, insert_protocol, insert_scan, setup_db};
 use crate::db::{BindValue, CipherRunDatabase};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
@@ -188,71 +188,6 @@ fn test_trend_functions_are_order_independent() {
         TrendAnalyzer::determine_usize_trend_direction(&vuln_points_desc),
         TrendDirection::Degrading
     );
-}
-
-async fn insert_protocol(
-    db: &CipherRunDatabase,
-    scan_id: i64,
-    name: &str,
-    enabled: bool,
-    preferred: bool,
-) {
-    let mut qb = db.pool().query_builder();
-    let query = qb.insert_query(
-        "protocols",
-        &["scan_id", "protocol_name", "enabled", "preferred"],
-    );
-    let bindings = vec![
-        BindValue::Int64(scan_id),
-        BindValue::String(name.to_string()),
-        BindValue::Bool(enabled),
-        BindValue::Bool(preferred),
-    ];
-    db.pool()
-        .execute(&query, bindings)
-        .await
-        .expect("test assertion should succeed");
-}
-
-async fn insert_cipher(
-    db: &CipherRunDatabase,
-    scan_id: i64,
-    protocol: &str,
-    cipher_name: &str,
-    strength: &str,
-) {
-    let mut qb = db.pool().query_builder();
-    let query = qb.insert_query(
-        "cipher_suites",
-        &[
-            "scan_id",
-            "protocol_name",
-            "cipher_name",
-            "key_exchange",
-            "authentication",
-            "encryption",
-            "mac",
-            "bits",
-            "forward_secrecy",
-            "strength",
-        ],
-    );
-    let bindings = vec![
-        BindValue::Int64(scan_id),
-        BindValue::String(protocol.to_string()),
-        BindValue::String(cipher_name.to_string()),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-        BindValue::OptInt32(None),
-        BindValue::Bool(true),
-        BindValue::String(strength.to_string()),
-    ];
-    db.pool()
-        .execute(&query, bindings)
-        .await
-        .expect("test assertion should succeed");
 }
 
 async fn insert_vulnerability(
