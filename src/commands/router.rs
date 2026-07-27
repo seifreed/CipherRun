@@ -332,167 +332,153 @@ mod tests {
     }
 
     #[test]
-    fn test_route_api_server() {
-        let args = Args {
-            api_server: ApiServerArgs {
-                enable: true,
+    fn test_route_modes() {
+        for (case, args, expected_name) in [
+            (
+                "api server",
+                Args {
+                    api_server: ApiServerArgs {
+                        enable: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                "ApiServerCommand",
+            ),
+            (
+                "monitor",
+                Args {
+                    monitoring: MonitoringArgs {
+                        enable: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                "MonitorCommand",
+            ),
+            (
+                "ct logs",
+                Args {
+                    ct_logs: CtLogsArgs {
+                        enable: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                "CtLogsCommand",
+            ),
+            (
+                "analytics",
+                Args {
+                    compare: Some("1:2".to_string()),
+                    ..Default::default()
+                },
+                "AnalyticsCommand",
+            ),
+            (
+                "database",
+                Args {
+                    database: DatabaseArgs {
+                        init: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                "DatabaseCommand",
+            ),
+            (
+                "mx",
+                Args {
+                    mx_domain: Some("example.com".to_string()),
+                    ..Default::default()
+                },
+                "MxTestCommand",
+            ),
+            (
+                "file",
+                Args {
+                    input_file: Some(std::path::PathBuf::from("targets.txt")),
+                    ..Default::default()
+                },
+                "MassScanCommand",
+            ),
+            (
+                "cidr",
+                Args {
+                    cidr: Some("192.0.2.0/24".to_string()),
+                    ..Default::default()
+                },
+                "MassScanCommand",
+            ),
+            (
+                "asn",
+                Args {
+                    asn: Some("AS13335".to_string()),
+                    ..Default::default()
+                },
+                "MassScanCommand",
+            ),
+        ] {
+            let cmd = CommandRouter::route(args).expect(case);
+            assert_eq!(cmd.name(), expected_name, "{case}");
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_conflicting_scan_sources() {
+        for args in [
+            Args {
+                target: Some("example.com:443".to_string()),
+                cidr: Some("192.0.2.0/24".to_string()),
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert_routes_to(args, "ApiServerCommand");
-    }
-
-    #[test]
-    fn test_route_monitor() {
-        let args = Args {
-            monitoring: MonitoringArgs {
-                enable: true,
+            Args {
+                asn: Some("AS13335".to_string()),
+                cidr: Some("192.0.2.0/24".to_string()),
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert_routes_to(args, "MonitorCommand");
-    }
-
-    #[test]
-    fn test_route_ct_logs() {
-        let args = Args {
-            ct_logs: CtLogsArgs {
-                enable: true,
+            Args {
+                input_file: Some(std::path::PathBuf::from("targets.txt")),
+                asn: Some("AS13335".to_string()),
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert_routes_to(args, "CtLogsCommand");
-    }
-
-    #[test]
-    fn test_route_analytics() {
-        let args = Args {
-            compare: Some("1:2".to_string()),
-            ..Default::default()
-        };
-        assert_routes_to(args, "AnalyticsCommand");
-    }
-
-    #[test]
-    fn test_validate_rejects_multiple_analytics_operations() {
-        assert_routing_rejected(Args {
-            compare: Some("1:2".to_string()),
-            trends: Some("example.com:443:30".to_string()),
-            ..Default::default()
-        });
-    }
-
-    #[test]
-    fn test_route_database() {
-        let args = Args {
-            database: DatabaseArgs {
-                init: true,
+            Args {
+                mx_domain: Some("example.com".to_string()),
+                target: Some("example.com:443".to_string()),
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert_routes_to(args, "DatabaseCommand");
-    }
-
-    #[test]
-    fn test_route_mx_test() {
-        let args = Args {
-            mx_domain: Some("example.com".to_string()),
-            ..Default::default()
-        };
-        assert_routes_to(args, "MxTestCommand");
-    }
-
-    #[test]
-    fn test_route_mass_scan() {
-        let args = Args {
-            input_file: Some(std::path::PathBuf::from("targets.txt")),
-            ..Default::default()
-        };
-        assert_routes_to(args, "MassScanCommand");
-    }
-
-    #[test]
-    fn test_route_cidr_uses_mass_scan_command() {
-        let args = Args {
-            cidr: Some("192.0.2.0/24".to_string()),
-            ..Default::default()
-        };
-        assert_routes_to(args, "MassScanCommand");
-    }
-
-    #[test]
-    fn test_route_asn_uses_mass_scan_command() {
-        let args = Args {
-            asn: Some("AS13335".to_string()),
-            ..Default::default()
-        };
-        assert_routes_to(args, "MassScanCommand");
-    }
-
-    #[test]
-    fn test_validate_target_and_cidr_conflict() {
-        assert_routing_rejected(Args {
-            target: Some("example.com:443".to_string()),
-            cidr: Some("192.0.2.0/24".to_string()),
-            ..Default::default()
-        });
-    }
-
-    #[test]
-    fn test_validate_asn_and_cidr_conflict() {
-        assert_routing_rejected(Args {
-            asn: Some("AS13335".to_string()),
-            cidr: Some("192.0.2.0/24".to_string()),
-            ..Default::default()
-        });
-    }
-
-    #[test]
-    fn test_validate_file_and_asn_conflict() {
-        assert_routing_rejected(Args {
-            input_file: Some(std::path::PathBuf::from("targets.txt")),
-            asn: Some("AS13335".to_string()),
-            ..Default::default()
-        });
-    }
-
-    #[test]
-    fn test_validate_mx_and_target_conflict() {
-        assert_routing_rejected(Args {
-            mx_domain: Some("example.com".to_string()),
-            target: Some("example.com:443".to_string()),
-            ..Default::default()
-        });
-    }
-
-    #[test]
-    fn test_reject_database_action_with_cidr() {
-        let args = Args {
-            cidr: Some("192.0.2.0/30".to_string()),
-            database: DatabaseArgs {
-                init: true,
+            Args {
+                compare: Some("1:2".to_string()),
+                trends: Some("example.com:443:30".to_string()),
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert!(CommandRouter::route(args).is_err());
+        ] {
+            assert_routing_rejected(args);
+        }
     }
 
     #[test]
-    fn test_reject_database_action_with_asn() {
-        let args = Args {
-            asn: Some("AS13335".to_string()),
-            database: DatabaseArgs {
-                init: true,
+    fn test_reject_database_action_with_bulk_scan_sources() {
+        for args in [
+            Args {
+                cidr: Some("192.0.2.0/30".to_string()),
+                database: DatabaseArgs {
+                    init: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        assert!(CommandRouter::route(args).is_err());
+            Args {
+                asn: Some("AS13335".to_string()),
+                database: DatabaseArgs {
+                    init: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ] {
+            assert!(CommandRouter::route(args).is_err());
+        }
     }
 
     #[test]
