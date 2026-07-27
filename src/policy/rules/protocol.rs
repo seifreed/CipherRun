@@ -137,21 +137,7 @@ mod tests {
     use super::*;
     use crate::policy::PolicyAction;
     use crate::protocols::Protocol;
-
-    fn protocol_result(protocol: Protocol, supported: bool) -> ProtocolTestResult {
-        ProtocolTestResult {
-            protocol,
-            supported,
-            inconclusive: false,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            ciphers_count: 0,
-            preferred: false,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }
-    }
+    use crate::protocols::test_support::protocol_result;
 
     fn base_policy() -> ProtocolPolicy {
         ProtocolPolicy {

@@ -1,9 +1,9 @@
 use super::{Protocol, ProtocolTestResult};
 
-pub(crate) fn supported_protocol_result(protocol: Protocol) -> ProtocolTestResult {
+pub(crate) fn protocol_result(protocol: Protocol, supported: bool) -> ProtocolTestResult {
     ProtocolTestResult {
         protocol,
-        supported: true,
+        supported,
         inconclusive: false,
         preferred: false,
         ciphers_count: 0,
@@ -13,4 +13,8 @@ pub(crate) fn supported_protocol_result(protocol: Protocol) -> ProtocolTestResul
         session_resumption_tickets: None,
         secure_renegotiation: None,
     }
+}
+
+pub(crate) fn supported_protocol_result(protocol: Protocol) -> ProtocolTestResult {
+    protocol_result(protocol, true)
 }
