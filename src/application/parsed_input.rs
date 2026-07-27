@@ -158,16 +158,11 @@ mod tests {
 
     #[test]
     fn parses_compare_scan_ids() {
-        let parsed = CompareScanIds::parse("1:2").expect("should parse");
-        assert_eq!(parsed.left, 1);
-        assert_eq!(parsed.right, 2);
-    }
-
-    #[test]
-    fn trims_compare_scan_ids() {
-        let parsed = CompareScanIds::parse(" 1 : 2 ").expect("should parse");
-        assert_eq!(parsed.left, 1);
-        assert_eq!(parsed.right, 2);
+        for input in ["1:2", " 1 : 2 "] {
+            let parsed = CompareScanIds::parse(input).expect("should parse");
+            assert_eq!(parsed.left, 1, "{input}");
+            assert_eq!(parsed.right, 2, "{input}");
+        }
     }
 
     #[test]
@@ -179,31 +174,23 @@ mod tests {
 
     #[test]
     fn parses_host_port_days() {
-        let parsed = HostPortDaysInput::parse("example.com:443:7").expect("should parse");
-        assert_eq!(parsed.hostname, "example.com");
-        assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.days, 7);
-    }
-
-    #[test]
-    fn parses_ip_literal_host_port_days() {
-        let parsed = HostPortDaysInput::parse("192.0.2.1:443:7").expect("should parse");
-        assert_eq!(parsed.hostname, "192.0.2.1");
-        assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.days, 7);
+        for (input, hostname, port, days) in [
+            ("example.com:443:7", "example.com", 443, 7),
+            ("192.0.2.1:443:7", "192.0.2.1", 443, 7),
+            ("example.com.:443:7", "example.com", 443, 7),
+            (" example.com:443: 7 ", "example.com", 443, 7),
+            ("[::1]:443:7", "::1", 443, 7),
+        ] {
+            let parsed = HostPortDaysInput::parse(input).expect("should parse");
+            assert_eq!(parsed.hostname, hostname, "{input}");
+            assert_eq!(parsed.port, port, "{input}");
+            assert_eq!(parsed.days, days, "{input}");
+        }
     }
 
     #[test]
     fn rejects_dotted_ip_literal_host_port_days() {
         assert!(HostPortDaysInput::parse("192.0.2.1.:443:7").is_err());
-    }
-
-    #[test]
-    fn host_port_days_normalizes_rooted_fqdn() {
-        let parsed = HostPortDaysInput::parse("example.com.:443:7").expect("should parse");
-        assert_eq!(parsed.hostname, "example.com");
-        assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.days, 7);
     }
 
     #[test]
@@ -214,15 +201,6 @@ mod tests {
     #[test]
     fn rejects_host_port_days_url_path_colon_without_authority_port() {
         assert!(HostPortDaysInput::parse("https://example.com/path:443:7").is_err());
-    }
-
-    #[test]
-    fn trims_host_port_days() {
-        let parsed =
-            HostPortDaysInput::parse(" example.com:443: 7 ").expect("should parse trimmed input");
-        assert_eq!(parsed.hostname, "example.com");
-        assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.days, 7);
     }
 
     #[test]
@@ -244,48 +222,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_host_port_days_with_bracketed_ipv6() {
-        let parsed = HostPortDaysInput::parse("[::1]:443:7").expect("should parse");
-        assert_eq!(parsed.hostname, "::1");
-        assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.days, 7);
-    }
-
-    #[test]
     fn parses_host_port_with_default_port() {
-        let parsed =
-            HostPortInput::parse_with_default_port("example.com", 443).expect("should parse");
-        assert_eq!(parsed.hostname, "example.com");
-        assert_eq!(parsed.port, 443);
-    }
-
-    #[test]
-    fn parses_ip_literal_host_port_with_default_port() {
-        let parsed =
-            HostPortInput::parse_with_default_port("192.0.2.1", 443).expect("should parse");
-        assert_eq!(parsed.hostname, "192.0.2.1");
-        assert_eq!(parsed.port, 443);
+        for (input, default_port, hostname, port) in [
+            ("example.com", 443, "example.com", 443),
+            ("192.0.2.1", 443, "192.0.2.1", 443),
+            ("example.com.", 443, "example.com", 443),
+            ("[::1]:8443", 443, "::1", 8443),
+        ] {
+            let parsed =
+                HostPortInput::parse_with_default_port(input, default_port).expect("should parse");
+            assert_eq!(parsed.hostname, hostname, "{input}");
+            assert_eq!(parsed.port, port, "{input}");
+        }
     }
 
     #[test]
     fn rejects_dotted_ip_literal_host_port_with_default_port() {
         assert!(HostPortInput::parse_with_default_port("192.0.2.1.", 443).is_err());
-    }
-
-    #[test]
-    fn host_port_input_normalizes_rooted_fqdn() {
-        let parsed =
-            HostPortInput::parse_with_default_port("example.com.", 443).expect("should parse");
-        assert_eq!(parsed.hostname, "example.com");
-        assert_eq!(parsed.port, 443);
-    }
-
-    #[test]
-    fn parses_bracketed_ipv6_host_port_with_default_port() {
-        let parsed =
-            HostPortInput::parse_with_default_port("[::1]:8443", 443).expect("should parse");
-        assert_eq!(parsed.hostname, "::1");
-        assert_eq!(parsed.port, 8443);
     }
 
     #[test]
