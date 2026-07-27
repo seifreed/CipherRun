@@ -28,6 +28,14 @@ impl CommandExit {
     }
 }
 
+pub(crate) fn exit_for_result_list<T, U>(results: &[(T, Result<U>)]) -> CommandExit {
+    if results.iter().any(|(_, result)| result.is_err()) {
+        CommandExit::failure(1)
+    } else {
+        CommandExit::success()
+    }
+}
+
 /// Command trait - Defines the interface for all command implementations
 ///
 /// This trait follows the Command Pattern to encapsulate different
@@ -89,5 +97,15 @@ mod tests {
         assert_eq!(cmd.name(), "DummyCommand");
         let exit = cmd.execute().await.expect("command should succeed");
         assert!(exit.is_success());
+    }
+
+    #[test]
+    fn test_exit_for_result_list_fails_when_any_result_failed() {
+        let results = vec![
+            ("ok", Ok(1)),
+            ("bad", Err(crate::TlsError::Other("failed".to_string()))),
+        ];
+
+        assert_eq!(exit_for_result_list(&results).code(), 1);
     }
 }

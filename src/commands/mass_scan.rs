@@ -3,7 +3,7 @@
 // Licensed under GPL-3.0
 
 use super::scan_exporter::{ExportKind, ScanExporter};
-use super::{Command, CommandExit};
+use super::{Command, CommandExit, exit_for_result_list};
 use crate::application::ScanRequest;
 use crate::input::{AsnCidrParser, CidrExpansion};
 use crate::scanner::ScanResults;
@@ -175,14 +175,6 @@ impl MassScanCommand {
             message: "Mass scanning requires --file, --asn, or --cidr".to_string(),
         })
     }
-
-    fn exit_for_results(results: &[(String, Result<ScanResults>)]) -> CommandExit {
-        if results.iter().any(|(_, result)| result.is_err()) {
-            CommandExit::failure(1)
-        } else {
-            CommandExit::success()
-        }
-    }
 }
 
 #[async_trait]
@@ -208,7 +200,7 @@ impl Command for MassScanCommand {
         } else {
             mass_scanner.scan_serial().await?
         };
-        let exit = Self::exit_for_results(&results);
+        let exit = exit_for_result_list(&results);
 
         // Apply certificate filters if active
         let filtered_results = MassScanner::filter_results(&certificate_filters, results);
@@ -395,18 +387,5 @@ mod tests {
             Err(e) => e,
         };
         assert!(format!("{err}").contains("safety limit"));
-    }
-
-    #[test]
-    fn test_exit_for_results_fails_when_any_target_failed() {
-        let results = vec![
-            ("ok.example:443".to_string(), Ok(ScanResults::default())),
-            (
-                "bad.example:443".to_string(),
-                Err(TlsError::Other("scan failed".to_string())),
-            ),
-        ];
-
-        assert!(!MassScanCommand::exit_for_results(&results).is_success());
     }
 }

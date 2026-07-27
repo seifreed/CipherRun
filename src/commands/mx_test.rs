@@ -5,7 +5,7 @@
 use super::scan_exporter::{ExportKind, ScanExportOutcome, ScanExporter};
 use super::scan_notice_presenter::ScanNoticePresenter;
 use super::scan_post_presenter::ScanPostPresenter;
-use super::{Command, CommandExit};
+use super::{Command, CommandExit, exit_for_result_list};
 use crate::application::use_cases::{EvaluateCompliance, EvaluatePolicy, StoreScanResults};
 use crate::application::{ScanAssessment, ScanExecutionReport};
 use crate::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
@@ -198,14 +198,6 @@ impl MxTestCommand {
             notices.render_export_spacing(true);
         }
     }
-
-    fn exit_for_results(results: &[(MxRecord, Result<ScanResults>)]) -> CommandExit {
-        if results.iter().any(|(_, result)| result.is_err()) {
-            CommandExit::failure(1)
-        } else {
-            CommandExit::success()
-        }
-    }
 }
 
 struct MxWorkflowDependencies {
@@ -247,7 +239,7 @@ impl Command for MxTestCommand {
                 self.args.network.max_parallel,
             )
             .await?;
-        let scan_exit = Self::exit_for_results(&results);
+        let scan_exit = exit_for_result_list(&results);
 
         if !self.args.output.quiet {
             println!("{}", MxTester::generate_mx_summary(&results));
@@ -299,27 +291,5 @@ mod tests {
         let cmd = MxTestCommand::new(args);
         let err = cmd.execute().await.unwrap_err();
         assert!(format!("{err}").contains("MX domain is required"));
-    }
-
-    #[test]
-    fn test_exit_for_results_fails_when_any_mx_failed() {
-        let results = vec![
-            (
-                MxRecord {
-                    priority: 10,
-                    hostname: "ok.example".to_string(),
-                },
-                Ok(ScanResults::default()),
-            ),
-            (
-                MxRecord {
-                    priority: 20,
-                    hostname: "bad.example".to_string(),
-                },
-                Err(TlsError::Other("scan failed".to_string())),
-            ),
-        ];
-
-        assert!(!MxTestCommand::exit_for_results(&results).is_success());
     }
 }

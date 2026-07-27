@@ -22,6 +22,7 @@ mod scan_post_presenter;
 mod scan_presenter;
 mod scan_results_presenter;
 
+pub(crate) use command::exit_for_result_list;
 pub use command::{Command, CommandExit};
 pub use router::CommandRouter;
 
