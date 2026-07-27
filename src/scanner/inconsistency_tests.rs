@@ -4,7 +4,7 @@ use crate::certificates::validator::ValidationResult;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
-use crate::scanner::test_support::make_cipher;
+use crate::scanner::test_support::{make_cipher, successful_ip_scan};
 use crate::scanner::{
     AdvancedResults, CertificateAnalysisResult, ProtocolTestResult, RatingResults, ScanResults,
 };
@@ -45,19 +45,6 @@ fn test_detector_with_no_results() {
     let detector = InconsistencyDetector::new(HashMap::new());
     let inconsistencies = detector.detect_all();
     assert!(inconsistencies.is_empty());
-}
-
-fn successful_ip_scan(
-    ip: IpAddr,
-    scan_result: ScanResults,
-    scan_duration_ms: u64,
-) -> SingleIpScanResult {
-    SingleIpScanResult {
-        ip,
-        scan_result,
-        scan_duration_ms,
-        error: None,
-    }
 }
 
 fn failed_ip_scan(ip: IpAddr, scan_duration_ms: u64, error: &str) -> SingleIpScanResult {

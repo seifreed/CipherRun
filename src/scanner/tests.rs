@@ -5,7 +5,7 @@ use crate::client_sim::simulator::ClientSimulationResult;
 use crate::fingerprint::{CdnDetection, Ja3Fingerprint, Ja3Signature, LoadBalancerInfo};
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
-use crate::scanner::inconsistency::SingleIpScanResult;
+use crate::scanner::test_support::successful_ip_scan;
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 use crate::Args;
@@ -43,19 +43,6 @@ fn empty_aggregated_result() -> crate::scanner::aggregation::AggregatedScanResul
 
 fn example_target(ips: Vec<std::net::IpAddr>) -> Target {
     Target::with_ips("example.com".to_string(), 443, ips).expect("test assertion should succeed")
-}
-
-fn successful_ip_scan(
-    ip: std::net::IpAddr,
-    scan_result: ScanResults,
-    scan_duration_ms: u64,
-) -> SingleIpScanResult {
-    SingleIpScanResult {
-        ip,
-        scan_result,
-        scan_duration_ms,
-        error: None,
-    }
 }
 
 #[test]

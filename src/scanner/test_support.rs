@@ -1,4 +1,7 @@
 use crate::ciphers::CipherSuite;
+use crate::scanner::ScanResults;
+use crate::scanner::inconsistency::SingleIpScanResult;
+use std::net::IpAddr;
 
 pub(crate) fn make_cipher(
     openssl_name: &str,
@@ -17,5 +20,18 @@ pub(crate) fn make_cipher(
         mac: "SHA256".to_string(),
         bits,
         export: false,
+    }
+}
+
+pub(crate) fn successful_ip_scan(
+    ip: IpAddr,
+    scan_result: ScanResults,
+    scan_duration_ms: u64,
+) -> SingleIpScanResult {
+    SingleIpScanResult {
+        ip,
+        scan_result,
+        scan_duration_ms,
+        error: None,
     }
 }
