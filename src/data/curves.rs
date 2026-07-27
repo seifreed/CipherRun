@@ -300,23 +300,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_curve_line_invalid() {
-        let err = CurvesDatabase::parse_line("invalid").expect_err("should fail");
-        assert!(err.to_string().contains("Invalid format"));
-    }
-
-    #[test]
-    fn test_parse_curve_line_rejects_invalid_id() {
-        let err =
-            CurvesDatabase::parse_line("0xGG,0x1d - X25519  Curve25519").expect_err("should fail");
-
-        assert!(err.to_string().contains("invalid curve ID"));
-    }
-
-    #[test]
-    fn test_parse_curve_line_missing_name_fails() {
-        let err = CurvesDatabase::parse_line("0x00,0x1d - ").expect_err("should fail");
-        assert!(err.to_string().contains("missing curve name"));
+    fn test_parse_curve_line_rejects_invalid_lines() {
+        for (line, expected) in [
+            ("invalid", "Invalid format"),
+            ("0xGG,0x1d - X25519  Curve25519", "invalid curve ID"),
+            ("0x00,0x1d - ", "missing curve name"),
+        ] {
+            let err = CurvesDatabase::parse_line(line).expect_err("should fail");
+            assert!(err.to_string().contains(expected), "{line}");
+        }
     }
 
     #[test]
