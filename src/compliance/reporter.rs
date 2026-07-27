@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::compliance::{ComplianceReport, ComplianceStatus, RequirementStatus, Severity};
+use crate::utils::csv::formula_safe_csv_cell as csv_report_cell;
 use colored::Colorize;
 /// Reporter for generating compliance reports in various formats
 pub struct Reporter;
@@ -363,28 +364,6 @@ fn escape_html(s: &str) -> String {
         }
     }
     out
-}
-
-/// Quote a compliance CSV cell and neutralize spreadsheet formulas.
-///
-/// Compliance fields can include framework-defined text and server-derived
-/// evidence. If opened in a spreadsheet, cells beginning with formula sigils can
-/// execute as formulas even when correctly CSV-quoted.
-fn csv_report_cell(s: &str) -> String {
-    let trimmed = s.trim();
-    let safe = if trimmed.starts_with('=')
-        || trimmed.starts_with('+')
-        || trimmed.starts_with('-')
-        || trimmed.starts_with('@')
-        || trimmed.starts_with('\t')
-        || trimmed.starts_with('\r')
-    {
-        format!("'{trimmed}")
-    } else {
-        trimmed.to_string()
-    };
-
-    format!("\"{}\"", safe.replace('"', "\"\""))
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 pub mod adaptive;
 pub mod anycast;
 pub(crate) mod byte_parse;
+pub(crate) mod csv;
 pub mod dns_cache;
 pub mod hints;
 pub mod http;
