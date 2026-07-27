@@ -155,19 +155,13 @@ mod tests {
     use super::ScanRequest;
 
     #[test]
-    fn test_pqc_readiness_pulls_in_protocol_phase() {
+    fn test_pqc_readiness_pulls_in_required_phases() {
         let mut args = ScanRequest::default();
         args.scan.ciphers.pqc_readiness = true;
         assert!(
             args.should_run_protocol_phase(),
             "--pq-readiness must run the protocol phase it consumes"
         );
-    }
-
-    #[test]
-    fn test_pqc_readiness_pulls_in_certificate_phase() {
-        let mut args = ScanRequest::default();
-        args.scan.ciphers.pqc_readiness = true;
         assert!(
             args.should_run_certificate_phase(),
             "--pq-readiness must run the certificate phase it consumes"
