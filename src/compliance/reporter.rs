@@ -369,22 +369,11 @@ fn escape_html(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compliance::test_support::test_framework;
     use crate::compliance::{
         ComplianceFramework, ComplianceReport, RequirementResult, RequirementStatus, Severity,
         Violation,
     };
-
-    fn test_framework() -> ComplianceFramework {
-        ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        }
-    }
 
     fn finalized_report(framework: &ComplianceFramework) -> ComplianceReport {
         let mut report = ComplianceReport::new(framework, "test.com:443".to_string());

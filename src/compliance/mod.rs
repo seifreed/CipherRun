@@ -246,6 +246,7 @@ impl ComplianceReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compliance::test_support::test_framework;
 
     #[test]
     fn test_compliance_status_display() {
@@ -264,15 +265,7 @@ mod tests {
 
     #[test]
     fn test_compliance_report_summary() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        };
+        let framework = test_framework();
 
         let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
 
@@ -308,15 +301,7 @@ mod tests {
 
     #[test]
     fn test_filtered_by_minimum_severity_preserves_summary_and_status() {
-        let framework = ComplianceFramework {
-            id: "test".to_string(),
-            name: "Test Framework".to_string(),
-            version: "1.0".to_string(),
-            description: "Test".to_string(),
-            organization: "Test Org".to_string(),
-            effective_date: None,
-            requirements: vec![],
-        };
+        let framework = test_framework();
 
         let mut report = ComplianceReport::new(&framework, "test.com:443".to_string());
         report.add_requirement_result(RequirementResult {

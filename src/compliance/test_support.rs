@@ -1,4 +1,4 @@
-use super::Rule;
+use super::{ComplianceFramework, Rule};
 use std::collections::HashMap;
 
 pub(crate) fn base_rule(rule_type: &str) -> Rule {
@@ -18,5 +18,17 @@ pub(crate) fn base_rule(rule_type: &str) -> Rule {
         require_revocation_check: None,
         max_days_until_expiration: None,
         custom_params: HashMap::new(),
+    }
+}
+
+pub(crate) fn test_framework() -> ComplianceFramework {
+    ComplianceFramework {
+        id: "test".to_string(),
+        name: "Test Framework".to_string(),
+        version: "1.0".to_string(),
+        description: "Test".to_string(),
+        organization: "Test Org".to_string(),
+        effective_date: None,
+        requirements: vec![],
     }
 }
