@@ -172,20 +172,12 @@ mod tests {
         assert!(output.contains("123ms"));
         assert!(output.contains("warning"));
         assert!(output.contains("TLS fallback used"));
-    }
 
-    #[test]
-    fn test_probe_status_response_only_omits_target() {
-        let status = ProbeStatus::partial_success(
-            Duration::from_millis(42),
-            "TLS fallback used".to_string(),
-        );
-
-        let output = status.format_response_only();
-        assert!(output.contains("42ms"));
-        assert!(output.contains("warning"));
-        assert!(output.contains("TLS fallback used"));
-        assert!(!output.contains("example.com"));
+        let response_only = status.format_response_only();
+        assert!(response_only.contains("123ms"));
+        assert!(response_only.contains("warning"));
+        assert!(response_only.contains("TLS fallback used"));
+        assert!(!response_only.contains("example.com"));
     }
 
     #[test]
