@@ -22,12 +22,7 @@ fn target_with_ips(hostname: &str, port: u16, ips: [IpAddr; 2]) -> Target {
 }
 
 pub(crate) fn localhost_target(port: u16) -> Target {
-    Target::with_ips(
-        "localhost".to_string(),
-        port,
-        vec![IpAddr::from([127, 0, 0, 1])],
-    )
-    .unwrap()
+    crate::utils::test_support::localhost_target(port)
 }
 
 pub(crate) async fn spawn_dummy_server(max_accepts: usize) -> std::net::SocketAddr {

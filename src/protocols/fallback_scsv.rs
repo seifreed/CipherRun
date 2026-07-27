@@ -131,15 +131,7 @@ mod tests {
     use super::*;
     use crate::constants::{COMPRESSION_NULL, CONTENT_TYPE_ALERT, VERSION_TLS_1_2};
     use crate::protocols::Protocol;
-
-    fn localhost_target() -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
+    use crate::utils::test_support::localhost_target;
 
     fn example_client_hello(include_scsv: bool) -> Vec<u8> {
         let target = example_target();
@@ -252,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_select_fallback_protocol() {
-        let target = localhost_target();
+        let target = localhost_target(443);
         let tester = FallbackScsvTester::new(&target);
         let supported = vec![Protocol::TLS10, Protocol::TLS11, Protocol::TLS12];
         let fallback = tester.select_fallback_protocol(&supported, Protocol::TLS12);
@@ -261,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_format_protocol_list_empty() {
-        let target = localhost_target();
+        let target = localhost_target(443);
         let tester = FallbackScsvTester::new(&target);
         let formatted = tester.format_protocol_list(&[]);
         assert!(formatted.is_empty());
@@ -300,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_logic() {
-        let target = localhost_target();
+        let target = localhost_target(443);
         let tester = FallbackScsvTester::new(&target);
 
         let mut buffer = [0u8; 8];

@@ -387,21 +387,13 @@ impl SecurityGrade {
 mod tests {
     use super::*;
     use crate::http::headers::IssueType;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use crate::utils::test_support::localhost_target;
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
 
     async fn spawn_https_server(response: String) -> u16 {
         spawn_https_server_bytes(response.into_bytes()).await
-    }
-
-    fn localhost_target(port: u16) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        )
-        .unwrap()
     }
 
     async fn spawn_https_server_bytes(response: Vec<u8>) -> u16 {

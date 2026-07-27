@@ -345,16 +345,8 @@ impl ScanPhase for FingerprintPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::localhost_target;
     use std::sync::Arc;
-
-    fn localhost_target() -> crate::utils::network::Target {
-        crate::utils::network::Target::with_ips(
-            "localhost".to_string(),
-            443,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed")
-    }
 
     #[test]
     fn test_fingerprint_phase_should_run() {
@@ -439,7 +431,7 @@ mod tests {
     async fn test_execute_no_flags_no_fingerprints() {
         // This test verifies that when no fingerprint flags are set,
         // the execute method doesn't modify the results
-        let target = localhost_target();
+        let target = localhost_target(443);
 
         let mut args = ScanRequest::default();
         // Explicitly ensure all fingerprint flags are false
@@ -474,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_load_ja3_database_rejects_invalid_custom_path() {
-        let target = localhost_target();
+        let target = localhost_target(443);
 
         let mut args = ScanRequest::default();
         args.fingerprint.ja3_database = Some(std::env::temp_dir().join(format!(
@@ -497,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_load_ja3s_database_rejects_invalid_custom_path() {
-        let target = localhost_target();
+        let target = localhost_target(443);
 
         let mut args = ScanRequest::default();
         args.fingerprint.ja3s_database = Some(std::env::temp_dir().join(format!(
@@ -520,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_load_jarm_database_rejects_invalid_custom_path() {
-        let target = localhost_target();
+        let target = localhost_target(443);
 
         let mut args = ScanRequest::default();
         args.fingerprint.jarm_database = Some(std::env::temp_dir().join(format!(
@@ -544,7 +536,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_rejects_invalid_requested_custom_databases() {
         async fn assert_rejects(args: ScanRequest, expected: &str) {
-            let target = localhost_target();
+            let target = localhost_target(443);
             let mut context = ScanContext::new(target, Arc::new(args), None, None);
 
             let err = FingerprintPhase::new()
