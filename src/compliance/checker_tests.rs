@@ -7,7 +7,8 @@ use crate::ciphers::CipherSuite;
 use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::compliance::Rule;
 use crate::compliance::test_support::base_rule;
-use crate::protocols::{Protocol, ProtocolTestResult};
+use crate::protocols::Protocol;
+use crate::protocols::test_support::supported_protocol_result as protocol_result;
 use crate::scanner::CertificateAnalysisResult;
 use crate::vulnerabilities::{Severity as VulnSeverity, VulnerabilityResult, VulnerabilityType};
 use std::collections::HashMap;
@@ -76,21 +77,6 @@ fn leaf_certificate_mut(results: &mut ScanAssessment) -> &mut CertificateInfo {
         .unwrap()
         .chain
         .certificates[0]
-}
-
-fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
-    ProtocolTestResult {
-        protocol,
-        supported: true,
-        inconclusive: false,
-        preferred: false,
-        ciphers_count: 0,
-        heartbeat_enabled: None,
-        handshake_time_ms: None,
-        session_resumption_caching: None,
-        session_resumption_tickets: None,
-        secure_renegotiation: None,
-    }
 }
 
 fn protocol_assessment(protocols: &[Protocol]) -> ScanAssessment {

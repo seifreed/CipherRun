@@ -60,6 +60,8 @@ pub mod rdp;
 pub mod renegotiation;
 pub mod session_resumption;
 pub mod signatures;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tester;
 
 pub use tester::{ProtocolTestable, ProtocolTester};

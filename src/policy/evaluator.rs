@@ -421,22 +421,8 @@ impl crate::application::PolicyEvaluatorPort for DefaultPolicyEvaluator {
 mod tests {
     use super::*;
     use crate::policy::*;
-    use crate::protocols::{Protocol, ProtocolTestResult};
-
-    fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
-        ProtocolTestResult {
-            protocol,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }
-    }
+    use crate::protocols::Protocol;
+    use crate::protocols::test_support::supported_protocol_result as protocol_result;
 
     fn base_policy() -> Policy {
         Policy {

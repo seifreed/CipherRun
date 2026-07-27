@@ -114,22 +114,8 @@ mod tests {
     use super::*;
     use crate::compliance::test_support::base_rule;
     use crate::compliance::{ComplianceFramework, Requirement, Rule};
+    use crate::protocols::test_support::supported_protocol_result as protocol_result;
     use crate::protocols::{Protocol, ProtocolTestResult};
-
-    fn protocol_result(protocol: Protocol) -> ProtocolTestResult {
-        ProtocolTestResult {
-            protocol,
-            supported: true,
-            inconclusive: false,
-            preferred: false,
-            ciphers_count: 0,
-            heartbeat_enabled: None,
-            handshake_time_ms: None,
-            session_resumption_caching: None,
-            session_resumption_tickets: None,
-            secure_renegotiation: None,
-        }
-    }
 
     fn test_framework(requirement_id: &str, rules: Vec<Rule>) -> ComplianceFramework {
         ComplianceFramework {
