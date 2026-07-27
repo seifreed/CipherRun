@@ -8,3 +8,14 @@ pub(crate) fn normalized_severity_label(severity: &str) -> &'static str {
         _ => "unknown",
     }
 }
+
+pub(crate) fn severity_label_rank(severity: &str) -> usize {
+    match normalized_severity_label(severity) {
+        "critical" => 0,
+        "high" => 1,
+        "medium" => 2,
+        "low" => 3,
+        "info" => 4,
+        _ => 5,
+    }
+}

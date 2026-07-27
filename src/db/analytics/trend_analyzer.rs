@@ -2,6 +2,7 @@
 // Statistical analysis of security posture over time
 
 use crate::db::CipherRunDatabase;
+use crate::db::analytics::severity_label::severity_label_rank;
 use crate::db::connection::DatabasePool;
 use crate::utils::network::canonical_target;
 use chrono::{DateTime, Duration, Utc};
@@ -532,14 +533,7 @@ fn ordered_data_points<T: Clone>(data_points: &[(DateTime<Utc>, T)]) -> Vec<(Dat
 }
 
 fn severity_sort_rank(severity: &str) -> usize {
-    match severity {
-        "critical" => 0,
-        "high" => 1,
-        "medium" => 2,
-        "low" => 3,
-        "info" => 4,
-        _ => 5,
-    }
+    severity_label_rank(severity)
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 // Generate visualization-ready data (JSON for frontend charting)
 
 use crate::db::analytics::cipher_strength::cipher_strength_category;
-use crate::db::analytics::severity_label::normalized_severity_label;
+use crate::db::analytics::severity_label::{normalized_severity_label, severity_label_rank};
 use crate::db::connection::DatabasePool;
 use crate::db::{CipherRunDatabase, ScanRecord};
 use chrono::{DateTime, Utc};
@@ -483,14 +483,7 @@ impl DashboardGenerator {
 }
 
 fn severity_priority(severity: &str) -> usize {
-    match normalized_severity_label(severity) {
-        "critical" => 0,
-        "high" => 1,
-        "medium" => 2,
-        "low" => 3,
-        "info" => 4,
-        _ => 5,
-    }
+    severity_label_rank(severity)
 }
 
 fn dashboard_score(scan: &ScanRecord) -> crate::Result<Option<i32>> {
