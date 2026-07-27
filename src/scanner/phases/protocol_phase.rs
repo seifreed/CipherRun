@@ -154,17 +154,7 @@ impl ScanPhase for ProtocolPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    fn build_context(args: ScanRequest) -> ScanContext {
-        let target = crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
-        ScanContext::new(target, Arc::new(args), None, None)
-    }
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_protocol_phase_should_run() {
@@ -208,7 +198,7 @@ mod tests {
         args.scan.proto.tls12 = true;
         args.network.test_all_ips = true;
 
-        let context = build_context(args);
+        let context = test_scan_context(args);
         let phase = ProtocolPhase::new();
         let _tester = phase.configure_tester(&context);
     }

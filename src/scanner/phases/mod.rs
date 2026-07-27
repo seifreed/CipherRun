@@ -375,6 +375,17 @@ impl Default for PhaseOrchestrator {
 }
 
 #[cfg(test)]
+pub(crate) fn test_scan_context(args: ScanRequest) -> ScanContext {
+    let target = Target::with_ips(
+        "example.com".to_string(),
+        443,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .expect("test assertion should succeed");
+    ScanContext::new(target, Arc::new(args), None, None)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -402,19 +413,6 @@ mod tests {
                 _ => crate::TlsError::Other(self.error.to_string()),
             })
         }
-    }
-
-    fn test_target() -> Target {
-        Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed")
-    }
-
-    fn test_context() -> ScanContext {
-        ScanContext::new(test_target(), Arc::new(ScanRequest::default()), None, None)
     }
 
     /// Test reporter that counts calls
@@ -506,8 +504,7 @@ mod tests {
 
     #[test]
     fn test_scan_context_initializes_target_string() {
-        let args = Arc::new(ScanRequest::default());
-        let context = ScanContext::new(test_target(), args, None, None);
+        let context = test_scan_context(ScanRequest::default());
         assert_eq!(context.results.target, "example.com:443");
     }
 
@@ -520,7 +517,7 @@ mod tests {
         }));
 
         let err = orchestrator
-            .execute(test_context())
+            .execute(test_scan_context(ScanRequest::default()))
             .await
             .expect_err("fatal phase error should fail scan");
 
@@ -534,7 +531,7 @@ mod tests {
         }));
 
         let results = orchestrator
-            .execute(test_context())
+            .execute(test_scan_context(ScanRequest::default()))
             .await
             .expect("nonfatal phase error should not fail scan");
 

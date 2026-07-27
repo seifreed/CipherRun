@@ -159,17 +159,7 @@ impl ScanPhase for HttpHeadersPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    fn build_context(args: ScanRequest) -> ScanContext {
-        let target = crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed");
-        ScanContext::new(target, Arc::new(args), None, None)
-    }
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_http_headers_phase_should_run() {
@@ -218,7 +208,7 @@ mod tests {
     fn test_http_headers_phase_configure_analyzer_custom_headers() {
         let mut args = ScanRequest::default();
         args.http.custom_headers = vec!["X-Test: value".to_string(), "BrokenHeader".to_string()];
-        let mut context = build_context(args);
+        let mut context = test_scan_context(args);
         let phase = HttpHeadersPhase::new();
         let _analyzer = phase.configure_analyzer(&mut context);
         assert!(
@@ -235,7 +225,7 @@ mod tests {
     fn test_http_headers_phase_configure_analyzer_sneaky() {
         let mut args = ScanRequest::default();
         args.http.sneaky = true;
-        let mut context = build_context(args);
+        let mut context = test_scan_context(args);
         let phase = HttpHeadersPhase::new();
         let _analyzer = phase.configure_analyzer(&mut context);
     }
@@ -254,7 +244,7 @@ mod tests {
         let mut args = ScanRequest::default();
         args.http.sneaky = true;
         args.http.user_agent = Some("CustomAgent/1.0".to_string());
-        let mut context = build_context(args);
+        let mut context = test_scan_context(args);
         let phase = HttpHeadersPhase::new();
         let analyzer = phase.configure_analyzer(&mut context);
         assert_eq!(analyzer.user_agent_for_test(), "CustomAgent/1.0");
@@ -264,7 +254,7 @@ mod tests {
     fn test_configure_analyzer_basicauth_adds_authorization_header() {
         let mut args = ScanRequest::default();
         args.http.basicauth = Some("Aladdin:open sesame".to_string());
-        let mut context = build_context(args);
+        let mut context = test_scan_context(args);
         let phase = HttpHeadersPhase::new();
         let analyzer = phase.configure_analyzer(&mut context);
         assert!(
