@@ -1,6 +1,7 @@
 // ChangeTracker cipher-change detection and classification
 
 use super::*;
+use crate::db::analytics::cipher_strength::cipher_strength_category;
 
 impl ChangeTracker {
     pub(super) async fn detect_cipher_changes(
@@ -101,17 +102,14 @@ impl ChangeTracker {
     }
 
     fn is_weak_cipher_strength(strength: &str) -> bool {
-        matches!(
-            strength.to_ascii_lowercase().as_str(),
-            "weak" | "low" | "export" | "null"
-        )
+        cipher_strength_category(strength) == "weak"
     }
 
     fn cipher_strength_rank(strength: &str) -> i32 {
-        match strength.to_ascii_lowercase().as_str() {
-            "weak" | "low" | "export" | "null" => 0,
+        match cipher_strength_category(strength) {
+            "weak" => 0,
             "medium" => 1,
-            "strong" | "high" => 2,
+            "strong" => 2,
             _ => 1,
         }
     }

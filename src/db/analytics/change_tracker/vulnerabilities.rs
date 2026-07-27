@@ -1,6 +1,7 @@
 // ChangeTracker vulnerability-change detection and matching
 
 use super::*;
+use crate::db::analytics::severity_label::normalized_severity_label;
 
 impl ChangeTracker {
     pub(super) async fn detect_vulnerability_changes(
@@ -136,7 +137,7 @@ impl ChangeTracker {
     }
 
     fn vuln_severity_to_change_severity(severity: &str) -> ChangeSeverity {
-        match severity.to_ascii_lowercase().as_str() {
+        match normalized_severity_label(severity) {
             "critical" => ChangeSeverity::Critical,
             "high" => ChangeSeverity::High,
             "medium" => ChangeSeverity::Medium,
