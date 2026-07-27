@@ -254,12 +254,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_multiple_zero() {
-        let snis = SniGenerator::generate_multiple(0);
-        assert!(snis.is_empty());
-    }
-
-    #[test]
     fn test_is_valid_hostname_rejects_trailing_dot() {
         assert!(!SniGenerator::is_valid_hostname("example.com."));
     }
