@@ -415,45 +415,25 @@ policy:
     }
 
     #[test]
-    fn test_invalid_required_protocol_name_is_rejected() {
-        let yaml = r#"
+    fn test_invalid_protocol_names_are_rejected() {
+        for (field, value) in [
+            ("required", "TLSv1.4"),
+            ("prohibited", "not-a-protocol"),
+            ("prohibited", "   "),
+        ] {
+            let yaml = format!(
+                r#"
 policy:
   name: "Test Policy"
   version: "1.0"
   protocols:
-    required: ["TLSv1.4"]
+    {field}: ["{value}"]
     action: FAIL
-"#;
+"#
+            );
 
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_invalid_prohibited_protocol_name_is_rejected() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "1.0"
-  protocols:
-    prohibited: ["not-a-protocol"]
-    action: FAIL
-"#;
-
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_empty_protocol_name_is_rejected() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "1.0"
-  protocols:
-    prohibited: ["   "]
-    action: FAIL
-"#;
-
-        assert_policy_err(yaml);
+            assert_policy_err(&yaml);
+        }
     }
 
     #[test]
@@ -568,36 +548,18 @@ policy:
     }
 
     #[test]
-    fn test_empty_name_validation() {
-        let yaml = r#"
+    fn test_blank_policy_identity_fields_are_invalid() {
+        for (name, version) in [("", "1.0"), ("   ", "1.0"), ("Test Policy", "   ")] {
+            let yaml = format!(
+                r#"
 policy:
-  name: ""
-  version: "1.0"
-"#;
+  name: "{name}"
+  version: "{version}"
+"#
+            );
 
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_whitespace_only_policy_name_is_invalid() {
-        let yaml = r#"
-policy:
-  name: "   "
-  version: "1.0"
-"#;
-
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_whitespace_only_policy_version_is_invalid() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "   "
-"#;
-
-        assert_policy_err(yaml);
+            assert_policy_err(&yaml);
+        }
     }
 
     #[test]
