@@ -1,7 +1,7 @@
 // Change Tracker
 // Detects and reports changes between consecutive scans
 
-use crate::db::analytics::protocol_identity::protocol_identity;
+use crate::db::analytics::protocol_identity::{is_ssl_protocol, is_tls_version, protocol_identity};
 use crate::db::analytics::vulnerability_matching::{
     allows_ambiguous_zero_score_pairing, vulnerability_match_score, vulnerability_record_changed,
     vulnerability_sort_key,
@@ -89,19 +89,6 @@ fn detect_set_differences<T: Eq + Hash + Clone>(
         removed: old.difference(new).cloned().collect(),
         added: new.difference(old).cloned().collect(),
     }
-}
-
-fn is_tls_version(protocol: &str, version: &str) -> bool {
-    let normalized = protocol_identity(protocol);
-    normalized == format!("TLS{}", version)
-}
-
-fn is_ssl_protocol(protocol: &str) -> bool {
-    let normalized = protocol_identity(protocol);
-    matches!(
-        normalized.as_str(),
-        "SSL2" | "SSL2.0" | "SSL20" | "SSL3" | "SSL3.0" | "SSL30"
-    )
 }
 
 fn change_type_rank(change_type: &ChangeType) -> usize {

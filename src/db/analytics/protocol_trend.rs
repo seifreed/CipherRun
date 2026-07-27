@@ -1,7 +1,7 @@
 // Protocol Trend Analysis
 // Analyzes protocol adoption trends (TLS 1.3, TLS 1.2, legacy) over time
 
-use super::protocol_identity::protocol_identity;
+use super::protocol_identity::{is_ssl_protocol, is_tls_version};
 use super::trend_analyzer::TrendAnalyzer;
 use chrono::{DateTime, Utc};
 
@@ -115,17 +115,6 @@ impl TrendAnalyzer {
 
         summary
     }
-}
-
-fn is_tls_version(protocol: &str, version: &str) -> bool {
-    protocol_identity(protocol) == format!("TLS{}", version)
-}
-
-fn is_ssl_protocol(protocol: &str) -> bool {
-    matches!(
-        protocol_identity(protocol).as_str(),
-        "SSL2" | "SSL2.0" | "SSL20" | "SSL3" | "SSL3.0" | "SSL30"
-    )
 }
 
 #[cfg(test)]
