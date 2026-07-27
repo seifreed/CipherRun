@@ -305,6 +305,7 @@ impl MultiIpScanReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::test_support::empty_aggregated_result;
 
     fn target_with_ips(ips: &[&str]) -> Target {
         Target::with_ips(
@@ -313,20 +314,6 @@ mod tests {
             ips.iter().map(|ip| ip.parse().unwrap()).collect(),
         )
         .unwrap()
-    }
-
-    fn empty_aggregated_result() -> AggregatedScanResult {
-        AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        }
     }
 
     #[test]

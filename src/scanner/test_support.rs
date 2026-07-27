@@ -1,6 +1,8 @@
 use crate::ciphers::CipherSuite;
 use crate::scanner::ScanResults;
+use crate::scanner::aggregation::AggregatedScanResult;
 use crate::scanner::inconsistency::SingleIpScanResult;
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 pub(crate) fn make_cipher(
@@ -33,5 +35,19 @@ pub(crate) fn successful_ip_scan(
         scan_result,
         scan_duration_ms,
         error: None,
+    }
+}
+
+pub(crate) fn empty_aggregated_result() -> AggregatedScanResult {
+    AggregatedScanResult {
+        protocols: Vec::new(),
+        ciphers: HashMap::new(),
+        grade: ("F".to_string(), 0),
+        certificate_info: None,
+        certificate_consistent: true,
+        inconsistencies: Vec::new(),
+        alpn_protocols: Vec::new(),
+        session_resumption_caching: Some(false),
+        session_resumption_tickets: Some(false),
     }
 }

@@ -5,7 +5,7 @@ use crate::client_sim::simulator::ClientSimulationResult;
 use crate::fingerprint::{CdnDetection, Ja3Fingerprint, Ja3Signature, LoadBalancerInfo};
 use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
 use crate::protocols::{Protocol, ProtocolTestResult};
-use crate::scanner::test_support::successful_ip_scan;
+use crate::scanner::test_support::{empty_aggregated_result, successful_ip_scan};
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 use crate::Args;
@@ -24,20 +24,6 @@ fn successful_protocol_result(protocol: Protocol, handshake_time_ms: u64) -> Pro
         session_resumption_caching: None,
         session_resumption_tickets: None,
         secure_renegotiation: None,
-    }
-}
-
-fn empty_aggregated_result() -> crate::scanner::aggregation::AggregatedScanResult {
-    crate::scanner::aggregation::AggregatedScanResult {
-        protocols: Vec::new(),
-        ciphers: HashMap::new(),
-        grade: ("F".to_string(), 0),
-        certificate_info: None,
-        certificate_consistent: true,
-        inconsistencies: Vec::new(),
-        alpn_protocols: Vec::new(),
-        session_resumption_caching: Some(false),
-        session_resumption_tickets: Some(false),
     }
 }
 
