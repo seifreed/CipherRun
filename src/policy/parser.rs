@@ -475,59 +475,26 @@ policy:
     }
 
     #[test]
-    fn test_empty_required_cipher_pattern_is_rejected() {
-        let yaml = r#"
+    fn test_blank_policy_list_values_are_rejected() {
+        for (section, field, value) in [
+            ("ciphers", "required_patterns", ""),
+            ("ciphers", "prohibited_patterns", "   "),
+            ("certificates", "prohibited_signature_algorithms", ""),
+            ("vulnerabilities", "prohibited", "   "),
+        ] {
+            let yaml = format!(
+                r#"
 policy:
   name: "Test Policy"
   version: "1.0"
-  ciphers:
-    required_patterns: [""]
+  {section}:
+    {field}: ["{value}"]
     action: FAIL
-"#;
+"#
+            );
 
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_whitespace_only_prohibited_cipher_pattern_is_rejected() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "1.0"
-  ciphers:
-    prohibited_patterns: ["   "]
-    action: FAIL
-"#;
-
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_empty_prohibited_signature_algorithm_is_rejected() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "1.0"
-  certificates:
-    prohibited_signature_algorithms: [""]
-    action: FAIL
-"#;
-
-        assert_policy_err(yaml);
-    }
-
-    #[test]
-    fn test_whitespace_only_prohibited_vulnerability_is_rejected() {
-        let yaml = r#"
-policy:
-  name: "Test Policy"
-  version: "1.0"
-  vulnerabilities:
-    prohibited: ["   "]
-    action: FAIL
-"#;
-
-        assert_policy_err(yaml);
+            assert_policy_err(&yaml);
+        }
     }
 
     #[test]
