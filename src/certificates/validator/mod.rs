@@ -4,6 +4,8 @@ mod expiration;
 mod hostname_match;
 mod key_strength;
 mod signature;
+#[cfg(test)]
+mod test_support;
 mod trust_chain;
 
 use super::parser::{CertificateChain, CertificateInfo};
