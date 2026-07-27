@@ -355,31 +355,26 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_database_rejects_invalid_cipher_line() {
-        let data = "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD\ninvalid line";
-        let err = match CipherDatabase::parse(data) {
-            Ok(_) => panic!("invalid cipher line should fail database parsing"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains("Invalid cipher mapping line 2"));
-    }
-
-    #[test]
-    fn test_parse_database_rejects_duplicate_hexcode() {
-        let data = "\
+    fn test_parse_database_rejects_invalid_entries() {
+        for (data, expected) in [
+            (
+                "0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD\ninvalid line",
+                "Invalid cipher mapping line 2",
+            ),
+            (
+                "\
 0x13,0x02 - TLS_AES_256_GCM_SHA384 TLS_AES_256_GCM_SHA384 TLSv1.3 Kx=any Au=any Enc=AESGCM(256) Mac=AEAD
-0x13,0x02 - TLS_AES_128_GCM_SHA256 TLS_AES_128_GCM_SHA256 TLSv1.3 Kx=any Au=any Enc=AESGCM(128) Mac=AEAD";
+0x13,0x02 - TLS_AES_128_GCM_SHA256 TLS_AES_128_GCM_SHA256 TLSv1.3 Kx=any Au=any Enc=AESGCM(128) Mac=AEAD",
+                "Duplicate cipher hexcode on line 2",
+            ),
+        ] {
+            let err = match CipherDatabase::parse(data) {
+                Ok(_) => panic!("invalid database should fail"),
+                Err(err) => err,
+            };
 
-        let err = match CipherDatabase::parse(data) {
-            Ok(_) => panic!("duplicate hexcode should fail"),
-            Err(err) => err,
-        };
-
-        assert!(
-            err.to_string()
-                .contains("Duplicate cipher hexcode on line 2")
-        );
+            assert!(err.to_string().contains(expected), "{data}");
+        }
     }
 
     #[test]
