@@ -67,15 +67,12 @@ impl<'a> CrimeTester<'a> {
         addr: std::net::SocketAddr,
         timeout: std::time::Duration,
     ) -> Result<tokio::net::TcpStream> {
-        let hostname = self
-            .starttls_hostname
-            .clone()
-            .unwrap_or_else(|| self.target.hostname.clone());
-        crate::utils::network::connect_with_starttls(
+        crate::utils::network::connect_with_starttls_target(
             addr,
             timeout,
             self.starttls,
-            &hostname,
+            self.target,
+            self.starttls_hostname.as_deref(),
             self.starttls_server_mode,
         )
         .await

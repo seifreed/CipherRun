@@ -351,6 +351,18 @@ pub async fn connect_with_starttls(
     Ok(stream)
 }
 
+pub async fn connect_with_starttls_target(
+    addr: SocketAddr,
+    connect_timeout: Duration,
+    starttls: Option<crate::starttls::StarttlsProtocol>,
+    target: &Target,
+    starttls_hostname: Option<&str>,
+    server_mode: bool,
+) -> Result<TcpStream> {
+    let hostname = starttls_hostname.unwrap_or(&target.hostname);
+    connect_with_starttls(addr, connect_timeout, starttls, hostname, server_mode).await
+}
+
 async fn connect_once(
     addr: SocketAddr,
     connect_timeout: Duration,
