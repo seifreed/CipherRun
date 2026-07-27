@@ -342,43 +342,34 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_prohibited_pattern_fails_closed_with_violation() {
-        let policy = prohibited_pattern("RC4[");
+    fn test_invalid_patterns_fail_closed_with_violation() {
+        for (case, policy, cipher, rule_path, description) in [
+            (
+                "prohibited",
+                prohibited_pattern("RC4["),
+                "TLS_RSA_WITH_RC4_128_SHA",
+                "ciphers.prohibited_patterns",
+                "Invalid prohibited cipher pattern",
+            ),
+            (
+                "required",
+                required_pattern("AES["),
+                "TLS_AES_128_GCM_SHA256",
+                "ciphers.required_patterns",
+                "Invalid required cipher pattern",
+            ),
+        ] {
+            let results = tls12_results(test_summary(
+                vec![create_test_cipher(cipher)],
+                CipherCounts::default(),
+            ));
 
-        let results = tls12_results(test_summary(
-            vec![create_test_cipher("TLS_RSA_WITH_RC4_128_SHA")],
-            CipherCounts::default(),
-        ));
+            let violations = violations(&policy, &results);
 
-        let violations = violations(&policy, &results);
-
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].rule_path, "ciphers.prohibited_patterns");
-        assert!(
-            violations[0]
-                .description
-                .contains("Invalid prohibited cipher pattern")
-        );
-    }
-
-    #[test]
-    fn test_invalid_required_pattern_fails_closed_with_violation() {
-        let policy = required_pattern("AES[");
-
-        let results = tls12_results(test_summary(
-            vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
-            CipherCounts::default(),
-        ));
-
-        let violations = violations(&policy, &results);
-
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].rule_path, "ciphers.required_patterns");
-        assert!(
-            violations[0]
-                .description
-                .contains("Invalid required cipher pattern")
-        );
+            assert_eq!(violations.len(), 1, "{case}");
+            assert_eq!(violations[0].rule_path, rule_path, "{case}");
+            assert!(violations[0].description.contains(description), "{case}");
+        }
     }
 
     #[test]
