@@ -594,39 +594,26 @@ curves+=("X25519:secp256r1 secp384r1")
     }
 
     #[test]
-    fn test_parse_rejects_invalid_numeric_client_field() {
-        let data = r#"
+    fn test_parse_rejects_invalid_client_fields() {
+        for (field, value) in [("minRsaBits", "not-a-number"), ("current", "maybe")] {
+            let data = format!(
+                r#"
 names+=("Client A")
 short+=("client_a")
-minRsaBits+=("not-a-number")
-"#;
+{field}+=("{value}")
+"#
+            );
 
-        let err = match ClientDatabase::parse(data) {
-            Ok(_) => panic!("invalid numeric field should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Invalid client data field minRsaBits")
-        );
-    }
-
-    #[test]
-    fn test_parse_rejects_invalid_bool_client_field() {
-        let data = r#"
-names+=("Client A")
-short+=("client_a")
-current+=("maybe")
-"#;
-
-        let err = match ClientDatabase::parse(data) {
-            Ok(_) => panic!("invalid bool field should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Invalid client data field current")
-        );
+            let err = match ClientDatabase::parse(&data) {
+                Ok(_) => panic!("invalid client field should fail"),
+                Err(err) => err,
+            };
+            assert!(
+                err.to_string()
+                    .contains(&format!("Invalid client data field {field}")),
+                "{field}"
+            );
+        }
     }
 
     #[test]
@@ -662,34 +649,31 @@ short+=("client_a")
     }
 
     #[test]
-    fn test_parse_rejects_missing_short_id() {
-        let data = r#"
+    fn test_parse_rejects_invalid_short_ids() {
+        for (case, data, expected) in [
+            (
+                "missing",
+                r#"
 names+=("Client A" "Client B")
 short+=("client_a")
-"#;
-
-        let err = match ClientDatabase::parse(data) {
-            Ok(_) => panic!("missing short id should fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("Missing client data field short[1]")
-        );
-    }
-
-    #[test]
-    fn test_parse_rejects_duplicate_short_id() {
-        let data = r#"
+"#,
+                "Missing client data field short[1]",
+            ),
+            (
+                "duplicate",
+                r#"
 names+=("Client A" "Client B")
 short+=("client_a" "client_a")
-"#;
-
-        let err = match ClientDatabase::parse(data) {
-            Ok(_) => panic!("duplicate short id should fail"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("Duplicate client data short id"));
+"#,
+                "Duplicate client data short id",
+            ),
+        ] {
+            let err = match ClientDatabase::parse(data) {
+                Ok(_) => panic!("invalid short id should fail"),
+                Err(err) => err,
+            };
+            assert!(err.to_string().contains(expected), "{case}");
+        }
     }
 
     #[test]
