@@ -186,33 +186,24 @@ mod tests {
     }
 
     #[test]
-    fn test_required_protocol_rejects_invalid_name() {
-        let policy = required("TLSv9.9");
-        let rule = ProtocolRule::new(&policy, &[], &[]);
-        let error = rule
-            .evaluate("example.com:443")
-            .expect_err("invalid required protocol should fail");
+    fn test_protocol_rejects_invalid_names() {
+        for (case, policy, expected) in [
+            (
+                "required",
+                required("TLSv9.9"),
+                "Invalid protocol in required list",
+            ),
+            (
+                "prohibited",
+                prohibited("TLSv9.9"),
+                "Invalid protocol in prohibited list",
+            ),
+        ] {
+            let rule = ProtocolRule::new(&policy, &[], &[]);
+            let error = rule.evaluate("example.com:443").expect_err(case);
 
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid protocol in required list")
-        );
-    }
-
-    #[test]
-    fn test_prohibited_protocol_rejects_invalid_name() {
-        let policy = prohibited("TLSv9.9");
-        let rule = ProtocolRule::new(&policy, &[], &[]);
-        let error = rule
-            .evaluate("example.com:443")
-            .expect_err("invalid prohibited protocol should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Invalid protocol in prohibited list")
-        );
+            assert!(error.to_string().contains(expected), "{case}");
+        }
     }
 
     #[test]
