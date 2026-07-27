@@ -24,6 +24,8 @@ pub mod reverse_ptr;
 pub mod sneaky;
 pub mod sni_generator;
 pub(crate) mod target_addrs;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod timing;
 
 // MEDIUM PRIORITY Features (11-15)

@@ -213,18 +213,10 @@ impl ProtocolTestable for ProtocolTester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::example_target;
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-
-    fn dummy_target() -> Target {
-        Target::with_ips(
-            "example.test".to_string(),
-            443,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed")
-    }
 
     fn target_for_addr(addr: std::net::SocketAddr) -> Target {
         Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
@@ -270,7 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_quic_explicit_probe_is_inconclusive() {
-        let tester = ProtocolTester::new(dummy_target());
+        let tester = ProtocolTester::new(example_target());
         let result = tester
             .test_protocol(Protocol::QUIC)
             .await
@@ -302,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_setters_update_config() {
-        let tester = ProtocolTester::new(dummy_target())
+        let tester = ProtocolTester::new(example_target())
             .with_bugs_mode(true)
             .with_sni(Some("custom.test".to_string()))
             .with_protocol_filter(Some(vec![Protocol::TLS13]));
@@ -314,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_default_config_flags() {
-        let tester = ProtocolTester::new(dummy_target());
+        let tester = ProtocolTester::new(example_target());
         assert!(!tester.enable_bugs_mode);
         assert!(tester.sni_hostname.is_none());
         assert!(tester.protocol_filter.is_none());
@@ -323,7 +315,7 @@ mod tests {
     #[test]
     fn test_additional_setters_update_config() {
         let retry = crate::utils::retry::RetryConfig::default();
-        let tester = ProtocolTester::new(dummy_target())
+        let tester = ProtocolTester::new(example_target())
             .with_connect_timeout(Duration::from_secs(3))
             .with_read_timeout(Duration::from_secs(4))
             .with_rdp(true)
@@ -351,7 +343,7 @@ mod tests {
             private_key: key,
         };
 
-        let tester = ProtocolTester::with_mtls(dummy_target(), mtls);
+        let tester = ProtocolTester::with_mtls(example_target(), mtls);
         assert!(tester.mtls_config.is_some());
     }
 

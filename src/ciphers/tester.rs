@@ -205,19 +205,11 @@ impl CipherTestable for CipherTester {
 mod tests {
     use super::test_support::make_cipher;
     use super::*;
+    use crate::utils::test_support::example_target;
     use std::net::{IpAddr, SocketAddr};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
-
-    fn dummy_target() -> Target {
-        Target::with_ips(
-            "example.test".to_string(),
-            443,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed")
-    }
 
     fn local_target_for_addr(addr: SocketAddr) -> Target {
         Target::with_ips(
@@ -377,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_cipher_compatibility_and_counts() {
-        let tester = CipherTester::new(dummy_target());
+        let tester = CipherTester::new(example_target());
         let tls13_cipher = make_cipher("1301", "TLSv1.3", "AES_GCM", 128, false, "ECDHE");
         let tls12_cipher = make_cipher("003c", "TLSv1.2", "AES", 128, false, "RSA");
         let sslv2_cipher = make_cipher("0000", "SSLv2", "NULL", 0, false, "RSA");
@@ -408,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_cipher_counts_export_ciphers() {
-        let tester = CipherTester::new(dummy_target());
+        let tester = CipherTester::new(example_target());
         let export_cipher = make_cipher("0003", "TLSv1.2", "AES", 40, true, "RSA");
         let counts = tester.calculate_cipher_counts(&[export_cipher]);
         assert_eq!(counts.export_ciphers, 1);
@@ -585,7 +577,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_determine_server_preference_rejects_invalid_hexcode() {
-        let tester = CipherTester::new(dummy_target());
+        let tester = CipherTester::new(example_target());
         let ciphers = vec![make_cipher("not-hex", "TLSv1.2", "AES", 128, false, "RSA")];
 
         let error = tester
@@ -598,7 +590,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cipher_handshake_rejects_invalid_hexcode() {
-        let tester = CipherTester::new(dummy_target());
+        let tester = CipherTester::new(example_target());
         let cipher = make_cipher("not-hex", "TLSv1.2", "AES", 128, false, "RSA");
 
         let error = tester
@@ -834,7 +826,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cipher_handshake_only_invalid_hexcode() {
-        let tester = CipherTester::new(dummy_target());
+        let tester = CipherTester::new(example_target());
         let mut cipher = make_cipher("0001", "TLSv1.2", "AES", 128, false, "RSA");
         cipher.hexcode = "ZZZZ".to_string();
 

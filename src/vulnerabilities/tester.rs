@@ -313,17 +313,9 @@ impl std::fmt::Display for VulnerabilitySummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::example_target;
     use std::collections::HashMap;
     use std::net::TcpListener;
-
-    fn dummy_target() -> Target {
-        Target::with_ips(
-            "example.test".to_string(),
-            443,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed")
-    }
 
     fn inactive_target() -> Target {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -441,7 +433,7 @@ mod tests {
         // enumeration excludes those suites), so they cannot be unit-tested from
         // a synthetic cache; their verdict logic is covered by
         // rc4_probe_verdict / null_probe_verdict in checks_tests.rs.
-        let scanner = VulnerabilityScanner::new(dummy_target());
+        let scanner = VulnerabilityScanner::new(example_target());
         let mut cache = HashMap::new();
         cache.insert(
             Protocol::TLS12,
@@ -494,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_beast_cached_with_tls10() {
-        let scanner = VulnerabilityScanner::new(dummy_target());
+        let scanner = VulnerabilityScanner::new(example_target());
         let mut cache = HashMap::new();
         cache.insert(
             Protocol::TLS10,
@@ -581,7 +573,7 @@ mod tests {
 
     #[test]
     fn test_summarize_execution_reports_not_executed_checks() {
-        let mut scanner = VulnerabilityScanner::new(dummy_target());
+        let mut scanner = VulnerabilityScanner::new(example_target());
         scanner.skip_fallback = true;
         scanner.skip_compression = true;
         scanner.skip_heartbleed = true;
@@ -619,7 +611,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skip_flags_short_circuit() {
-        let mut scanner = VulnerabilityScanner::new(dummy_target());
+        let mut scanner = VulnerabilityScanner::new(example_target());
         scanner.skip_fallback = true;
         scanner.skip_compression = true;
         scanner.skip_heartbleed = true;
@@ -657,7 +649,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_ciphers_skips_quic_only() {
-        let scanner = VulnerabilityScanner::new(dummy_target());
+        let scanner = VulnerabilityScanner::new(example_target());
         let cache = scanner
             .cache_ciphers(&[Protocol::QUIC])
             .await
@@ -667,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drown_detection() {
-        let scanner = VulnerabilityScanner::new(dummy_target());
+        let scanner = VulnerabilityScanner::new(example_target());
         let result = scanner
             .test_drown()
             .await
@@ -702,7 +694,7 @@ mod tests {
         request.scan.scope.all = true;
         request.scan.vulns.heartbleed = true;
 
-        let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
+        let scanner = VulnerabilityScanner::with_args(example_target(), &request);
         assert!(!scanner.broad_scan);
         assert!(
             scanner
@@ -717,7 +709,7 @@ mod tests {
         let mut request = ScanRequest::default();
         request.scan.scope.full = true;
 
-        let scanner = VulnerabilityScanner::with_args(dummy_target(), &request);
+        let scanner = VulnerabilityScanner::with_args(example_target(), &request);
         assert!(scanner.broad_scan);
         assert_eq!(scanner.planned_test_count(), 25);
     }
