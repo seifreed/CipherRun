@@ -1,6 +1,7 @@
 // Dashboard Generator
 // Generate visualization-ready data (JSON for frontend charting)
 
+use crate::db::analytics::severity_label::normalized_severity_label;
 use crate::db::connection::DatabasePool;
 use crate::db::{CipherRunDatabase, ScanRecord};
 use chrono::{DateTime, Utc};
@@ -477,17 +478,6 @@ impl DashboardGenerator {
                 Ok(ciphers)
             }
         }
-    }
-}
-
-fn normalized_severity_label(severity: &str) -> &'static str {
-    match severity.to_ascii_lowercase().as_str() {
-        "critical" => "critical",
-        "high" => "high",
-        "medium" => "medium",
-        "low" => "low",
-        "info" => "info",
-        _ => "unknown",
     }
 }
 

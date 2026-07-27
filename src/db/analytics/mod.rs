@@ -11,6 +11,7 @@ pub mod trend_analyzer;
 pub mod vulnerability_trend;
 
 pub(crate) mod protocol_identity;
+pub(crate) mod severity_label;
 
 #[cfg(test)]
 pub(crate) mod test_support;
