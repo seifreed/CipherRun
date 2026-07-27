@@ -471,42 +471,8 @@ impl CertificateParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certificates::revocation::cert_with_raw_extension_der;
     use crate::utils::network::Target;
-
-    fn cert_with_raw_extension_der(oid: &str, contents: &[u8]) -> Vec<u8> {
-        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
-        use openssl::hash::MessageDigest as OpensslMessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
-
-        let mut name = X509NameBuilder::new().unwrap();
-        name.append_entry_by_text("CN", "malformed-extension.example.com")
-            .unwrap();
-        let name = name.build();
-
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
-        builder.set_pubkey(&pkey).unwrap();
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
-            .unwrap();
-        builder
-            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
-            .unwrap();
-
-        let oid = Asn1Object::from_str(oid).unwrap();
-        let contents = Asn1OctetString::new_from_bytes(contents).unwrap();
-        let extension = X509Extension::new_from_der(&oid, false, &contents).unwrap();
-        builder.append_extension(extension).unwrap();
-        builder.sign(&pkey, OpensslMessageDigest::sha256()).unwrap();
-
-        builder.build().to_der().unwrap()
-    }
 
     fn example_target() -> Target {
         Target::with_ips(
@@ -783,7 +749,7 @@ mod tests {
                 "Malformed SCT extension",
             ),
         ] {
-            let der = cert_with_raw_extension_der(oid, contents);
+            let der = cert_with_raw_extension_der(oid, contents).der_bytes;
             let error = CertificateParser::parse_certificate(&der)
                 .expect_err("malformed extension should fail");
 
