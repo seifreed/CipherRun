@@ -75,7 +75,7 @@ pub fn insecure_client_config_with_client_auth(
 
 /// Server-certificate verifier that accepts every certificate.
 #[derive(Debug)]
-struct NoCertVerifier;
+pub(crate) struct NoCertVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(

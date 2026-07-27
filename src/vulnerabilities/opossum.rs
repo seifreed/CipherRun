@@ -3,6 +3,7 @@
 
 use crate::Result;
 use crate::constants::TLS_HANDSHAKE_TIMEOUT;
+use crate::utils::insecure_tls::NoCertVerifier;
 use crate::utils::network::Target;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
@@ -193,7 +194,7 @@ impl OpossumTester {
         crate::utils::insecure_tls::ensure_ring_provider();
         let config = ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
             .with_no_client_auth();
 
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
@@ -270,52 +271,6 @@ impl OpossumTester {
     }
 }
 
-/// No-op certificate verifier for testing
-#[derive(Debug)]
-struct NoVerifier;
-
-impl rustls::client::danger::ServerCertVerifier for NoVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-        ]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_no_verifier_accepts_anything() {
-        let verifier = NoVerifier;
+        let verifier = NoCertVerifier;
         let cert = rustls::pki_types::CertificateDer::from(vec![0x01, 0x02, 0x03]);
         let server_name = rustls::pki_types::ServerName::try_from("example.com").unwrap();
         let now = rustls::pki_types::UnixTime::since_unix_epoch(Duration::from_secs(0));
@@ -383,7 +338,7 @@ mod tests {
     fn test_no_verifier_signature_checks() {
         use rustls::internal::msgs::codec::{Codec, Reader};
 
-        let verifier = NoVerifier;
+        let verifier = NoCertVerifier;
         let cert = rustls::pki_types::CertificateDer::from(vec![0x01, 0x02, 0x03]);
 
         let mut data = Vec::new();
@@ -400,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_no_verifier_supported_schemes_count() {
-        let verifier = NoVerifier;
+        let verifier = NoCertVerifier;
         let schemes = verifier.supported_verify_schemes();
         assert!(schemes.len() >= 6);
     }
