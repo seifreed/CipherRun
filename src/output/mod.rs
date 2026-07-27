@@ -32,35 +32,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_output_format_debug_and_equality() {
-        assert_eq!(OutputFormat::JSON, OutputFormat::JSON);
+    fn test_output_format_traits() {
+        for (format, debug) in [
+            (OutputFormat::Terminal, "Terminal"),
+            (OutputFormat::JSON, "JSON"),
+            (OutputFormat::JSONPretty, "JSONPretty"),
+            (OutputFormat::CSV, "CSV"),
+            (OutputFormat::HTML, "HTML"),
+            (OutputFormat::Log, "Log"),
+        ] {
+            let copied = format;
+            assert_eq!(format, copied);
+            assert_eq!(format!("{format:?}"), debug);
+        }
+
         assert_ne!(OutputFormat::JSON, OutputFormat::CSV);
-        assert_eq!(format!("{:?}", OutputFormat::JSONPretty), "JSONPretty");
-    }
-
-    #[test]
-    fn test_output_format_debug_log() {
-        assert_eq!(format!("{:?}", OutputFormat::Log), "Log");
-    }
-
-    #[test]
-    fn test_output_format_terminal_variant() {
-        let format = OutputFormat::Terminal;
-        assert_eq!(format, OutputFormat::Terminal);
-        assert_eq!(format!("{:?}", format), "Terminal");
-    }
-
-    #[test]
-    fn test_output_format_copy_semantics() {
-        let format = OutputFormat::JSON;
-        let copied = format;
-        assert_eq!(format, copied);
-    }
-
-    #[test]
-    fn test_output_format_html_variant() {
-        let format = OutputFormat::HTML;
-        assert_eq!(format, OutputFormat::HTML);
-        assert_eq!(format!("{:?}", format), "HTML");
     }
 }
