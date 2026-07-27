@@ -229,24 +229,19 @@ mod tests {
     }
 
     #[test]
-    fn test_would_exceed_limit_when_at_max() {
-        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
-            max_requests_per_minute: 2,
-            ..Default::default()
-        });
-        limiter.request_count = 2;
-        limiter.last_reset = Instant::now();
-        assert!(limiter.would_exceed_limit());
-    }
-
-    #[test]
-    fn test_remaining_requests_saturates_at_zero() {
-        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
-            max_requests_per_minute: 1,
-            ..Default::default()
-        });
-        limiter.request_count = 5;
-        assert_eq!(limiter.remaining_requests(), 0);
+    fn test_would_exceed_limit_cases() {
+        for (max_requests_per_minute, count, last_reset, expected) in [
+            (2, 2, Instant::now(), true),
+            (1, 1, Instant::now() - Duration::from_secs(61), false),
+        ] {
+            let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
+                max_requests_per_minute,
+                ..Default::default()
+            });
+            limiter.request_count = count;
+            limiter.last_reset = last_reset;
+            assert_eq!(limiter.would_exceed_limit(), expected);
+        }
     }
 
     #[test]
@@ -259,17 +254,6 @@ mod tests {
     }
 
     #[test]
-    fn test_would_exceed_limit_after_reset_false() {
-        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
-            max_requests_per_minute: 1,
-            ..Default::default()
-        });
-        limiter.request_count = 1;
-        limiter.last_reset = Instant::now() - Duration::from_secs(61);
-        assert!(!limiter.would_exceed_limit());
-    }
-
-    #[test]
     fn test_aggressive_preset_limits() {
         let aggressive = IdsFriendlyConfig::aggressive();
         assert_eq!(aggressive.max_requests_per_minute, 60);
@@ -277,12 +261,14 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_requests_decrements() {
-        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
-            max_requests_per_minute: 5,
-            ..Default::default()
-        });
-        limiter.request_count = 4;
-        assert_eq!(limiter.remaining_requests(), 1);
+    fn test_remaining_requests_cases() {
+        for (max_requests_per_minute, request_count, expected) in [(1, 5, 0), (5, 4, 1)] {
+            let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
+                max_requests_per_minute,
+                ..Default::default()
+            });
+            limiter.request_count = request_count;
+            assert_eq!(limiter.remaining_requests(), expected);
+        }
     }
 }
