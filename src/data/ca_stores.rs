@@ -195,12 +195,9 @@ mod tests {
     fn test_load_ca_stores() {
         let stores = CA_STORES.as_ref();
 
-        assert!(!stores.mozilla.certificates.is_empty());
-        assert!(!stores.apple.certificates.is_empty());
-        assert!(!stores.android.certificates.is_empty());
-        assert!(!stores.linux.certificates.is_empty());
-        assert!(!stores.microsoft.certificates.is_empty());
-        assert!(!stores.java.certificates.is_empty());
+        for store in stores.all_stores() {
+            assert!(!store.certificates.is_empty(), "{}", store.name);
+        }
 
         assert!(stores.total_certificates() > 100);
     }

@@ -260,6 +260,13 @@ mod tests {
     use openssl::rsa::Rsa;
     use openssl::x509::{X509Builder, X509NameBuilder};
 
+    fn invalid_client_key_exchange_variants(payload_len: usize) -> [Vec<u8>; 3] {
+        std::array::from_fn(|variant| {
+            messages::invalid_client_key_exchange(variant as u8, payload_len)
+                .expect("ClientKeyExchange should build")
+        })
+    }
+
     #[test]
     fn test_robot_status() {
         assert_eq!(RobotStatus::Vulnerable, RobotStatus::Vulnerable);
@@ -282,12 +289,7 @@ mod tests {
 
     #[test]
     fn test_build_invalid_client_key_exchange_variants() {
-        let msg0 =
-            messages::invalid_client_key_exchange(0, 256).expect("ClientKeyExchange should build");
-        let msg1 =
-            messages::invalid_client_key_exchange(1, 256).expect("ClientKeyExchange should build");
-        let msg2 =
-            messages::invalid_client_key_exchange(2, 256).expect("ClientKeyExchange should build");
+        let [msg0, msg1, msg2] = invalid_client_key_exchange_variants(256);
 
         assert_eq!(msg0.len(), msg1.len());
         assert_eq!(msg1.len(), msg2.len());
@@ -311,12 +313,7 @@ mod tests {
 
     #[test]
     fn test_invalid_client_key_exchange_payload_patterns() {
-        let msg0 =
-            messages::invalid_client_key_exchange(0, 128).expect("ClientKeyExchange should build");
-        let msg1 =
-            messages::invalid_client_key_exchange(1, 128).expect("ClientKeyExchange should build");
-        let msg2 =
-            messages::invalid_client_key_exchange(2, 128).expect("ClientKeyExchange should build");
+        let [msg0, msg1, msg2] = invalid_client_key_exchange_variants(128);
 
         let payload0 = msg0
             .get(msg0.len() - 128..)
