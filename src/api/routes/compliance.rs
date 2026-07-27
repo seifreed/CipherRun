@@ -225,38 +225,13 @@ pub async fn check_compliance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::config::ApiConfig;
-    use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
-    use crate::api::middleware::rate_limit::PerKeyRateLimiter;
-    use crate::api::state::{ApiStats, AppState};
+    use crate::api::test_support::build_test_state;
     use crate::compliance::{
         ComplianceFramework, ComplianceReport, RequirementResult as ComplianceRequirementResult,
         RequirementStatus, Severity, Violation,
     };
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
-    use std::sync::Arc;
-    use std::time::Instant;
-    use tokio::sync::RwLock;
-
-    fn build_state() -> Arc<AppState> {
-        let config = Arc::new(ApiConfig::default());
-        let job_queue = Arc::new(InMemoryJobQueue::new(10));
-        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
-        let progress_tx = executor.progress_broadcaster();
-
-        Arc::new(AppState {
-            config,
-            job_queue,
-            executor,
-            progress_tx,
-            start_time: Instant::now(),
-            stats: Arc::new(RwLock::new(ApiStats::default())),
-            rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
-            db_pool: None,
-            policy_dir: None,
-        })
-    }
 
     fn test_framework() -> ComplianceFramework {
         ComplianceFramework {
@@ -294,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_compliance_missing_target() {
-        let state = build_state();
+        let state = build_test_state();
         let query = ComplianceQuery {
             target: None,
             format: "json".to_string(),
@@ -310,7 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_compliance_unknown_framework() {
-        let state = build_state();
+        let state = build_test_state();
         let query = ComplianceQuery {
             target: Some("example.com:443".to_string()),
             format: "json".to_string(),
@@ -330,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_compliance_invalid_format() {
-        let state = build_state();
+        let state = build_test_state();
         let query = ComplianceQuery {
             target: Some("example.com:443".to_string()),
             format: "yaml".to_string(),
@@ -346,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_compliance_rejects_private_target() {
-        let state = build_state();
+        let state = build_test_state();
         let query = ComplianceQuery {
             target: Some("127.0.0.1:443".to_string()),
             format: "json".to_string(),

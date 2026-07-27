@@ -10,6 +10,8 @@ pub mod presenters;
 pub mod routes;
 pub mod server;
 pub mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod ws;
 
 // Re-export commonly used types
