@@ -43,31 +43,17 @@ pub fn write_multi_ip_json_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::aggregation::AggregatedScanResult;
     use crate::scanner::inconsistency::{
         Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
     };
     use crate::scanner::multi_ip::MultiIpScanReport;
+    use crate::scanner::test_support::empty_aggregated_result;
     use crate::utils::network::Target;
     use crate::vulnerabilities::Severity;
     use std::collections::HashMap;
     use std::net::IpAddr;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
-
-    fn empty_aggregated_result() -> AggregatedScanResult {
-        AggregatedScanResult {
-            protocols: Vec::new(),
-            ciphers: HashMap::new(),
-            grade: ("F".to_string(), 0),
-            certificate_info: None,
-            certificate_consistent: true,
-            inconsistencies: Vec::new(),
-            alpn_protocols: Vec::new(),
-            session_resumption_caching: Some(false),
-            session_resumption_tickets: Some(false),
-        }
-    }
 
     fn single_ip_target() -> Target {
         Target::with_ips(
