@@ -206,11 +206,9 @@ mod tests {
     fn test_get_store_by_name() {
         let stores = CA_STORES.as_ref();
 
-        assert!(stores.get_store("mozilla").is_some());
-        assert!(stores.get_store("apple").is_some());
-        assert!(stores.get_store("android").is_some());
-        assert!(stores.get_store("windows").is_some());
-        assert!(stores.get_store("java").is_some());
+        for name in "mozilla apple android windows java microsoft jdk".split_whitespace() {
+            assert!(stores.get_store(name).is_some(), "{name}");
+        }
         assert!(stores.get_store("unknown").is_none());
     }
 
@@ -224,13 +222,6 @@ mod tests {
             assert!(!cert.serial.is_empty());
             assert!(!cert.der.is_empty());
         }
-    }
-
-    #[test]
-    fn test_get_store_by_name_aliases() {
-        let stores = CA_STORES.as_ref();
-        assert!(stores.get_store("microsoft").is_some());
-        assert!(stores.get_store("jdk").is_some());
     }
 
     #[test]
