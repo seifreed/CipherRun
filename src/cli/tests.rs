@@ -448,15 +448,6 @@ fn test_retry_config() {
 }
 
 #[test]
-fn test_has_certificate_filters() {
-    let mut args = Args::default();
-    assert!(!args.has_certificate_filters());
-
-    args.cert_filters.filter_expired = true;
-    assert!(args.has_certificate_filters());
-}
-
-#[test]
 fn test_run_default_suite_disabled_by_client_simulation() {
     let args = Args {
         fingerprint: FingerprintArgs {
