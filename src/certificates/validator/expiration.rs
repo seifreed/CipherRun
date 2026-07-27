@@ -169,37 +169,22 @@ mod tests {
     fn test_expiration_checks() {
         let validator = CertificateValidator::new("example.com".to_string());
 
-        // Certificate not yet valid (not_before in the future)
-        let mut issues = Vec::new();
-        let future_start = (Utc::now() + chrono::Duration::days(10))
-            .format("%Y-%m-%d %H:%M:%S +0000")
-            .to_string();
-        let future_end = (Utc::now() + chrono::Duration::days(375))
-            .format("%Y-%m-%d %H:%M:%S +0000")
-            .to_string();
-        let cert = base_cert(future_start, future_end);
-        assert!(!validator.check_expiration(&cert, &mut issues));
-        assert!(
-            issues
-                .iter()
-                .any(|i| matches!(i.issue_type, IssueType::NotYetValid))
-        );
+        for (case, start_days, end_days, expected) in [
+            ("not yet valid", 10, 375, IssueType::NotYetValid),
+            ("expired", -375, -10, IssueType::Expired),
+        ] {
+            let mut issues = Vec::new();
+            let start = (Utc::now() + chrono::Duration::days(start_days))
+                .format("%Y-%m-%d %H:%M:%S +0000")
+                .to_string();
+            let end = (Utc::now() + chrono::Duration::days(end_days))
+                .format("%Y-%m-%d %H:%M:%S +0000")
+                .to_string();
+            let cert = base_cert(start, end);
 
-        // Expired certificate (not_after in the past)
-        let mut issues = Vec::new();
-        let past_start = (Utc::now() - chrono::Duration::days(375))
-            .format("%Y-%m-%d %H:%M:%S +0000")
-            .to_string();
-        let past_end = (Utc::now() - chrono::Duration::days(10))
-            .format("%Y-%m-%d %H:%M:%S +0000")
-            .to_string();
-        let cert = base_cert(past_start, past_end);
-        assert!(!validator.check_expiration(&cert, &mut issues));
-        assert!(
-            issues
-                .iter()
-                .any(|i| matches!(i.issue_type, IssueType::Expired))
-        );
+            assert!(!validator.check_expiration(&cert, &mut issues), "{case}");
+            assert!(issues.iter().any(|i| i.issue_type == expected), "{case}");
+        }
     }
 
     #[test]
