@@ -440,48 +440,36 @@ mod tests {
     }
 
     #[test]
-    fn test_recently_expired_certificate_is_reported_as_expired() {
+    fn test_invalid_expiry_dates_fail_expiry_policy() {
         let policy = CertificatePolicy {
             max_days_until_expiry: Some(30),
             ..base_policy()
         };
 
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].not_after = (Utc::now() - chrono::Duration::hours(1))
-            .format("%Y-%m-%d %H:%M:%S %z")
-            .to_string();
+        for (case, not_after, expected_description) in [
+            (
+                "expired",
+                (Utc::now() - chrono::Duration::hours(1))
+                    .format("%Y-%m-%d %H:%M:%S %z")
+                    .to_string(),
+                Some("expired"),
+            ),
+            ("unparseable", "not a date".to_string(), None),
+        ] {
+            let mut cert_result = create_test_cert_result();
+            cert_result.chain.certificates[0].not_after = not_after;
 
-        let violations = violations(&policy, Some(&cert_result));
+            let violations = violations(&policy, Some(&cert_result));
 
-        assert_eq!(violations.len(), 1);
-        assert_eq!(
-            violations[0].rule_path,
-            "certificates.max_days_until_expiry"
-        );
-        assert!(
-            violations[0].description.contains("expired"),
-            "{:?}",
-            violations[0]
-        );
-    }
-
-    #[test]
-    fn test_unparseable_expiry_date_fails_expiry_policy() {
-        let policy = CertificatePolicy {
-            max_days_until_expiry: Some(30),
-            ..base_policy()
-        };
-
-        let mut cert_result = create_test_cert_result();
-        cert_result.chain.certificates[0].not_after = "not a date".to_string();
-
-        let violations = violations(&policy, Some(&cert_result));
-
-        assert_eq!(violations.len(), 1);
-        assert_eq!(
-            violations[0].rule_path,
-            "certificates.max_days_until_expiry"
-        );
+            assert_eq!(violations.len(), 1, "{case}");
+            assert_eq!(
+                violations[0].rule_path, "certificates.max_days_until_expiry",
+                "{case}"
+            );
+            if let Some(expected) = expected_description {
+                assert!(violations[0].description.contains(expected), "{case}");
+            }
+        }
     }
 
     #[test]
