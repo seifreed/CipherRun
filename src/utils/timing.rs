@@ -143,6 +143,15 @@ pub fn detect_timing_oracle(
 mod tests {
     use super::*;
 
+    fn oracle_config() -> TimingOracleConfig {
+        TimingOracleConfig {
+            min_samples: 5,
+            timing_threshold_ms: 15.0,
+            cv_max: 0.5,
+            significance_base_ms: 10.0,
+        }
+    }
+
     #[test]
     fn test_empty_sample_set() {
         let set = TimingSampleSet::with_capacity(10);
@@ -185,12 +194,7 @@ mod tests {
             invalid.push(50.0);
         }
 
-        let config = TimingOracleConfig {
-            min_samples: 5,
-            timing_threshold_ms: 15.0,
-            cv_max: 0.5,
-            significance_base_ms: 10.0,
-        };
+        let config = oracle_config();
 
         let result = detect_timing_oracle(&valid, &invalid, &config).unwrap();
         assert!(result.oracle_detected);
@@ -208,12 +212,7 @@ mod tests {
             invalid.push(10.5);
         }
 
-        let config = TimingOracleConfig {
-            min_samples: 5,
-            timing_threshold_ms: 15.0,
-            cv_max: 0.5,
-            significance_base_ms: 10.0,
-        };
+        let config = oracle_config();
 
         let result = detect_timing_oracle(&valid, &invalid, &config).unwrap();
         assert!(!result.oracle_detected);
@@ -234,12 +233,7 @@ mod tests {
             invalid.push(v);
         }
 
-        let config = TimingOracleConfig {
-            min_samples: 5,
-            timing_threshold_ms: 15.0,
-            cv_max: 0.5,
-            significance_base_ms: 10.0,
-        };
+        let config = oracle_config();
 
         let result = detect_timing_oracle(&valid, &invalid, &config).unwrap();
         assert!(!result.timing_reliable);
@@ -256,12 +250,7 @@ mod tests {
             invalid.push(50.0);
         }
 
-        let config = TimingOracleConfig {
-            min_samples: 5,
-            timing_threshold_ms: 15.0,
-            cv_max: 0.5,
-            significance_base_ms: 10.0,
-        };
+        let config = oracle_config();
 
         assert!(detect_timing_oracle(&valid, &invalid, &config).is_none());
     }
