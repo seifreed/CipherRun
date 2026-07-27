@@ -22,9 +22,9 @@ fn collect_scanned_ips(
 mod tests {
     use super::collect_scanned_ips;
     use crate::scanner::ScanResults;
-    use crate::scanner::aggregation::AggregatedScanResult;
     use crate::scanner::inconsistency::SingleIpScanResult;
     use crate::scanner::multi_ip::MultiIpScanReport;
+    use crate::scanner::test_support::empty_aggregated_result;
     use crate::utils::network::Target;
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -64,17 +64,7 @@ mod tests {
             failed_scans: 0,
             total_duration_ms: 30,
             inconsistencies: Vec::new(),
-            aggregated: AggregatedScanResult {
-                protocols: Vec::new(),
-                ciphers: HashMap::new(),
-                grade: ("F".to_string(), 0),
-                certificate_info: None,
-                certificate_consistent: true,
-                inconsistencies: Vec::new(),
-                alpn_protocols: Vec::new(),
-                session_resumption_caching: Some(false),
-                session_resumption_tickets: Some(false),
-            },
+            aggregated: empty_aggregated_result(),
         };
 
         let scanned_ips = collect_scanned_ips(&report);
