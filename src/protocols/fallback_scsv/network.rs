@@ -267,16 +267,8 @@ impl FallbackScsvTester<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::example_target;
     use super::*;
-
-    fn example_target() -> crate::utils::network::Target {
-        crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_aggregate_scsv_inconclusive_wins_over_not_supported() {

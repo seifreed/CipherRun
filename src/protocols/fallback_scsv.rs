@@ -6,6 +6,8 @@ mod client_hello;
 mod model;
 mod network;
 mod orchestration;
+#[cfg(test)]
+mod test_support;
 
 pub use model::FallbackScsvTestResult;
 
@@ -125,18 +127,10 @@ impl<'a> FallbackScsvTester<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::example_target;
     use super::*;
     use crate::constants::{COMPRESSION_NULL, CONTENT_TYPE_ALERT, VERSION_TLS_1_2};
     use crate::protocols::Protocol;
-
-    fn example_target() -> Target {
-        Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     fn localhost_target() -> Target {
         Target::with_ips(
