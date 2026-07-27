@@ -362,37 +362,28 @@ mod tests {
     }
 
     #[test]
-    fn test_postgres_connection_string_rejects_zero_port() {
-        let config = DatabaseConfig::postgres(
-            "localhost".to_string(),
-            0,
-            "testdb".to_string(),
-            "user".to_string(),
-            "pass".to_string(),
-        );
+    fn test_postgres_connection_string_rejects_invalid_values() {
+        for (case, host, port, expected) in [
+            ("zero port", "localhost", 0, "PostgreSQL port"),
+            (
+                "invalid host",
+                "localhost/path",
+                5432,
+                "Invalid PostgreSQL host",
+            ),
+        ] {
+            let config = DatabaseConfig::postgres(
+                host.to_string(),
+                port,
+                "testdb".to_string(),
+                "user".to_string(),
+                "pass".to_string(),
+            );
 
-        let err = config
-            .connection_string()
-            .expect_err("zero PostgreSQL port should fail");
+            let err = config.connection_string().expect_err(case);
 
-        assert!(err.to_string().contains("PostgreSQL port"));
-    }
-
-    #[test]
-    fn test_postgres_connection_string_rejects_invalid_host() {
-        let config = DatabaseConfig::postgres(
-            "localhost/path".to_string(),
-            5432,
-            "testdb".to_string(),
-            "user".to_string(),
-            "pass".to_string(),
-        );
-
-        let err = config
-            .connection_string()
-            .expect_err("invalid PostgreSQL host should fail");
-
-        assert!(err.to_string().contains("Invalid PostgreSQL host"));
+            assert!(err.to_string().contains(expected), "{case}");
+        }
     }
 
     #[test]
