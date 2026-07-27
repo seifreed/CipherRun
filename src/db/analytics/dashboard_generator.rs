@@ -1,6 +1,7 @@
 // Dashboard Generator
 // Generate visualization-ready data (JSON for frontend charting)
 
+use crate::db::analytics::cipher_strength::cipher_strength_category;
 use crate::db::analytics::severity_label::normalized_severity_label;
 use crate::db::connection::DatabasePool;
 use crate::db::{CipherRunDatabase, ScanRecord};
@@ -269,7 +270,7 @@ impl DashboardGenerator {
             if let Some(scan_id) = scan.scan_id {
                 let ciphers = self.get_ciphers(scan_id).await?;
                 for cipher in ciphers {
-                    let strength_category = normalized_cipher_strength_category(&cipher.strength);
+                    let strength_category = cipher_strength_category(&cipher.strength);
                     *strength_counts
                         .entry(strength_category.to_string())
                         .or_insert(0) += 1;
@@ -515,15 +516,6 @@ fn canonical_protocol_label(protocol: &str) -> String {
     crate::protocols::Protocol::from_str(protocol)
         .map(|protocol| protocol.name().to_string())
         .unwrap_or_else(|_| protocol.to_string())
-}
-
-fn normalized_cipher_strength_category(strength: &str) -> &'static str {
-    match strength.to_ascii_lowercase().as_str() {
-        "weak" | "low" | "export" | "null" => "weak",
-        "medium" => "medium",
-        "strong" | "high" => "strong",
-        _ => "unknown",
-    }
 }
 
 #[cfg(test)]

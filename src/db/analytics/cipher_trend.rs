@@ -1,16 +1,8 @@
 // Cipher Strength Trend Analysis
 // Analyzes cipher suite strength distribution over time
 
+use super::cipher_strength::cipher_strength_category;
 use super::trend_analyzer::{CipherStrengthData, TrendAnalyzer};
-
-fn cipher_strength_category(strength: &str) -> &'static str {
-    match strength.to_ascii_lowercase().as_str() {
-        "weak" | "low" | "export" | "null" => "weak",
-        "medium" => "medium",
-        "strong" | "high" => "strong",
-        _ => "unknown",
-    }
-}
 
 impl TrendAnalyzer {
     /// Analyze cipher strength trend over time
