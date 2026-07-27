@@ -10,6 +10,8 @@ pub mod loader;
 pub mod reporter;
 pub mod rule;
 pub mod source;
+#[cfg(test)]
+mod test_support;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
