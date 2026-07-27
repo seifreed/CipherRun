@@ -6,6 +6,7 @@ use super::Result;
 use crate::error::TlsError;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::is_private_ip;
+use crate::security::url::raw_url_host;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -220,7 +221,7 @@ impl SourceManager {
 }
 
 fn is_valid_ct_log_url(url: &str) -> bool {
-    if raw_ct_log_host(url).is_some_and(|host| {
+    if raw_url_host(url).is_some_and(|host| {
         looks_like_obfuscated_ip(host)
             || looks_like_dotted_ip_literal(host)
             || host.parse::<IpAddr>().is_ok()
@@ -243,23 +244,8 @@ fn is_valid_ct_log_url(url: &str) -> bool {
     })
 }
 
-fn raw_ct_log_host(url: &str) -> Option<&str> {
-    let authority = url.split_once("://")?.1;
-    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority
-        .rsplit_once('@')
-        .map(|(_, host)| host)
-        .unwrap_or(authority);
-
-    if let Some(host) = host.strip_prefix('[') {
-        host.split_once(']').map(|(host, _)| host)
-    } else {
-        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
-    }
-}
-
 async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
-    if let Some(host) = raw_ct_log_host(url) {
+    if let Some(host) = raw_url_host(url) {
         if looks_like_dotted_ip_literal(host) {
             return Err(TlsError::Other(
                 "Invalid CT log host: dotted IP literal".to_string(),

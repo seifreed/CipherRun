@@ -1,6 +1,7 @@
 use crate::Result;
 use crate::error::TlsError;
 use crate::security::input_validation::{is_private_ip, looks_like_obfuscated_ip};
+use crate::security::url::raw_url_host;
 use crate::security::validate_hostname;
 use crate::utils::network::canonical_target;
 use std::net::SocketAddr;
@@ -23,7 +24,7 @@ pub(crate) fn webhook_http_client(validated: &ValidatedWebhook) -> Result<reqwes
 }
 
 pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedWebhook> {
-    if raw_webhook_host(webhook_url).is_some_and(looks_like_obfuscated_ip) {
+    if raw_url_host(webhook_url).is_some_and(looks_like_obfuscated_ip) {
         return Err(TlsError::InvalidInput {
             message: "Webhook URL uses obfuscated IP notation".to_string(),
         });
@@ -138,21 +139,6 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         host,
         resolved_addrs: ordered_resolved_addrs(&resolved_addrs),
     })
-}
-
-fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
-    let authority = webhook_url.split_once("://")?.1;
-    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority
-        .rsplit_once('@')
-        .map(|(_, host)| host)
-        .unwrap_or(authority);
-
-    if let Some(host) = host.strip_prefix('[') {
-        host.split_once(']').map(|(host, _)| host)
-    } else {
-        Some(host.split_once(':').map_or(host, |(hostname, _)| hostname))
-    }
 }
 
 fn webhook_lookup_target(host: &str, port: u16) -> String {

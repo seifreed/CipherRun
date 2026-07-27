@@ -21,6 +21,7 @@
 //! sanitization, and protection against common vulnerabilities.
 
 pub mod input_validation;
+pub(crate) mod url;
 pub mod webhook;
 
 pub use input_validation::{
