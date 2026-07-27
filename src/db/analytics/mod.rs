@@ -14,6 +14,7 @@ pub(crate) mod cipher_strength;
 pub(crate) mod protocol_identity;
 pub(crate) mod rating_category;
 pub(crate) mod severity_label;
+pub(crate) mod vulnerability_matching;
 
 #[cfg(test)]
 pub(crate) mod test_support;

@@ -2,6 +2,10 @@
 
 use super::{ScanComparator, VulnInfo, VulnerabilityDiff};
 use crate::db::VulnerabilityRecord;
+use crate::db::analytics::vulnerability_matching::{
+    allows_ambiguous_zero_score_pairing, vulnerability_match_score, vulnerability_record_changed,
+    vulnerability_sort_key,
+};
 use crate::db::connection::DatabasePool;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,46 +18,6 @@ struct VulnerabilityPairCandidate<'a> {
     new_key: (String, String, String, String),
     old: &'a VulnerabilityRecord,
     new: &'a VulnerabilityRecord,
-}
-
-fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
-    (
-        vuln.description.clone().unwrap_or_default(),
-        vuln.cve_id.clone().unwrap_or_default(),
-        vuln.affected_component.clone().unwrap_or_default(),
-        vuln.severity.clone(),
-    )
-}
-
-fn vulnerability_match_score(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> usize {
-    let mut score = 0;
-
-    if matches!((&old.description, &new.description), (Some(old_desc), Some(new_desc)) if old_desc == new_desc)
-    {
-        score += 8;
-    }
-    if matches!((&old.cve_id, &new.cve_id), (Some(old_cve), Some(new_cve)) if old_cve == new_cve) {
-        score += 4;
-    }
-    if matches!(
-        (&old.affected_component, &new.affected_component),
-        (Some(old_component), Some(new_component)) if old_component == new_component
-    ) {
-        score += 2;
-    }
-
-    score
-}
-
-fn allows_ambiguous_zero_score_pairing(old_count: usize, new_count: usize) -> bool {
-    old_count == 1 && new_count == 1
-}
-
-fn vulnerability_record_changed(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> bool {
-    old.severity != new.severity
-        || old.description != new.description
-        || old.cve_id != new.cve_id
-        || old.affected_component != new.affected_component
 }
 
 impl ScanComparator {

@@ -2,6 +2,10 @@
 // Detects and reports changes between consecutive scans
 
 use crate::db::analytics::protocol_identity::protocol_identity;
+use crate::db::analytics::vulnerability_matching::{
+    allows_ambiguous_zero_score_pairing, vulnerability_match_score, vulnerability_record_changed,
+    vulnerability_sort_key,
+};
 use crate::db::connection::DatabasePool;
 use crate::db::{
     CipherRecord, CipherRunDatabase, ProtocolRecord, RatingRecord, ScanRecord, VulnerabilityRecord,
@@ -98,46 +102,6 @@ fn is_ssl_protocol(protocol: &str) -> bool {
         normalized.as_str(),
         "SSL2" | "SSL2.0" | "SSL20" | "SSL3" | "SSL3.0" | "SSL30"
     )
-}
-
-fn vulnerability_sort_key(vuln: &&VulnerabilityRecord) -> (String, String, String, String) {
-    (
-        vuln.description.clone().unwrap_or_default(),
-        vuln.cve_id.clone().unwrap_or_default(),
-        vuln.affected_component.clone().unwrap_or_default(),
-        vuln.severity.clone(),
-    )
-}
-
-fn vulnerability_match_score(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> usize {
-    let mut score = 0;
-
-    if matches!((&old.description, &new.description), (Some(old_desc), Some(new_desc)) if old_desc == new_desc)
-    {
-        score += 8;
-    }
-    if matches!((&old.cve_id, &new.cve_id), (Some(old_cve), Some(new_cve)) if old_cve == new_cve) {
-        score += 4;
-    }
-    if matches!(
-        (&old.affected_component, &new.affected_component),
-        (Some(old_component), Some(new_component)) if old_component == new_component
-    ) {
-        score += 2;
-    }
-
-    score
-}
-
-fn allows_ambiguous_zero_score_pairing(old_count: usize, new_count: usize) -> bool {
-    old_count == 1 && new_count == 1
-}
-
-fn vulnerability_record_changed(old: &VulnerabilityRecord, new: &VulnerabilityRecord) -> bool {
-    old.severity != new.severity
-        || old.description != new.description
-        || old.cve_id != new.cve_id
-        || old.affected_component != new.affected_component
 }
 
 fn change_type_rank(change_type: &ChangeType) -> usize {
