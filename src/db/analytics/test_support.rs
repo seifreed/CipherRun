@@ -113,3 +113,35 @@ pub(crate) async fn insert_cipher(
         .await
         .expect("test assertion should succeed");
 }
+
+pub(crate) async fn insert_vulnerability(
+    db: &CipherRunDatabase,
+    scan_id: i64,
+    vuln_type: &str,
+    severity: &str,
+) {
+    let mut qb = db.pool().query_builder();
+    let query = qb.insert_query(
+        "vulnerabilities",
+        &[
+            "scan_id",
+            "vulnerability_type",
+            "severity",
+            "description",
+            "cve_id",
+            "affected_component",
+        ],
+    );
+    let bindings = vec![
+        BindValue::Int64(scan_id),
+        BindValue::String(vuln_type.to_string()),
+        BindValue::String(severity.to_string()),
+        BindValue::OptString(None),
+        BindValue::OptString(None),
+        BindValue::OptString(None),
+    ];
+    db.pool()
+        .execute(&query, bindings)
+        .await
+        .expect("test assertion should succeed");
+}

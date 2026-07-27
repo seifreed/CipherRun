@@ -1,5 +1,7 @@
 use super::*;
-use crate::db::analytics::test_support::{insert_cipher, insert_protocol, insert_scan, setup_db};
+use crate::db::analytics::test_support::{
+    insert_cipher, insert_protocol, insert_scan, insert_vulnerability, setup_db,
+};
 use crate::db::{BindValue, CipherRunDatabase};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
@@ -188,38 +190,6 @@ fn test_trend_functions_are_order_independent() {
         TrendAnalyzer::determine_usize_trend_direction(&vuln_points_desc),
         TrendDirection::Degrading
     );
-}
-
-async fn insert_vulnerability(
-    db: &CipherRunDatabase,
-    scan_id: i64,
-    vuln_type: &str,
-    severity: &str,
-) {
-    let mut qb = db.pool().query_builder();
-    let query = qb.insert_query(
-        "vulnerabilities",
-        &[
-            "scan_id",
-            "vulnerability_type",
-            "severity",
-            "description",
-            "cve_id",
-            "affected_component",
-        ],
-    );
-    let bindings = vec![
-        BindValue::Int64(scan_id),
-        BindValue::String(vuln_type.to_string()),
-        BindValue::String(severity.to_string()),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-    ];
-    db.pool()
-        .execute(&query, bindings)
-        .await
-        .expect("test assertion should succeed");
 }
 
 #[tokio::test]
