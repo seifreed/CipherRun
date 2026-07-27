@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::certificates::revocation::RevocationStatus;
+use crate::certificates::signature_algorithm::normalize_signature_algorithm_name;
 use crate::certificates::validator::parse_cert_date;
 use crate::policy::violation::PolicyViolation;
 use crate::policy::{CertificatePolicy, PolicyAction};
@@ -255,14 +256,6 @@ impl<'a> CertificateRule<'a> {
 
 fn key_size_below_minimum(key_size: usize, min_key_size: u32) -> bool {
     usize::try_from(min_key_size).map_or(true, |min_key_size| key_size < min_key_size)
-}
-
-fn normalize_signature_algorithm_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(|c| c.to_uppercase())
-        .collect()
 }
 
 fn signature_algorithm_aliases(value: &str) -> Vec<String> {

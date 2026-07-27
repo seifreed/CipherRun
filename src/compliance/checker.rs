@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::application::ScanAssessment;
 use crate::certificates::revocation::RevocationStatus;
+use crate::certificates::signature_algorithm::normalize_signature_algorithm_name;
 use crate::certificates::validator::parse_cert_date;
 use crate::compliance::{Rule, Severity, Violation};
 use crate::protocols::Protocol;
@@ -90,20 +91,12 @@ impl ComplianceChecker {
         })
     }
 
-    fn normalize_signature_algorithm_name(value: &str) -> String {
-        value
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .flat_map(|c| c.to_uppercase())
-            .collect()
-    }
-
     fn signature_algorithm_aliases(value: &str) -> Vec<String> {
-        let mut aliases = vec![Self::normalize_signature_algorithm_name(value)];
+        let mut aliases = vec![normalize_signature_algorithm_name(value)];
         let parts: Vec<String> = value
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|part| !part.is_empty())
-            .map(Self::normalize_signature_algorithm_name)
+            .map(normalize_signature_algorithm_name)
             .collect();
         aliases.extend(parts.iter().cloned());
         aliases.extend(parts.windows(2).map(|pair| pair.concat()));
@@ -111,7 +104,7 @@ impl ComplianceChecker {
     }
 
     fn signature_algorithm_matches(configured: &str, observed: &str) -> bool {
-        let configured = Self::normalize_signature_algorithm_name(configured);
+        let configured = normalize_signature_algorithm_name(configured);
         if configured.is_empty() {
             return false;
         }
