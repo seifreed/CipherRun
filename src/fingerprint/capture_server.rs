@@ -373,42 +373,7 @@ impl ServerHelloNetworkCapture {
 
     /// Build SNI extension
     fn build_sni_extension(server_name: &[u8]) -> Result<Vec<u8>> {
-        let mut extension = Vec::new();
-
-        // Extension type: server_name (0x0000)
-        extension.extend_from_slice(&[0x00, 0x00]);
-
-        // Extension length (to be calculated)
-        let ext_len_pos = extension.len();
-        extension.extend_from_slice(&[0x00, 0x00]);
-
-        // Server Name List Length
-        let list_len_pos = extension.len();
-        extension.extend_from_slice(&[0x00, 0x00]);
-
-        // Server Name Type: host_name (0)
-        extension.push(0x00);
-
-        // Server Name Length
-        let server_name_len = length::u16_len(server_name.len(), "SNI server name")?;
-        extension.extend_from_slice(&server_name_len.to_be_bytes());
-
-        // Server Name
-        extension.extend_from_slice(server_name);
-
-        // Update Server Name List Length
-        let list_len = length::u16_len(extension.len() - list_len_pos - 2, "SNI server name list")?;
-        if let Some(len_bytes) = extension.get_mut(list_len_pos..list_len_pos + 2) {
-            len_bytes.copy_from_slice(&list_len.to_be_bytes());
-        }
-
-        // Update Extension Length
-        let ext_len = length::u16_len(extension.len() - ext_len_pos - 2, "SNI extension")?;
-        if let Some(len_bytes) = extension.get_mut(ext_len_pos..ext_len_pos + 2) {
-            len_bytes.copy_from_slice(&ext_len.to_be_bytes());
-        }
-
-        Ok(extension)
+        crate::protocols::tls_vector::sni_extension(server_name)
     }
 }
 

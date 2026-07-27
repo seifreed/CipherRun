@@ -1,5 +1,5 @@
 use super::PreHandshakeScanner;
-use crate::{Result, TlsError};
+use crate::Result;
 
 impl PreHandshakeScanner {
     pub(super) fn build_client_hello(&self) -> Result<Vec<u8>> {
@@ -101,23 +101,6 @@ impl PreHandshakeScanner {
     }
 
     pub(super) fn build_sni_extension(&self) -> Result<Vec<u8>> {
-        let hostname = self.target.hostname.as_bytes();
-        let hostname_len = crate::protocols::tls_vector::u16_len(hostname.len(), "SNI hostname")?;
-        let list_len = hostname_len
-            .checked_add(3)
-            .ok_or_else(|| TlsError::Other("SNI hostname exceeds maximum length".to_string()))?;
-        let ext_len = list_len
-            .checked_add(2)
-            .ok_or_else(|| TlsError::Other("SNI extension exceeds maximum length".to_string()))?;
-
-        let mut sni = Vec::new();
-        sni.extend_from_slice(&[0x00, 0x00]);
-        sni.extend_from_slice(&ext_len.to_be_bytes());
-        sni.extend_from_slice(&list_len.to_be_bytes());
-        sni.push(0x00);
-        sni.extend_from_slice(&hostname_len.to_be_bytes());
-        sni.extend_from_slice(hostname);
-
-        Ok(sni)
+        crate::protocols::tls_vector::sni_extension(self.target.hostname.as_bytes())
     }
 }
