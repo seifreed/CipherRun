@@ -287,29 +287,24 @@ fn rejects_blank_sni_name() {
 }
 
 #[test]
-fn rejects_malformed_sni_name() {
-    let request = ScanRequest {
-        tls: ScanRequestTls {
-            sni_name: Some("bad host".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    assert_common_error_contains(request, "Invalid SNI hostname");
-}
-
-#[test]
-fn rejects_rooted_fqdn_sni_name() {
-    let request = ScanRequest {
-        tls: ScanRequestTls {
-            sni_name: Some("example.com.".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    assert_common_error_contains(request, "trailing dot");
+fn rejects_invalid_sni_names() {
+    for (sni_name, expected) in [
+        ("bad host", "Invalid SNI hostname"),
+        ("example.com.", "trailing dot"),
+        ("192.0.2.1", "not an IP address"),
+        ("localhost", "private/local hostnames"),
+    ] {
+        assert_common_error_contains(
+            ScanRequest {
+                tls: ScanRequestTls {
+                    sni_name: Some(sni_name.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            expected,
+        );
+    }
 }
 
 #[test]
@@ -324,32 +319,6 @@ fn rejects_rooted_fqdn_xmpphost() {
     };
 
     assert_common_error_contains(request, "trailing dot");
-}
-
-#[test]
-fn rejects_ip_literal_sni_name() {
-    let request = ScanRequest {
-        tls: ScanRequestTls {
-            sni_name: Some("192.0.2.1".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    assert_common_error_contains(request, "not an IP address");
-}
-
-#[test]
-fn rejects_private_local_sni_name() {
-    let request = ScanRequest {
-        tls: ScanRequestTls {
-            sni_name: Some("localhost".to_string()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    assert_common_error_contains(request, "private/local hostnames");
 }
 
 #[test]
