@@ -384,28 +384,22 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_new_session_ticket_short_response() {
-        let err =
-            session_ticket::is_present(&[0x16, 0x03]).expect_err("partial TLS record should fail");
-        assert!(
-            err.to_string()
-                .contains("Ticketbleed TLS record header truncated")
-        );
-    }
-
-    #[test]
-    fn test_parse_new_session_ticket_rejects_truncated_handshake() {
-        let response = [
-            0x16, 0x03, 0x03, 0x00, 0x01, // record with one handshake byte
-            0x04, // NewSessionTicket type, missing length
-        ];
-
-        let err = session_ticket::is_present(&response)
-            .expect_err("truncated NewSessionTicket should fail");
-        assert!(
-            err.to_string()
-                .contains("Ticketbleed NewSessionTicket header truncated")
-        );
+    fn test_parse_new_session_ticket_rejects_truncated_responses() {
+        for (case, response, expected) in [
+            (
+                "partial TLS record",
+                vec![0x16, 0x03],
+                "Ticketbleed TLS record header truncated",
+            ),
+            (
+                "truncated NewSessionTicket",
+                vec![0x16, 0x03, 0x03, 0x00, 0x01, 0x04],
+                "Ticketbleed NewSessionTicket header truncated",
+            ),
+        ] {
+            let err = session_ticket::is_present(&response).expect_err(case);
+            assert!(err.to_string().contains(expected), "{case}");
+        }
     }
 
     #[test]

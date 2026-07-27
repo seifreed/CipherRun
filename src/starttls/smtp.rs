@@ -140,15 +140,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_smtp_read_response_short_line() {
-        let err = read_smtp_status(b"a\n").await.unwrap_err();
-        assert!(format!("{err}").contains("too short"));
-    }
-
-    #[tokio::test]
-    async fn test_smtp_read_response_invalid_code() {
-        let err = read_smtp_status(b"xx0 Invalid\r\n").await.unwrap_err();
-        assert!(format!("{err}").contains("status code"));
+    async fn test_smtp_read_response_rejects_invalid_lines() {
+        for (response, expected) in [
+            (b"a\n".as_slice(), "too short"),
+            (b"xx0 Invalid\r\n".as_slice(), "status code"),
+        ] {
+            let err = read_smtp_status(response).await.unwrap_err();
+            assert!(format!("{err}").contains(expected));
+        }
     }
 
     #[tokio::test]
