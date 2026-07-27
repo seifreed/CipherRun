@@ -65,7 +65,6 @@ mod tests {
         let sneaky = SneakyConfig::new(true);
         assert!(sneaky.is_enabled());
         assert_eq!(sneaky.user_agent(), SNEAKY_USER_AGENT);
-        assert_eq!(sneaky.smtp_hostname(), SNEAKY_SMTP_HOSTNAME);
     }
 
     #[test]
@@ -79,21 +78,15 @@ mod tests {
     }
 
     #[test]
-    fn test_smtp_hostname_toggle() {
-        let sneaky = SneakyConfig::new(true);
-        assert_eq!(sneaky.smtp_hostname(), SNEAKY_SMTP_HOSTNAME);
-
-        let normal = SneakyConfig::new(false);
-        assert_eq!(normal.smtp_hostname(), "localhost");
-    }
-
-    #[test]
-    fn test_generic_hostname_toggle() {
-        let sneaky = SneakyConfig::new(true);
-        assert_eq!(sneaky.generic_hostname(), SNEAKY_GENERIC_HOSTNAME);
-
-        let normal = SneakyConfig::new(false);
-        assert_eq!(normal.generic_hostname(), "localhost");
+    fn test_hostname_toggles() {
+        for (enabled, expected_smtp, expected_generic) in [
+            (true, SNEAKY_SMTP_HOSTNAME, SNEAKY_GENERIC_HOSTNAME),
+            (false, "localhost", "localhost"),
+        ] {
+            let config = SneakyConfig::new(enabled);
+            assert_eq!(config.smtp_hostname(), expected_smtp);
+            assert_eq!(config.generic_hostname(), expected_generic);
+        }
     }
 
     #[test]
@@ -103,15 +96,10 @@ mod tests {
         assert_eq!(config.generic_hostname(), "localhost");
     }
 
-    #[test]
-    fn test_normal_user_agent_contains_chrome() {
-        let config = SneakyConfig::new(false);
-        assert!(config.user_agent().contains("Chrome"));
-    }
-
-    #[test]
-    fn test_sneaky_user_agent_contains_firefox() {
-        let config = SneakyConfig::new(true);
-        assert!(config.user_agent().contains("Firefox"));
+    fn test_user_agent_toggle() {
+        for (enabled, expected) in [(false, "Chrome"), (true, "Firefox")] {
+            let config = SneakyConfig::new(enabled);
+            assert!(config.user_agent().contains(expected));
+        }
     }
 }
