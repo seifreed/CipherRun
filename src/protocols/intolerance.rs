@@ -134,17 +134,10 @@ mod tests {
         extensions
     }
 
-    fn example_target() -> Target {
-        Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["93.184.216.34".parse().expect("valid IP")],
-        )
-        .expect("target should build")
-    }
+    use crate::utils::test_support::example_com_target;
 
     fn example_tester() -> IntoleranceTester {
-        IntoleranceTester::new(example_target())
+        IntoleranceTester::new(example_com_target())
     }
 
     #[test]
