@@ -450,16 +450,21 @@ mod tests {
 
     #[test]
     fn test_is_retriable_by_message() {
-        for message in ["Connection timed out", "Connection reset by peer"] {
-            assert!(is_retriable(&TlsError::Other(message.to_string())));
-        }
-
-        for message in [
-            "Connection refused",
-            "Failed to lookup host",
-            "Unknown error",
+        for (message, expected) in [
+            ("Connection timed out", true),
+            ("Connection reset by peer", true),
+            ("Network unreachable", true),
+            ("Connection refused", false),
+            ("Failed to lookup host", false),
+            ("Unknown error", false),
+            ("Permission denied", false),
+            ("invalid dns name", false),
         ] {
-            assert!(!is_retriable(&TlsError::Other(message.to_string())));
+            assert_eq!(
+                is_retriable(&TlsError::Other(message.to_string())),
+                expected,
+                "{message}"
+            );
         }
     }
 
@@ -476,23 +481,8 @@ mod tests {
     }
 
     #[test]
-    fn test_is_retriable_message_patterns() {
-        let net_unreachable = TlsError::Other("Network unreachable".to_string());
-        assert!(is_retriable(&net_unreachable));
-
-        let perm_denied = TlsError::Other("Permission denied".to_string());
-        assert!(!is_retriable(&perm_denied));
-    }
-
-    #[test]
     fn test_is_retriable_io_error_refused() {
         let err = TlsError::from(Error::new(ErrorKind::ConnectionRefused, "refused"));
-        assert!(!is_retriable(&err));
-    }
-
-    #[test]
-    fn test_is_retriable_invalid_dns_name() {
-        let err = TlsError::Other("invalid dns name".to_string());
         assert!(!is_retriable(&err));
     }
 
