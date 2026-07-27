@@ -47,7 +47,7 @@ mod tests {
         Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
     };
     use crate::scanner::multi_ip::MultiIpScanReport;
-    use crate::scanner::test_support::empty_aggregated_result;
+    use crate::scanner::test_support::{empty_aggregated_result, successful_ip_scan};
     use crate::utils::network::Target;
     use crate::vulnerabilities::Severity;
     use std::collections::HashMap;
@@ -71,15 +71,6 @@ mod tests {
             vec!["192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap()],
         )
         .expect("test assertion should succeed")
-    }
-
-    fn successful_ip_scan(ip: IpAddr, scan_duration_ms: u64) -> SingleIpScanResult {
-        SingleIpScanResult {
-            ip,
-            scan_result: ScanResults::default(),
-            scan_duration_ms,
-            error: None,
-        }
     }
 
     fn failed_multi_ip_report() -> MultiIpScanReport {
@@ -169,7 +160,7 @@ mod tests {
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let mut per_ip_results = HashMap::new();
-        per_ip_results.insert(ip, successful_ip_scan(ip, 10));
+        per_ip_results.insert(ip, successful_ip_scan(ip, ScanResults::default(), 10));
 
         let report = MultiIpScanReport {
             target,
@@ -200,8 +191,8 @@ mod tests {
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
-            per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
-            per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
+            per_ip_results.insert(ip1, successful_ip_scan(ip1, ScanResults::default(), 10));
+            per_ip_results.insert(ip2, successful_ip_scan(ip2, ScanResults::default(), 20));
 
             let mut fingerprints = HashMap::new();
             fingerprints.insert(ip1, "aaa111".to_string());
@@ -231,8 +222,8 @@ mod tests {
             let ip1: IpAddr = "192.0.2.1".parse().unwrap();
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
-            per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
-            per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
+            per_ip_results.insert(ip2, successful_ip_scan(ip2, ScanResults::default(), 20));
+            per_ip_results.insert(ip1, successful_ip_scan(ip1, ScanResults::default(), 10));
 
             let mut fingerprints = HashMap::new();
             fingerprints.insert(ip2, "bbb222".to_string());
@@ -271,11 +262,11 @@ mod tests {
             let ip2: IpAddr = "192.0.2.2".parse().unwrap();
             let mut per_ip_results = HashMap::new();
             if reverse {
-                per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
-                per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
+                per_ip_results.insert(ip2, successful_ip_scan(ip2, ScanResults::default(), 20));
+                per_ip_results.insert(ip1, successful_ip_scan(ip1, ScanResults::default(), 10));
             } else {
-                per_ip_results.insert(ip1, successful_ip_scan(ip1, 10));
-                per_ip_results.insert(ip2, successful_ip_scan(ip2, 20));
+                per_ip_results.insert(ip1, successful_ip_scan(ip1, ScanResults::default(), 10));
+                per_ip_results.insert(ip2, successful_ip_scan(ip2, ScanResults::default(), 20));
             }
 
             let mut fingerprints = HashMap::new();
