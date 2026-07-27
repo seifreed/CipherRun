@@ -10,6 +10,8 @@ pub mod scan_comparator;
 pub mod trend_analyzer;
 pub mod vulnerability_trend;
 
+pub(crate) mod protocol_identity;
+
 #[cfg(test)]
 pub(crate) mod test_support;
 

@@ -2,30 +2,12 @@
 
 use super::{ProtocolDiff, ScanComparator};
 use crate::db::ProtocolRecord;
+use crate::db::analytics::protocol_identity::protocol_identity;
 use crate::db::connection::DatabasePool;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn sort_protocol_names(protocols: &mut [String]) {
     protocols.sort();
-}
-
-fn normalized_protocol_name(protocol: &str) -> String {
-    protocol
-        .chars()
-        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
-        .flat_map(|c| c.to_uppercase())
-        .collect()
-}
-
-fn protocol_identity(protocol: &str) -> String {
-    let normalized = normalized_protocol_name(protocol);
-    if let Some(version) = normalized.strip_prefix("TLSV") {
-        format!("TLS{}", version)
-    } else if let Some(version) = normalized.strip_prefix("SSLV") {
-        format!("SSL{}", version)
-    } else {
-        normalized
-    }
 }
 
 fn enabled_protocol_names_by_identity(protocols: &[ProtocolRecord]) -> BTreeMap<String, String> {

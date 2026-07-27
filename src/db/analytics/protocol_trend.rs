@@ -1,6 +1,7 @@
 // Protocol Trend Analysis
 // Analyzes protocol adoption trends (TLS 1.3, TLS 1.2, legacy) over time
 
+use super::protocol_identity::protocol_identity;
 use super::trend_analyzer::TrendAnalyzer;
 use chrono::{DateTime, Utc};
 
@@ -116,35 +117,14 @@ impl TrendAnalyzer {
     }
 }
 
-fn normalized_protocol_name(protocol: &str) -> String {
-    protocol
-        .chars()
-        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
-        .flat_map(|c| c.to_uppercase())
-        .collect()
-}
-
 fn is_tls_version(protocol: &str, version: &str) -> bool {
-    let normalized = normalized_protocol_name(protocol);
-    normalized == format!("TLS{}", version) || normalized == format!("TLSV{}", version)
+    protocol_identity(protocol) == format!("TLS{}", version)
 }
 
 fn is_ssl_protocol(protocol: &str) -> bool {
-    let normalized = normalized_protocol_name(protocol);
     matches!(
-        normalized.as_str(),
-        "SSL2"
-            | "SSLV2"
-            | "SSL2.0"
-            | "SSLV2.0"
-            | "SSL20"
-            | "SSLV20"
-            | "SSL3"
-            | "SSLV3"
-            | "SSL3.0"
-            | "SSLV3.0"
-            | "SSL30"
-            | "SSLV30"
+        protocol_identity(protocol).as_str(),
+        "SSL2" | "SSL2.0" | "SSL20" | "SSL3" | "SSL3.0" | "SSL30"
     )
 }
 

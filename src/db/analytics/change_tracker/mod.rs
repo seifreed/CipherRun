@@ -1,6 +1,7 @@
 // Change Tracker
 // Detects and reports changes between consecutive scans
 
+use crate::db::analytics::protocol_identity::protocol_identity;
 use crate::db::connection::DatabasePool;
 use crate::db::{
     CipherRecord, CipherRunDatabase, ProtocolRecord, RatingRecord, ScanRecord, VulnerabilityRecord,
@@ -83,25 +84,6 @@ fn detect_set_differences<T: Eq + Hash + Clone>(
     SetDifferences {
         removed: old.difference(new).cloned().collect(),
         added: new.difference(old).cloned().collect(),
-    }
-}
-
-fn normalized_protocol_name(protocol: &str) -> String {
-    protocol
-        .chars()
-        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
-        .flat_map(|c| c.to_uppercase())
-        .collect()
-}
-
-fn protocol_identity(protocol: &str) -> String {
-    let normalized = normalized_protocol_name(protocol);
-    if let Some(version) = normalized.strip_prefix("TLSV") {
-        format!("TLS{}", version)
-    } else if let Some(version) = normalized.strip_prefix("SSLV") {
-        format!("SSL{}", version)
-    } else {
-        normalized
     }
 }
 

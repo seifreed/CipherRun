@@ -2,6 +2,7 @@
 
 use super::{CipherChangeInfo, CipherDetailInfo, CipherDiff, CipherInfo, ScanComparator};
 use crate::db::CipherRecord;
+use crate::db::analytics::protocol_identity::protocol_identity;
 use crate::db::connection::DatabasePool;
 use std::collections::BTreeMap;
 
@@ -25,25 +26,6 @@ fn sort_cipher_changes(changes: &mut [CipherChangeInfo]) {
             .then_with(|| a.previous.strength.cmp(&b.previous.strength))
             .then_with(|| a.current.strength.cmp(&b.current.strength))
     });
-}
-
-fn normalized_protocol_name(protocol: &str) -> String {
-    protocol
-        .chars()
-        .filter(|c| !c.is_ascii_whitespace() && *c != '_' && *c != '-')
-        .flat_map(|c| c.to_uppercase())
-        .collect()
-}
-
-fn protocol_identity(protocol: &str) -> String {
-    let normalized = normalized_protocol_name(protocol);
-    if let Some(version) = normalized.strip_prefix("TLSV") {
-        format!("TLS{}", version)
-    } else if let Some(version) = normalized.strip_prefix("SSLV") {
-        format!("SSL{}", version)
-    } else {
-        normalized
-    }
 }
 
 impl ScanComparator {
