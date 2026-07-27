@@ -205,20 +205,11 @@ impl CipherTestable for CipherTester {
 mod tests {
     use super::test_support::make_cipher;
     use super::*;
-    use crate::utils::test_support::example_target;
+    use crate::utils::test_support::{example_target, localhost_target};
     use std::net::{IpAddr, SocketAddr};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
-
-    fn local_target_for_addr(addr: SocketAddr) -> Target {
-        Target::with_ips(
-            "localhost".to_string(),
-            addr.port(),
-            vec![IpAddr::from([127, 0, 0, 1])],
-        )
-        .expect("target should build")
-    }
 
     fn local_cipher_tester(target: Target) -> CipherTester {
         CipherTester::new(target)
@@ -481,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_server_chosen_cipher_parses_response() {
         let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -501,7 +492,7 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
         drop(listener);
 
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -516,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_server_chosen_cipher_propagates_parse_errors() {
         let addr = spawn_fake_tls_server(0xc02f, 33, 1).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -533,7 +524,7 @@ mod tests {
     #[tokio::test]
     async fn test_determine_server_preference_fixed_choice() {
         let addr = spawn_fake_tls_server(0xc030, 0, 3).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -604,7 +595,7 @@ mod tests {
     #[tokio::test]
     async fn test_perform_cipher_handshake_success() {
         let addr = spawn_fake_tls_server(0xc02f, 0, 1).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -623,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn test_perform_cipher_handshake_reads_fragmented_server_hello() {
         let addr = spawn_fragmented_fake_tls_server(0xc02f).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -648,7 +639,7 @@ mod tests {
 
         tokio::spawn(async move { if let Ok((_socket, _)) = listener.accept().await {} });
 
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target);
 
@@ -673,7 +664,7 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
         drop(listener);
 
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = CipherTester::new(target)
             .with_connect_timeout(Duration::from_millis(100))
@@ -727,7 +718,7 @@ mod tests {
     #[tokio::test]
     async fn test_protocol_ciphers_with_fake_server() {
         let addr = spawn_fake_tls_server(0xc02f, 0, 200).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target)
             .with_max_concurrent_tests(4)
@@ -750,7 +741,7 @@ mod tests {
             .len()
             .saturating_add(5);
         let addr = spawn_fake_tls_server(0xc02f, 0, accepts).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = CipherTester::new(target)
             .with_connect_timeout(Duration::from_millis(400))
@@ -784,7 +775,7 @@ mod tests {
     #[tokio::test]
     async fn test_all_protocols_with_fake_server() {
         let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target)
             .with_max_concurrent_tests(4)
@@ -807,7 +798,7 @@ mod tests {
         // (`--each-cipher` / `test_all_protocols`) aborted with
         // "Invalid cipher hexcode '060040': number too large to fit in target type".
         let addr = spawn_fake_tls_server(0xc02f, 0, 600).await;
-        let target = local_target_for_addr(addr);
+        let target = localhost_target(addr.port());
 
         let tester = local_cipher_tester(target)
             .test_all(true)
