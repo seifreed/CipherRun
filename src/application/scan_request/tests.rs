@@ -367,7 +367,23 @@ fn rejects_mtls_key_password_without_key() {
         ..Default::default()
     };
 
-    assert_common_error_contains(request, "--pkpass requires --pk");
+    assert_common_error_contains(request, "--pkpass requires --pk or --mtls");
+}
+
+#[test]
+fn accepts_key_password_with_combined_mtls_bundle() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            mtls_cert: Some("bundle.pem".into()),
+            client_key_password: Some("secret".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    request
+        .validate_common()
+        .expect("combined mTLS bundle may use an encrypted private key");
 }
 
 #[test]

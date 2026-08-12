@@ -1,6 +1,7 @@
 // mTLS (Mutual TLS) utilities for client authentication
 
 use crate::Result;
+use openssl::pkey::PKey;
 use rustls_pki_types::{
     CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
@@ -57,12 +58,35 @@ fn read_mtls_pem(path: &Path, label: &str) -> Result<Vec<u8>> {
     })
 }
 
-fn parse_keys(pem_bytes: &[u8]) -> crate::Result<Vec<PrivateKeyDer<'static>>> {
+fn parse_keys(
+    pem_bytes: &[u8],
+    key_password: Option<&str>,
+) -> crate::Result<Vec<PrivateKeyDer<'static>>> {
     let items = pem::parse_many(pem_bytes).map_err(|e| crate::error::TlsError::MtlsError {
         message: format!("Failed to parse PEM: {}", e),
     })?;
     let mut keys = Vec::new();
     for item in items {
+        let encrypted = item.tag() == "ENCRYPTED PRIVATE KEY"
+            || item
+                .headers()
+                .get("Proc-Type")
+                .is_some_and(|value| value.eq_ignore_ascii_case("4,ENCRYPTED"));
+        if encrypted {
+            let password = key_password.ok_or_else(|| crate::error::TlsError::MtlsError {
+                message: "Encrypted private key requires --pkpass".to_string(),
+            })?;
+            let pem_bytes = pem::encode(&item);
+            let key =
+                PKey::private_key_from_pem_passphrase(pem_bytes.as_bytes(), password.as_bytes())
+                    .map_err(|e| crate::error::TlsError::MtlsError {
+                        message: format!("Failed to decrypt private key: {}", e),
+                    })?;
+            keys.push(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+                key.private_key_to_pkcs8()?,
+            )));
+            continue;
+        }
         match item.tag() {
             "PRIVATE KEY" => keys.push(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
                 item.into_contents(),
@@ -99,7 +123,7 @@ impl MtlsConfig {
     pub fn from_separate_files<P: AsRef<Path>>(
         cert_path: P,
         key_path: P,
-        _key_password: Option<&str>,
+        key_password: Option<&str>,
     ) -> Result<Self> {
         let cert_bytes = read_mtls_pem(cert_path.as_ref(), "certificate file")?;
         let certs = parse_certs(&cert_bytes)?;
@@ -108,7 +132,7 @@ impl MtlsConfig {
         }
 
         let key_bytes = read_mtls_pem(key_path.as_ref(), "private key file")?;
-        let keys = parse_keys(&key_bytes)?;
+        let keys = parse_keys(&key_bytes, key_password)?;
 
         Ok(Self {
             cert_chain: certs,
@@ -118,6 +142,14 @@ impl MtlsConfig {
 
     /// Load mTLS configuration from a PEM file containing both cert chain and private key
     pub fn from_pem_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::from_pem_file_with_password(path, None)
+    }
+
+    /// Load mTLS configuration from a PEM file, optionally decrypting its private key.
+    pub fn from_pem_file_with_password<P: AsRef<Path>>(
+        path: P,
+        key_password: Option<&str>,
+    ) -> Result<Self> {
         let pem_bytes = read_mtls_pem(path.as_ref(), "mTLS PEM file")?;
 
         let certs = parse_certs(&pem_bytes)?;
@@ -125,7 +157,7 @@ impl MtlsConfig {
             crate::tls_bail!("No certificates found in PEM file");
         }
 
-        let keys = parse_keys(&pem_bytes)?;
+        let keys = parse_keys(&pem_bytes, key_password)?;
 
         Ok(Self {
             cert_chain: certs,
@@ -203,6 +235,20 @@ KHvHJKYnrKyB
             .err()
             .expect("should fail on empty PEM");
         assert!(err.to_string().contains("No certificates"));
+    }
+
+    #[test]
+    fn test_mtls_decrypts_encrypted_private_key_with_password() {
+        use openssl::rsa::Rsa;
+        use openssl::symm::Cipher;
+
+        let rsa = Rsa::generate(2048).expect("RSA key should be generated");
+        let pem = rsa
+            .private_key_to_pem_passphrase(Cipher::aes_256_cbc(), b"secret")
+            .expect("encrypted key should be encoded");
+
+        let keys = parse_keys(&pem, Some("secret")).expect("encrypted key should decrypt");
+        assert_eq!(keys.len(), 1);
     }
 
     #[test]

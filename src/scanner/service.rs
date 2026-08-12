@@ -114,7 +114,10 @@ impl Scanner {
                 request.tls.client_key_password.as_deref(),
             )?)
         } else if let Some(mtls_path) = &request.tls.mtls_cert {
-            Some(MtlsConfig::from_pem_file(mtls_path)?)
+            Some(MtlsConfig::from_pem_file_with_password(
+                mtls_path,
+                request.tls.client_key_password.as_deref(),
+            )?)
         } else {
             None
         };

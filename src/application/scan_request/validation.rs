@@ -126,8 +126,11 @@ impl ScanRequest {
             return Err(invalid_input("Cannot combine --mtls with --pk/--certs."));
         }
 
-        if self.tls.client_key_password.is_some() && self.tls.client_key.is_none() {
-            return Err(invalid_input("--pkpass requires --pk."));
+        if self.tls.client_key_password.is_some()
+            && self.tls.client_key.is_none()
+            && self.tls.mtls_cert.is_none()
+        {
+            return Err(invalid_input("--pkpass requires --pk or --mtls."));
         }
 
         if let Some(format) = &self.fingerprint.export_hello {
