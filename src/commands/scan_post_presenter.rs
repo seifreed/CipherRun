@@ -7,16 +7,16 @@ struct ScanPostProcessingOutcome {
     exit: CommandExit,
 }
 
-pub struct ScanPostPresenter<'a> {
+pub(super) struct ScanPostPresenter<'a> {
     args: &'a Args,
 }
 
 impl<'a> ScanPostPresenter<'a> {
-    pub fn new(args: &'a Args) -> Self {
+    pub(super) fn new(args: &'a Args) -> Self {
         Self { args }
     }
 
-    pub fn render(&self, post_view: &ScanPostView<'_>) -> Result<CommandExit> {
+    pub(super) fn render(&self, post_view: &ScanPostView<'_>) -> Result<CommandExit> {
         if !post_view.should_render() {
             return Ok(CommandExit::success());
         }
@@ -29,7 +29,7 @@ impl<'a> ScanPostPresenter<'a> {
         Ok(self.exit_for_post_view(post_view))
     }
 
-    pub fn exit_for_post_view(&self, post_view: &ScanPostView<'_>) -> CommandExit {
+    pub(super) fn exit_for_post_view(&self, post_view: &ScanPostView<'_>) -> CommandExit {
         let mut exit = CommandExit::success();
 
         if post_view.compliance_failed() {

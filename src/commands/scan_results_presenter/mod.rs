@@ -5,16 +5,16 @@ mod primary;
 use crate::Args;
 use crate::application::ScanCliView;
 
-pub struct ScanResultsPresenter<'a> {
+pub(super) struct ScanResultsPresenter<'a> {
     args: &'a Args,
 }
 
 impl<'a> ScanResultsPresenter<'a> {
-    pub fn new(args: &'a Args) -> Self {
+    pub(super) fn new(args: &'a Args) -> Self {
         Self { args }
     }
 
-    pub fn render(&self, cli_view: &ScanCliView<'_>) {
+    pub(super) fn render(&self, cli_view: &ScanCliView<'_>) {
         use crate::output::ScannerFormatter;
 
         let results = cli_view.results();

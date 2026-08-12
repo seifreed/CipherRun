@@ -16,18 +16,18 @@ pub(crate) enum ExportKind {
     RawHello,
 }
 
-pub struct ScanExportPlan<'a> {
-    pub results: &'a crate::scanner::ScanResults,
-    pub json_file: Option<std::path::PathBuf>,
-    pub json_pretty: bool,
-    pub json_multi_ip: Option<std::path::PathBuf>,
-    pub csv_file: Option<std::path::PathBuf>,
-    pub html_file: Option<std::path::PathBuf>,
-    pub xml_file: Option<std::path::PathBuf>,
+pub(super) struct ScanExportPlan<'a> {
+    pub(super) results: &'a crate::scanner::ScanResults,
+    pub(super) json_file: Option<std::path::PathBuf>,
+    pub(super) json_pretty: bool,
+    pub(super) json_multi_ip: Option<std::path::PathBuf>,
+    pub(super) csv_file: Option<std::path::PathBuf>,
+    pub(super) html_file: Option<std::path::PathBuf>,
+    pub(super) xml_file: Option<std::path::PathBuf>,
 }
 
 impl ScanExportPlan<'_> {
-    pub fn has_export_targets(&self) -> bool {
+    pub(super) fn has_export_targets(&self) -> bool {
         self.json_file.is_some()
             || self.json_multi_ip.is_some()
             || self.csv_file.is_some()
@@ -35,35 +35,38 @@ impl ScanExportPlan<'_> {
             || self.xml_file.is_some()
     }
 
-    pub fn has_multi_ip_json_target(&self) -> bool {
+    pub(super) fn has_multi_ip_json_target(&self) -> bool {
         self.json_multi_ip.is_some()
     }
 }
 
-pub struct ScanExportOutcome {
+pub(super) struct ScanExportOutcome {
     exported: bool,
 }
 
 impl ScanExportOutcome {
-    pub fn none() -> Self {
+    pub(super) fn none() -> Self {
         Self { exported: false }
     }
 
-    pub fn exported(&self) -> bool {
+    pub(super) fn exported(&self) -> bool {
         self.exported
     }
 }
 
-pub struct ScanExporter<'a> {
+pub(super) struct ScanExporter<'a> {
     args: &'a Args,
 }
 
 impl<'a> ScanExporter<'a> {
-    pub fn new(args: &'a Args) -> Self {
+    pub(super) fn new(args: &'a Args) -> Self {
         Self { args }
     }
 
-    pub fn build_plan_from_view<'b>(&self, view: ScanExportView<'b>) -> Result<ScanExportPlan<'b>> {
+    pub(super) fn build_plan_from_view<'b>(
+        &self,
+        view: ScanExportView<'b>,
+    ) -> Result<ScanExportPlan<'b>> {
         let bundle_base = self.args.output.output_all.as_ref();
         let mut json_file = self.args.output.json.clone();
         let mut json_multi_ip = if view.has_multi_ip_export_data() {
@@ -113,7 +116,7 @@ impl<'a> ScanExporter<'a> {
             .transpose()
     }
 
-    pub fn export(&self, plan: ScanExportPlan<'_>) -> Result<ScanExportOutcome> {
+    pub(super) fn export(&self, plan: ScanExportPlan<'_>) -> Result<ScanExportOutcome> {
         if !plan.has_export_targets() {
             return Ok(ScanExportOutcome::none());
         }
@@ -173,7 +176,7 @@ impl<'a> ScanExporter<'a> {
     /// Each captured Hello is written to `<sanitized-target>.<which>_hello.<ext>`
     /// in the requested format. No-op when the flag is absent or no Hello was
     /// captured (e.g. fingerprinting was disabled or the handshake failed).
-    pub fn export_hellos(&self, results: &crate::scanner::ScanResults) -> Result<()> {
+    pub(super) fn export_hellos(&self, results: &crate::scanner::ScanResults) -> Result<()> {
         let Some(format_str) = &self.args.fingerprint.export_hello else {
             return Ok(());
         };

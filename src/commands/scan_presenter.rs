@@ -15,16 +15,16 @@ struct ScanPresentationOutcome {
     artifacts: Option<ScanArtifactsOutcome>,
 }
 
-pub struct ScanPresenter<'a> {
+pub(super) struct ScanPresenter<'a> {
     args: &'a Args,
 }
 
 impl<'a> ScanPresenter<'a> {
-    pub fn new(args: &'a Args) -> Self {
+    pub(super) fn new(args: &'a Args) -> Self {
         Self { args }
     }
 
-    pub fn present(&self, report: &'a ScanExecutionReport) -> Result<CommandExit> {
+    pub(super) fn present(&self, report: &'a ScanExecutionReport) -> Result<CommandExit> {
         let cli_view = report.cli_view(self.args.compliance.enforce);
         self.render_scan_results(&cli_view);
         let outcome = self.present_post_scan_sections(&cli_view)?;
@@ -64,7 +64,7 @@ impl<'a> ScanPresenter<'a> {
         Ok(ScanArtifactsOutcome { export_outcome })
     }
 
-    pub fn render_scan_results(&self, cli_view: &ScanCliView<'_>) {
+    pub(super) fn render_scan_results(&self, cli_view: &ScanCliView<'_>) {
         if self.args.output.quiet {
             return;
         }
@@ -111,7 +111,10 @@ impl<'a> ScanPresenter<'a> {
         }
     }
 
-    pub fn export_results(&self, cli_view: &'a ScanCliView<'_>) -> Result<ScanExportOutcome> {
+    pub(super) fn export_results(
+        &self,
+        cli_view: &'a ScanCliView<'_>,
+    ) -> Result<ScanExportOutcome> {
         if !cli_view.should_export_artifacts() {
             return Ok(ScanExportOutcome::none());
         }

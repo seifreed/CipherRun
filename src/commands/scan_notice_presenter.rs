@@ -1,17 +1,17 @@
-pub struct ScanNoticePresenter;
+pub(super) struct ScanNoticePresenter;
 
 impl ScanNoticePresenter {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self
     }
 
-    pub fn render_storage_notice(&self, stored_scan_id: Option<i64>) {
+    pub(super) fn render_storage_notice(&self, stored_scan_id: Option<i64>) {
         if let Some(scan_id) = stored_scan_id {
             println!("\n✓ Scan results stored in database (scan_id: {})", scan_id);
         }
     }
 
-    pub fn render_export_spacing(&self, exported: bool) {
+    pub(super) fn render_export_spacing(&self, exported: bool) {
         if exported {
             println!();
         }
