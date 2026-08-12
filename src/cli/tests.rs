@@ -260,6 +260,25 @@ fn test_validate_rejects_excessive_max_parallel() {
 }
 
 #[test]
+fn test_validate_scan_all_ips_rejects_non_json_artifacts() {
+    let args = Args::parse_with_sources_from([
+        "cipherrun",
+        "--scan-all-ips",
+        "--html",
+        "anycast.html",
+        "example.com:443",
+    ])
+    .expect("parse should succeed");
+    let err = args
+        .validate()
+        .expect_err("Anycast should reject unsupported artifact formats");
+    assert!(
+        err.to_string().contains("supports JSON output only"),
+        "{err}"
+    );
+}
+
+#[test]
 fn test_validate_mx_rejects_json_multi_ip() {
     let args = Args {
         mx_domain: Some("example.com".to_string()),

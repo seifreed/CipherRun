@@ -223,7 +223,9 @@ impl<'a> ScanExporter<'a> {
         export_kind: ExportKind,
     ) -> Result<()> {
         self.write_artifact(path, content, export_kind)?;
-        println!("✓ Results exported to {}: {}", kind, path.display());
+        if !self.args.output.quiet {
+            println!("✓ Results exported to {}: {}", kind, path.display());
+        }
         Ok(())
     }
 

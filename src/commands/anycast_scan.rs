@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit};
 use crate::utils::anycast::{AnycastScanResults, AnycastScanner};
 use crate::utils::network::Target;
@@ -35,6 +36,19 @@ impl AnycastScanCommand {
             CommandExit::success()
         }
     }
+
+    fn export_results(&self, results: &AnycastScanResults) -> Result<()> {
+        let exporter = ScanExporter::new(&self.args);
+        let Some(json_path) = exporter.collection_json_output_path()? else {
+            return Ok(());
+        };
+        let json = if self.args.output.json_pretty {
+            serde_json::to_string_pretty(results)?
+        } else {
+            serde_json::to_string(results)?
+        };
+        exporter.write_text_file(&json_path, &json, "JSON", ExportKind::Json)
+    }
 }
 
 #[async_trait]
@@ -49,7 +63,10 @@ impl Command for AnycastScanCommand {
 
         let scanner = AnycastScanner::new(target.hostname.clone(), target.port, self.args.clone());
         let results = scanner.scan_all_ips().await?;
-        results.display_summary();
+        if !self.args.output.quiet {
+            results.display_summary();
+        }
+        self.export_results(&results)?;
 
         Ok(Self::exit_for_results(&results))
     }
@@ -145,5 +162,29 @@ mod tests {
     fn test_anycast_scan_all_success_returns_success() {
         let exit = AnycastScanCommand::exit_for_results(&anycast_results(2, 2));
         assert!(exit.is_success());
+    }
+
+    #[test]
+    fn test_anycast_json_export_writes_results() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("anycast.json");
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                json: Some(path.clone()),
+                overwrite: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let command = AnycastScanCommand::new(args);
+
+        command
+            .export_results(&anycast_results(1, 1))
+            .expect("Anycast JSON export should succeed");
+        let exported: AnycastScanResults =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("JSON should be written"))
+                .expect("exported JSON should deserialize");
+        assert_eq!(exported.total_ips, 1);
+        assert_eq!(exported.successful_scans, 1);
     }
 }

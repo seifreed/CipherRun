@@ -253,6 +253,15 @@ impl Args {
         }
 
         if self.network.scan_all_ips {
+            if self.output.csv.is_some()
+                || self.output.html.is_some()
+                || self.output.xml.is_some()
+                || self.output.output_all.is_some()
+            {
+                crate::tls_bail!(
+                    "--scan-all-ips supports JSON output only; CSV/HTML/XML and --output-all are not available"
+                );
+            }
             if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
                 crate::tls_bail!("--scan-all-ips requires a single target scan");
             }
