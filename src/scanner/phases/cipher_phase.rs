@@ -211,16 +211,8 @@ impl ScanPhase for CipherPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::example_com_loopback_target;
     use std::sync::Arc;
-
-    fn example_target() -> crate::utils::network::Target {
-        crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_cipher_phase_should_run() {
@@ -262,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cipher_phase_execute_skips_without_protocols() {
-        let target = example_target();
+        let target = example_com_loopback_target(443);
         let args = Arc::new(ScanRequest::default());
         let mut context = ScanContext::new(target, args, None, None);
 
@@ -273,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_configure_tester_with_flags() {
-        let target = example_target();
+        let target = example_com_loopback_target(443);
 
         let mut args = ScanRequest {
             target: Some("example.com".to_string()),

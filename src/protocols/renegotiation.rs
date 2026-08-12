@@ -326,16 +326,8 @@ impl<'a> RenegotiationTester<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::example_com_loopback_target;
     use tokio::io::AsyncReadExt;
-
-    fn example_target(port: u16) -> Target {
-        Target::with_ips(
-            "example.com".to_string(),
-            port,
-            vec!["127.0.0.1".parse().expect("valid IP")],
-        )
-        .expect("test assertion should succeed")
-    }
 
     #[test]
     fn test_tls_record_total_len_rejects_oversized_record() {
@@ -490,7 +482,7 @@ mod tests {
             }
         });
 
-        let target = example_target(addr.port());
+        let target = example_com_loopback_target(addr.port());
 
         let tester = RenegotiationTester::new(&target);
         let result = tester.test().await.expect("test assertion should succeed");
@@ -514,7 +506,7 @@ mod tests {
             }
         });
 
-        let target = example_target(addr.port());
+        let target = example_com_loopback_target(addr.port());
 
         let tester = RenegotiationTester::new(&target);
         let support = tester
@@ -753,7 +745,7 @@ mod tests {
             socket.flush().await.expect("flush second fragment");
         });
 
-        let target = example_target(addr.port());
+        let target = example_com_loopback_target(addr.port());
         let tester = RenegotiationTester::new(&target);
 
         let secure = tester

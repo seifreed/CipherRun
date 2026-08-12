@@ -375,16 +375,8 @@ impl ScanPhase for CertificatePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::test_support::example_com_loopback_target;
     use std::sync::Arc;
-
-    fn example_target(port: u16) -> crate::utils::network::Target {
-        crate::utils::network::Target::with_ips(
-            "example.com".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap()
-    }
 
     #[test]
     fn test_certificate_phase_should_run() {
@@ -432,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_openssl_starttls_maps_telnet() {
-        let target = example_target(23);
+        let target = example_com_loopback_target(23);
         let mut args = ScanRequest::default();
         args.starttls.protocol = Some("telnet".to_string());
         let context = ScanContext::new(target, Arc::new(args), None, None);
@@ -445,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_openssl_starttls_maps_xmpp_server() {
-        let target = example_target(5269);
+        let target = example_com_loopback_target(5269);
         let mut args = ScanRequest::default();
         args.starttls.protocol = Some(" xmpp-server ".to_string());
         let context = ScanContext::new(target, Arc::new(args), None, None);
@@ -458,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_openssl_starttls_maps_xmpp_server_flag() {
-        let target = example_target(5269);
+        let target = example_com_loopback_target(5269);
         let mut args = ScanRequest::default();
         args.starttls.xmpp_server = true;
         let context = ScanContext::new(target, Arc::new(args), None, None);
@@ -471,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revocation_check_skipped_without_phone_out() {
-        let target = example_target(443);
+        let target = example_com_loopback_target(443);
         let args = Arc::new(ScanRequest::default());
         let context = ScanContext::new(target, args, None, None);
 
