@@ -35,6 +35,9 @@ pub struct MassScanConfig {
     pub certificate_filters: CertificateFilters,
 }
 
+/// Maximum number of target scanners allowed to run concurrently.
+pub const MAX_MASS_PARALLEL: usize = 20;
+
 impl Default for MassScanConfig {
     fn default() -> Self {
         Self {
@@ -153,7 +156,8 @@ impl MassScanner {
 
     /// Scan all targets in parallel
     pub async fn scan_parallel(&self) -> Result<Vec<(String, Result<ScanResults>)>> {
-        let max_parallel = self.config.max_parallel;
+        // ponytail: fixed 20-scan ceiling; replace with resource-aware budgeting if phase fan-out grows.
+        let max_parallel = self.config.max_parallel.clamp(1, MAX_MASS_PARALLEL);
         let total = self.targets.len();
 
         if let Some(ref callback) = self.callback {
@@ -513,12 +517,20 @@ impl MassScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::application::ScanRequest;
     use crate::rating::grader::Grade;
     use crate::rating::scoring::RatingResult;
     use crate::scanner::RatingResults;
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_effective_parallel_limit() {
+        assert_eq!(0usize.clamp(1, MAX_MASS_PARALLEL), 1);
+        assert_eq!(MAX_MASS_PARALLEL, 20);
+        assert_eq!(50usize.clamp(1, MAX_MASS_PARALLEL), MAX_MASS_PARALLEL);
+    }
 
     fn build_scan_with_expired_cert(expired: bool) -> ScanResults {
         use crate::certificates::parser::{CertificateChain, CertificateInfo};

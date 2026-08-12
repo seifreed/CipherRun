@@ -244,6 +244,22 @@ fn test_validate_rejects_zero_max_parallel() {
 }
 
 #[test]
+fn test_validate_rejects_excessive_max_parallel() {
+    let args = Args::parse_with_sources_from([
+        "cipherrun",
+        "--file",
+        "targets.txt",
+        "--max-parallel",
+        "21",
+    ])
+    .expect("parse should succeed");
+    let err = args
+        .validate()
+        .expect_err("excessive max_parallel should be rejected");
+    assert!(err.to_string().contains("must not exceed 20"), "{err}");
+}
+
+#[test]
 fn test_validate_mx_rejects_json_multi_ip() {
     let args = Args {
         mx_domain: Some("example.com".to_string()),

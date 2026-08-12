@@ -4,7 +4,7 @@
 
 use clap::Args;
 
-pub const DEFAULT_MAX_PARALLEL: usize = 20;
+pub const DEFAULT_MAX_PARALLEL: usize = crate::scanner::mass::MAX_MASS_PARALLEL;
 const DEFAULT_MAX_CONCURRENT_CIPHERS: usize = 10;
 
 /// Network configuration options
@@ -52,7 +52,7 @@ pub struct NetworkArgs {
     #[arg(long = "parallel")]
     pub parallel: bool,
 
-    /// Maximum parallel connections
+    /// Maximum parallel target scans (1-20)
     #[arg(
         long = "max-parallel",
         value_name = "NUM",

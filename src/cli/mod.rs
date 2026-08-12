@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use crate::scanner::mass::MAX_MASS_PARALLEL;
 use crate::security::validate_hostname;
 use crate::utils::{
     custom_resolvers::CustomResolver, network::normalize_dns_hostname, proxy::ProxyConfig,
@@ -242,6 +243,13 @@ impl Args {
 
         if self.network.max_parallel == 0 {
             crate::tls_bail!("--max-parallel must be greater than 0");
+        }
+
+        if self.network.max_parallel > MAX_MASS_PARALLEL {
+            crate::tls_bail!(
+                "--max-parallel must not exceed {} to avoid exhausting process resources",
+                MAX_MASS_PARALLEL
+            );
         }
 
         if self.network.scan_all_ips {
