@@ -48,6 +48,7 @@ mod tests {
     };
     use crate::scanner::multi_ip::MultiIpScanReport;
     use crate::scanner::test_support::{empty_aggregated_result, successful_ip_scan};
+    use crate::utils::test_support::example_com_loopback_target;
     use crate::utils::network::Target;
     use crate::vulnerabilities::Severity;
     use std::collections::HashMap;
@@ -56,12 +57,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn single_ip_target() -> Target {
-        Target::with_ips(
-            "example.com".to_string(),
-            443,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .expect("test assertion should succeed")
+        example_com_loopback_target(443)
     }
 
     fn two_ip_target() -> Target {
