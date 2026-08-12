@@ -11,17 +11,17 @@ pub mod webhook;
 use crate::Result;
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::{ChangeEvent, ChangeSeverity};
-use crate::security::validate_hostname;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::is_private_ip;
+use crate::security::validate_hostname;
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::net::lookup_host;
+use tokio::sync::Mutex;
 
 pub use channels::AlertChannel;
 
@@ -66,9 +66,11 @@ pub(crate) async fn validated_webhook_target(
         });
     }
 
-    let host = url.host_str().ok_or_else(|| crate::error::TlsError::ConfigError {
-        message: "Invalid webhook url: host required".to_string(),
-    })?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| crate::error::TlsError::ConfigError {
+            message: "Invalid webhook url: host required".to_string(),
+        })?;
     let host_ip = host.parse::<IpAddr>().ok();
     if host_ip.is_none() {
         validate_hostname(host).map_err(|error| crate::error::TlsError::ConfigError {
@@ -87,9 +89,11 @@ pub(crate) async fn validated_webhook_target(
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs: Vec<_> = lookup_host((host, port))
         .await
-        .map_err(|error| crate::error::TlsError::Other(format!(
-            "Webhook DNS resolution failed for {host}: {error}"
-        )))?
+        .map_err(|error| {
+            crate::error::TlsError::Other(format!(
+                "Webhook DNS resolution failed for {host}: {error}"
+            ))
+        })?
         .collect();
     if addrs.is_empty() {
         return Err(crate::error::TlsError::ConfigError {
@@ -120,7 +124,10 @@ pub(crate) async fn validated_webhook_target(
 pub(crate) fn raw_webhook_host(webhook_url: &str) -> Option<&str> {
     let authority = webhook_url.split_once("://")?.1;
     let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
 
     if let Some(host) = host.strip_prefix('[') {
         host.split_once(']').map(|(host, _)| host)
@@ -161,8 +168,7 @@ fn validate_webhook_addrs(
     if normalized_host == "localhost" || allow_loopback_only {
         if addrs.iter().any(|addr| !addr.ip().is_loopback()) {
             return Err(crate::error::TlsError::ConfigError {
-                message: "Webhook URL must resolve only to loopback addresses"
-                    .to_string(),
+                message: "Webhook URL must resolve only to loopback addresses".to_string(),
             });
         }
         return Ok(());
@@ -482,9 +488,10 @@ mod tests_extra {
             Err(err) => err,
         };
 
-        assert!(err
-            .to_string()
-            .contains("resolve only to loopback addresses"));
+        assert!(
+            err.to_string()
+                .contains("resolve only to loopback addresses")
+        );
     }
 
     #[test]

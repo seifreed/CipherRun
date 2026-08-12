@@ -177,8 +177,12 @@ impl AlpnTester {
                     }
                 }
             } else {
-                match crate::utils::network::connect_with_timeout(addr, Duration::from_secs(5), None)
-                    .await
+                match crate::utils::network::connect_with_timeout(
+                    addr,
+                    Duration::from_secs(5),
+                    None,
+                )
+                .await
                 {
                     Ok(s) => s,
                     Err(_) => {
@@ -196,19 +200,21 @@ impl AlpnTester {
 
             let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
 
-            let server_name = match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
-                Ok(name) => name,
-                Err(_) => {
-                    continue;
-                }
-            };
+            let server_name =
+                match crate::utils::network::server_name_for_hostname(&self.target.hostname) {
+                    Ok(name) => name,
+                    Err(_) => {
+                        continue;
+                    }
+                };
 
             // Attempt TLS handshake with ALPN
             if let Ok(Ok(tls_stream)) = timeout(
                 Duration::from_secs(10),
                 connector.connect(server_name, stream),
             )
-            .await {
+            .await
+            {
                 // Check which protocol was negotiated
                 let (_, connection) = tls_stream.get_ref();
                 if let Some(protocol) = connection.alpn_protocol() {
@@ -407,11 +413,20 @@ mod tests {
         .unwrap();
 
         let tester = AlpnTester::new(target)
-            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::XMPP),
+                Some("xmpp.example.com".to_string()),
+            )
             .with_starttls_server_mode(true);
 
-        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
-        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert_eq!(
+            tester.starttls,
+            Some(crate::starttls::StarttlsProtocol::XMPP)
+        );
+        assert_eq!(
+            tester.starttls_hostname.as_deref(),
+            Some("xmpp.example.com")
+        );
         assert!(tester.starttls_server_mode);
     }
 

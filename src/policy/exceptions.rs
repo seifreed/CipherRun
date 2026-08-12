@@ -1,8 +1,8 @@
 // Policy exception matching and handling
 
 use crate::policy::PolicyException;
-use crate::utils::network::split_target_host_port;
 use crate::utils::network::normalize_dns_hostname;
+use crate::utils::network::split_target_host_port;
 use chrono::{NaiveDate, Utc};
 
 /// Exception matcher for policy rules
@@ -50,7 +50,8 @@ impl ExceptionMatcher {
         let Ok((hostname, _)) = split_target_host_port(target) else {
             return false;
         };
-        let hostname_lower = normalize_dns_hostname(hostname.trim().to_string()).to_ascii_lowercase();
+        let hostname_lower =
+            normalize_dns_hostname(hostname.trim().to_string()).to_ascii_lowercase();
         let pattern_lower = normalize_dns_hostname(pattern.trim().to_string()).to_ascii_lowercase();
         let hostname = hostname_lower.as_str();
         let pattern = pattern_lower.as_str();
@@ -367,7 +368,11 @@ mod tests {
         assert!(matcher.matches_domain("example.com.", "example.com"));
         assert!(matcher.matches_domain("example.com.", "example.com."));
         assert!(matcher.matches_domain("api.example.com.", "*.example.com."));
-        assert!(matcher.is_exception("example.com.:443", "protocols.prohibited").is_some());
+        assert!(
+            matcher
+                .is_exception("example.com.:443", "protocols.prohibited")
+                .is_some()
+        );
     }
 
     #[test]
@@ -384,7 +389,11 @@ mod tests {
         let matcher = ExceptionMatcher::new(vec![exception]);
 
         assert!(!matcher.matches_domain("example.com..", "example.com"));
-        assert!(matcher.is_exception("example.com..:443", "protocols.prohibited").is_none());
+        assert!(
+            matcher
+                .is_exception("example.com..:443", "protocols.prohibited")
+                .is_none()
+        );
     }
 
     #[test]

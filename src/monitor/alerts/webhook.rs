@@ -4,8 +4,8 @@ use super::raw_webhook_host;
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, validated_webhook_target};
-use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::monitor::config::WebhookConfig;
+use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use async_trait::async_trait;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::json;
@@ -102,7 +102,8 @@ impl WebhookChannel {
 impl AlertChannel for WebhookChannel {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let payload = self.format_payload(alert);
-        let validated = validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
+        let validated =
+            validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
         let mut request = validated.client.post(validated.url).json(&payload);
 
         // Add custom headers
@@ -135,7 +136,8 @@ impl AlertChannel for WebhookChannel {
             "test": true,
             "message": "Test webhook from CipherRun monitoring"
         });
-        let validated = validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
+        let validated =
+            validated_webhook_target(&self.config.url, std::time::Duration::from_secs(10)).await?;
         let mut request = validated.client.post(validated.url).json(&test_payload);
 
         for (key, value) in &self.config.headers {

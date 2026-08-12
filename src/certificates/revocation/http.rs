@@ -104,7 +104,10 @@ pub(crate) async fn validate_revocation_http_url(
 fn raw_revocation_host(uri: &str) -> Option<&str> {
     let authority = uri.split_once("://")?.1;
     let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
 
     if let Some(host) = host.strip_prefix('[') {
         host.split_once(']').map(|(host, _)| host)
@@ -179,8 +182,12 @@ mod tests {
     #[test]
     fn test_ordered_addrs_prefers_ipv4() {
         let addrs = vec![
-            "[::1]:443".parse::<SocketAddr>().expect("ipv6 should parse"),
-            "127.0.0.1:443".parse::<SocketAddr>().expect("ipv4 should parse"),
+            "[::1]:443"
+                .parse::<SocketAddr>()
+                .expect("ipv6 should parse"),
+            "127.0.0.1:443"
+                .parse::<SocketAddr>()
+                .expect("ipv4 should parse"),
         ];
 
         let ordered = ordered_addrs(&addrs);

@@ -1,8 +1,8 @@
 use super::ValidationError;
 use super::hostname::validate_hostname;
+use super::looks_like_obfuscated_ip;
 use super::port::validate_port;
 use super::ssrf::is_private_ip;
-use super::looks_like_obfuscated_ip;
 use std::net::{IpAddr, Ipv6Addr};
 
 /// Validate target format and check for SSRF

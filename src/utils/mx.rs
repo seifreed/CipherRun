@@ -3,12 +3,12 @@
 use crate::Result;
 use crate::application::ScanRequest;
 use crate::rating::RatingCalculator;
-use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::scanner::{
     CertificateAnalysisResult, RatingResults, aggregation::ConservativeAggregator,
     inconsistency::SingleIpScanResult,
 };
 use crate::scanner::{ScanResults, Scanner};
+use crate::security::input_validation::looks_like_obfuscated_ip;
 use crate::utils::custom_resolvers::CustomResolver;
 use crate::utils::network::{canonical_target, normalize_dns_hostname};
 use crate::vulnerabilities::{VulnerabilityResult, merge_vulnerability_result};

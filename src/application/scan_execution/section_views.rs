@@ -196,8 +196,8 @@ impl<'a> ScanFingerprintView<'a> {
 #[cfg(test)]
 mod tests {
     use super::ScanFingerprintView;
-    use crate::scanner::results::AdvancedResults;
     use crate::scanner::ScanResults;
+    use crate::scanner::results::AdvancedResults;
 
     #[test]
     fn test_should_render_for_cdn_or_load_balancer_only_results() {

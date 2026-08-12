@@ -68,7 +68,8 @@ impl ProtocolTester {
                 continue;
             };
 
-            let (probe_caching, probe_tickets) = self.session_resumption_tester(target).quick_probe().await;
+            let (probe_caching, probe_tickets) =
+                self.session_resumption_tester(target).quick_probe().await;
             caching.record(probe_caching);
             tickets.record(probe_tickets);
 

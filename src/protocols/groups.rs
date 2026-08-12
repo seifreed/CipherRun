@@ -505,11 +505,20 @@ mod tests {
         .unwrap();
 
         let tester = GroupTester::new(target)
-            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::XMPP),
+                Some("xmpp.example.com".to_string()),
+            )
             .with_starttls_server_mode(true);
 
-        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
-        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert_eq!(
+            tester.starttls,
+            Some(crate::starttls::StarttlsProtocol::XMPP)
+        );
+        assert_eq!(
+            tester.starttls_hostname.as_deref(),
+            Some("xmpp.example.com")
+        );
         assert!(tester.starttls_server_mode);
     }
 
@@ -528,5 +537,4 @@ mod tests {
         let tester = GroupTester::new(target).with_test_all_ips(true);
         assert!(tester.test_all_ips);
     }
-
 }

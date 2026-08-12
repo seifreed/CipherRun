@@ -66,15 +66,14 @@ impl ScanPhase for SignaturePhase {
 
     async fn execute(&self, context: &mut ScanContext) -> Result<()> {
         // Create signature tester with target
-        let tester =
-            SignatureTester::new(context.target())
-                .with_sni(context.args.tls.sni_name.clone())
-                .with_starttls(
-                    context.args.starttls_protocol(),
-                    context.args.starttls.xmpphost.clone(),
-                )
-                .with_starttls_server_mode(context.args.starttls_server_mode())
-                .with_test_all_ips(context.args.network.test_all_ips);
+        let tester = SignatureTester::new(context.target())
+            .with_sni(context.args.tls.sni_name.clone())
+            .with_starttls(
+                context.args.starttls_protocol(),
+                context.args.starttls.xmpphost.clone(),
+            )
+            .with_starttls_server_mode(context.args.starttls_server_mode())
+            .with_test_all_ips(context.args.network.test_all_ips);
 
         // Enumerate all supported signature algorithms
         // This tests:

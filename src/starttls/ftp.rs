@@ -45,7 +45,10 @@ impl StarttlsNegotiator for FtpNegotiator {
                 );
             }
             if code == 534 {
-                tls_bail!("FTP server refused AUTH TLS for policy reasons: {}", response);
+                tls_bail!(
+                    "FTP server refused AUTH TLS for policy reasons: {}",
+                    response
+                );
             }
             tls_bail!(
                 "FTP AUTH TLS failed: expected 234, got {}: {}",

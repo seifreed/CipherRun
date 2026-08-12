@@ -197,10 +197,12 @@ mod tests {
         let f = tmp_config("[Interface]\nPrivateKey = abc\n");
         let result = VpnScanner::scan(f.path()).expect("scan should succeed");
         assert_eq!(result.vpn_type, "WireGuard");
-        assert!(result
-            .quantum_vulnerable
-            .iter()
-            .any(|v| v.contains("X25519")));
+        assert!(
+            result
+                .quantum_vulnerable
+                .iter()
+                .any(|v| v.contains("X25519"))
+        );
         assert_eq!(result.score, 0);
     }
 }

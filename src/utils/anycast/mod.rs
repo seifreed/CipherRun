@@ -9,7 +9,9 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::scanner::ScanResults;
 use crate::security::input_validation::validate_resolved_ips;
-use crate::utils::network::{Target, build_system_resolver, canonical_target, normalize_dns_hostname};
+use crate::utils::network::{
+    Target, build_system_resolver, canonical_target, normalize_dns_hostname,
+};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::proto::rr::RData;
 use serde::{Deserialize, Serialize};

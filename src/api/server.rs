@@ -1,14 +1,13 @@
 // API Server Implementation
 
 use crate::Result;
-use crate::api::{
-    config::ApiConfig, middleware, models::error::ApiError, routes, state::AppState,
-};
+use crate::api::{config::ApiConfig, middleware, models::error::ApiError, routes, state::AppState};
 use crate::utils::network::canonical_target;
 use axum::{
+    Router,
     error_handling::HandleErrorLayer,
     extract::DefaultBodyLimit,
-    Router, middleware as axum_middleware,
+    middleware as axum_middleware,
     routing::{delete, get, post},
 };
 use std::sync::Arc;

@@ -361,7 +361,10 @@ fn reject_private_or_local_host(
             crate::tls_bail!("Invalid {}: IP literals are not allowed", label);
         }
         if is_private_ip(&ip) {
-            crate::tls_bail!("Invalid {}: private/internal IP literals are not allowed", label);
+            crate::tls_bail!(
+                "Invalid {}: private/internal IP literals are not allowed",
+                label
+            );
         }
     }
 
@@ -613,12 +616,11 @@ SSL-Session:
 
         let dir = tempdir().expect("tempdir should be created");
         let script = dir.path().join("openssl");
-        fs::write(
-            &script,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n",
-        )
-        .expect("script should be written");
-        let mut perms = fs::metadata(&script).expect("script metadata should exist").permissions();
+        fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n")
+            .expect("script should be written");
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata should exist")
+            .permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&script, perms).expect("script should be executable");
 

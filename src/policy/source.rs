@@ -1,6 +1,6 @@
 use crate::application::PolicySource;
-use crate::policy::parser::{PolicyDocumentSource, PolicyLoader};
 use crate::policy::Policy;
+use crate::policy::parser::{PolicyDocumentSource, PolicyLoader};
 use std::path::Path;
 
 const MAX_POLICY_FILE_BYTES: u64 = 1024 * 1024;

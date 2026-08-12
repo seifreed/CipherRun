@@ -54,7 +54,7 @@ impl ScanExportOutcome {
     }
 }
 
-pub(super) struct ScanExporter<'a> {
+pub struct ScanExporter<'a> {
     args: &'a Args,
 }
 

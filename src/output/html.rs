@@ -1,7 +1,7 @@
 // HTML Report Generator
 
-use crate::scanner::ScanResults;
 use crate::Result;
+use crate::scanner::ScanResults;
 use handlebars::Handlebars;
 use serde_json::json;
 

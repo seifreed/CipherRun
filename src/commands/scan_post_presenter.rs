@@ -7,7 +7,7 @@ struct ScanPostProcessingOutcome {
     exit: CommandExit,
 }
 
-pub(super) struct ScanPostPresenter<'a> {
+pub struct ScanPostPresenter<'a> {
     args: &'a Args,
 }
 

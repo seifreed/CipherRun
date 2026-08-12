@@ -1,4 +1,4 @@
-pub(super) struct ScanNoticePresenter;
+pub struct ScanNoticePresenter;
 
 impl ScanNoticePresenter {
     pub(super) fn new() -> Self {

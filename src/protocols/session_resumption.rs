@@ -213,7 +213,9 @@ impl SessionResumptionTester {
             .await
             .map_err(|error| TlsError::StarttlsError {
                 protocol: starttls_proto.to_string(),
-                details: format!("STARTTLS negotiation failed before session resumption test: {error}"),
+                details: format!(
+                    "STARTTLS negotiation failed before session resumption test: {error}"
+                ),
             })?;
         }
 
@@ -283,23 +285,21 @@ impl SessionResumptionTester {
     async fn establish_session(&self) -> Result<Option<SslSession>> {
         let std_stream = self.prepare_stream().await?;
         let tester = self.clone();
-        tokio::task::spawn_blocking(move || {
-            tester.establish_session_sync(std_stream)
-        })
-        .await
-        .map_err(|err| {
-            crate::error::TlsError::Other(format!("Session establish join error: {err}"))
-        })?
+        tokio::task::spawn_blocking(move || tester.establish_session_sync(std_stream))
+            .await
+            .map_err(|err| {
+                crate::error::TlsError::Other(format!("Session establish join error: {err}"))
+            })?
     }
 
     async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
         let std_stream = self.prepare_stream().await?;
         let tester = self.clone();
-        tokio::task::spawn_blocking(move || {
-            tester.resume_with_session_sync(std_stream, &session)
-        })
-        .await
-        .map_err(|err| crate::error::TlsError::Other(format!("Session resume join error: {err}")))?
+        tokio::task::spawn_blocking(move || tester.resume_with_session_sync(std_stream, &session))
+            .await
+            .map_err(|err| {
+                crate::error::TlsError::Other(format!("Session resume join error: {err}"))
+            })?
     }
 
     /// Test session ID reuse
@@ -506,12 +506,18 @@ mod tests {
         .unwrap();
 
         let tester = SessionResumptionTester::new(target)
-            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::XMPP),
+                Some("xmpp.example.com".to_string()),
+            )
             .with_starttls_server_mode(true)
             .with_sni(Some("tls.example.com".to_string()))
             .with_connect_timeout(Duration::from_secs(7));
 
-        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
+        assert_eq!(
+            tester.starttls,
+            Some(crate::starttls::StarttlsProtocol::XMPP)
+        );
         assert_eq!(
             tester.starttls_hostname.as_deref(),
             Some("xmpp.example.com")

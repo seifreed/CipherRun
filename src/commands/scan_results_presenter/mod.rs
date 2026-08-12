@@ -5,7 +5,7 @@ mod primary;
 use crate::Args;
 use crate::application::ScanCliView;
 
-pub(super) struct ScanResultsPresenter<'a> {
+pub struct ScanResultsPresenter<'a> {
     args: &'a Args,
 }
 

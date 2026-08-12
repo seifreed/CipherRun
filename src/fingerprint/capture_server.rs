@@ -8,11 +8,11 @@ use crate::error::TlsError;
 use crate::fingerprint::server_hello::ServerHelloCapture;
 use crate::utils::network::Target;
 use crate::utils::parse_length as length;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::timeout;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
 
 /// Capture ServerHello from a TLS connection
 pub struct ServerHelloNetworkCapture {
@@ -144,10 +144,10 @@ impl ServerHelloNetworkCapture {
                 self.timeout,
                 crate::utils::network::connect_with_timeout(socket_addr, self.timeout, None),
             )
-                .await
-                .map_err(|_| TlsError::Timeout {
-                    duration: Some(self.timeout),
-                })??
+            .await
+            .map_err(|_| TlsError::Timeout {
+                duration: Some(self.timeout),
+            })??
         };
 
         stream

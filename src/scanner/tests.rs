@@ -1,4 +1,5 @@
 use super::*;
+use crate::Args;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
 use crate::client_sim::simulator::ClientSimulationResult;
@@ -8,7 +9,6 @@ use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::scanner::test_support::{empty_aggregated_result, successful_ip_scan};
 use crate::utils::network::Target;
 use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
-use crate::Args;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -386,9 +386,11 @@ fn test_aggregate_vulnerabilities_marks_results_inconclusive_when_backend_fails(
     assert!(!aggregated[0].vulnerable);
     // Vulnerability confirmed on the successful backend remains conclusive
     assert!(!aggregated[0].inconclusive);
-    assert!(aggregated[0]
-        .details
-        .contains("incomplete backend coverage"));
+    assert!(
+        aggregated[0]
+            .details
+            .contains("incomplete backend coverage")
+    );
 }
 
 #[test]
@@ -1540,7 +1542,8 @@ fn test_scanner_new_requires_target() {
     let err = Scanner::new(args.to_scan_request().expect("scan request should build"))
         .err()
         .expect("should error");
-    assert!(err
-        .to_string()
-        .contains("A target is required for scan execution"));
+    assert!(
+        err.to_string()
+            .contains("A target is required for scan execution")
+    );
 }

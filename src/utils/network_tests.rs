@@ -453,7 +453,10 @@ async fn test_vuln_ssl_connection_outcome_handshake_failure_is_inconclusive() {
         .expect("test assertion should succeed")
         .port();
     let accept_task = tokio::spawn(async move {
-        let (_socket, _) = listener.accept().await.expect("test assertion should succeed");
+        let (_socket, _) = listener
+            .accept()
+            .await
+            .expect("test assertion should succeed");
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     });
 
@@ -620,7 +623,10 @@ fn test_normalize_dns_hostname_preserves_ip_literal() {
 
 #[test]
 fn test_normalize_dns_hostname_preserves_dotted_ip_literal() {
-    assert_eq!(normalize_dns_hostname("192.0.2.1.".to_string()), "192.0.2.1.");
+    assert_eq!(
+        normalize_dns_hostname("192.0.2.1.".to_string()),
+        "192.0.2.1."
+    );
 }
 
 #[test]

@@ -2,10 +2,10 @@
 //
 // Parses CT log entries (Merkle Tree Leaf format) and extracts certificates
 
-use super::client::CtLogEntryResponse;
 use super::Result;
+use super::client::CtLogEntryResponse;
 use crate::error::TlsError;
-use crate::utils::result_byte_parse::{self, read_u16_at, read_u64_at, read_u8_at};
+use crate::utils::result_byte_parse::{self, read_u8_at, read_u16_at, read_u64_at};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

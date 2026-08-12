@@ -363,16 +363,16 @@ mod tests {
 
     #[test]
     fn test_normalize_mx_hostname_rejects_obfuscated_ip() {
-        let err = normalize_mx_hostname("127.1.")
-            .expect_err("obfuscated MX exchange must be a hostname");
+        let err =
+            normalize_mx_hostname("127.1.").expect_err("obfuscated MX exchange must be a hostname");
 
         assert!(err.to_string().contains("obfuscated IP"));
     }
 
     #[test]
     fn test_normalize_mx_hostname_rejects_private_host() {
-        let err = normalize_mx_hostname("localhost.")
-            .expect_err("private MX exchange must be rejected");
+        let err =
+            normalize_mx_hostname("localhost.").expect_err("private MX exchange must be rejected");
 
         assert!(err.to_string().contains("private/local host"));
     }

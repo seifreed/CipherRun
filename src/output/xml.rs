@@ -362,8 +362,8 @@ fn option_status_label(value: Option<bool>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::{Grade, RatingResult};
     use crate::scanner::RatingResults;

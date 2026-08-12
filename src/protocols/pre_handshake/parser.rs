@@ -1,8 +1,8 @@
 use super::{HandshakeParseResult, PreHandshakeScanner};
+use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
 use crate::utils::result_byte_parse as parse_bytes;
-use crate::Result;
 use tracing::trace;
 
 impl PreHandshakeScanner {
@@ -409,9 +409,11 @@ mod tests {
             .parse_certificate(&der)
             .expect_err("malformed SAN should fail");
 
-        assert!(error
-            .to_string()
-            .contains("Failed to parse subject alternative name"));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse subject alternative name")
+        );
     }
 
     #[test]

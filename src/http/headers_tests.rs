@@ -12,9 +12,11 @@ fn test_missing_hsts() {
     let headers = HashMap::new();
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
 
-    assert!(issues
-        .iter()
-        .any(|i| i.header_name == "Strict-Transport-Security"));
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.header_name == "Strict-Transport-Security")
+    );
 }
 
 #[test]
@@ -27,9 +29,11 @@ fn test_weak_hsts() {
         .filter(|i| i.header_name == "Strict-Transport-Security")
         .collect();
 
-    assert!(hsts_issues
-        .iter()
-        .any(|i| matches!(i.issue_type, IssueType::Weak)));
+    assert!(
+        hsts_issues
+            .iter()
+            .any(|i| matches!(i.issue_type, IssueType::Weak))
+    );
 }
 
 #[test]
@@ -45,9 +49,11 @@ fn test_unsafe_csp() {
         .filter(|i| i.header_name == "Content-Security-Policy")
         .collect();
 
-    assert!(csp_issues
-        .iter()
-        .any(|i| matches!(i.issue_type, IssueType::Insecure)));
+    assert!(
+        csp_issues
+            .iter()
+            .any(|i| matches!(i.issue_type, IssueType::Insecure))
+    );
 }
 
 #[test]
@@ -372,9 +378,11 @@ fn test_hsts_directives_are_case_insensitive() {
     )]);
 
     let issues = SecurityHeaderChecker::check_all_headers(&headers);
-    assert!(!issues
-        .iter()
-        .any(|issue| issue.header_name == "Strict-Transport-Security"));
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.header_name == "Strict-Transport-Security")
+    );
 }
 
 #[test]

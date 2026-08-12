@@ -1,8 +1,8 @@
 use super::*;
 use crate::certificates::parser::{CertificateChain, CertificateInfo};
 use crate::certificates::validator::ValidationResult;
-use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::ciphers::CipherSuite;
+use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use crate::protocols::ProtocolTestResult;
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;

@@ -3,9 +3,9 @@
 use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{raw_webhook_host, reject_private_webhook_host};
+use crate::monitor::types::AlertThresholds;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::validate_hostname;
-use crate::monitor::types::AlertThresholds;
 use lettre::message::Mailbox;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -294,9 +294,10 @@ impl MonitorConfig {
                     message: format!("Invalid email from_address: {error}"),
                 })?;
             for addr in &email.to_addresses {
-                addr.parse::<Mailbox>().map_err(|error| TlsError::ConfigError {
-                    message: format!("Invalid email to_addresses entry: {error}"),
-                })?;
+                addr.parse::<Mailbox>()
+                    .map_err(|error| TlsError::ConfigError {
+                        message: format!("Invalid email to_addresses entry: {error}"),
+                    })?;
             }
         }
         if let Some(slack) = &self.monitor.alerts.slack

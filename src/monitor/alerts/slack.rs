@@ -1,12 +1,12 @@
 // Slack Alert Channel - Webhook integration
 
 use super::{formatting, raw_webhook_host, reject_private_webhook_host, validated_webhook_target};
+use crate::Result;
 use crate::error::TlsError;
 use crate::monitor::alerts::{Alert, AlertChannel, AlertType};
 use crate::monitor::config::SlackConfig;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::validate_hostname;
-use crate::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -326,14 +326,18 @@ mod tests {
         let message = channel.format_message(&alert);
 
         assert!(message["attachments"].is_array());
-        assert!(message["attachments"][0]["title"]
-            .as_str()
-            .unwrap()
-            .contains("Alert"));
-        assert!(message["attachments"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("example.com"));
+        assert!(
+            message["attachments"][0]["title"]
+                .as_str()
+                .unwrap()
+                .contains("Alert")
+        );
+        assert!(
+            message["attachments"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("example.com")
+        );
     }
 
     #[test]

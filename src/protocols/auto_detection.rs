@@ -177,8 +177,7 @@ impl ProtocolDetector {
                 if available.is_empty() {
                     return if bytes.is_empty() {
                         Err(crate::TlsError::ConnectionClosed {
-                            details: "Connection closed while reading HTTP status line"
-                                .to_string(),
+                            details: "Connection closed while reading HTTP status line".to_string(),
                         })
                     } else {
                         Err(crate::TlsError::ParseError {

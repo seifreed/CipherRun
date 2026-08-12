@@ -134,7 +134,8 @@ impl ClientCAsTester {
                 self.read_tls_handshake_bytes(&mut stream, read_timeout)
                     .await
             })
-            .await else {
+            .await
+            else {
                 saw_inconclusive = true;
                 continue;
             };
@@ -281,12 +282,21 @@ mod tests {
         .unwrap();
 
         let tester = ClientCAsTester::new(target)
-            .with_starttls(Some(crate::starttls::StarttlsProtocol::XMPP), Some("xmpp.example.com".to_string()))
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::XMPP),
+                Some("xmpp.example.com".to_string()),
+            )
             .with_starttls_server_mode(true)
             .with_test_all_ips(true);
 
-        assert_eq!(tester.starttls, Some(crate::starttls::StarttlsProtocol::XMPP));
-        assert_eq!(tester.starttls_hostname.as_deref(), Some("xmpp.example.com"));
+        assert_eq!(
+            tester.starttls,
+            Some(crate::starttls::StarttlsProtocol::XMPP)
+        );
+        assert_eq!(
+            tester.starttls_hostname.as_deref(),
+            Some("xmpp.example.com")
+        );
         assert!(tester.starttls_server_mode);
         assert!(tester.test_all_ips);
     }

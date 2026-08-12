@@ -132,12 +132,11 @@ impl VulnerabilityScanner {
     pub async fn test_poodle_variants(&self) -> Result<Vec<VulnerabilityResult>> {
         use crate::vulnerabilities::poodle::{PoodleTester, PoodleVariant};
 
-        let tester =
-            PoodleTester::new(&self.target).with_starttls(
-                self.starttls,
-                self.starttls_hostname.clone(),
-                self.starttls_server_mode,
-            );
+        let tester = PoodleTester::new(&self.target).with_starttls(
+            self.starttls,
+            self.starttls_hostname.clone(),
+            self.starttls_server_mode,
+        );
         let test_result = tester.test_all_variants().await?;
 
         Ok(test_result
@@ -757,7 +756,12 @@ impl VulnerabilityScanner {
         let addrs: Vec<_> = if self.test_all_ips {
             self.target.socket_addrs()
         } else {
-            self.target.socket_addrs().first().copied().into_iter().collect()
+            self.target
+                .socket_addrs()
+                .first()
+                .copied()
+                .into_iter()
+                .collect()
         };
         if addrs.is_empty() {
             return Err(crate::TlsError::NoSocketAddresses);

@@ -441,12 +441,12 @@ mod tests {
     use super::*;
     use crate::certificates::revocation::{RevocationMethod, RevocationResult, RevocationStatus};
     use crate::client_sim::simulator::ClientSimulationResult;
+    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::http::headers::{HeaderIssue, IssueSeverity, IssueType};
     use crate::http::headers_advanced::{
         BannerDetection, CookieAnalysis, CookieInfo, DateTimeCheck, Grade as HeaderGrade,
         HstsAnalysis, ReverseProxyDetection,
     };
-    use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::http::tester::{HeaderAnalysisResult, SecurityGrade};
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::rating::RatingResult;

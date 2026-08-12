@@ -294,7 +294,11 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
         });
     }
 
-    let host = base.host_str().unwrap().trim_end_matches('.').to_ascii_lowercase();
+    let host = base
+        .host_str()
+        .unwrap()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if host == "localhost" || host.ends_with(".local") || host.ends_with(".internal") {
         return Err(TlsError::InvalidInput {
             message: "Invalid CT log URL: private or local hosts are not allowed".to_string(),
@@ -320,7 +324,10 @@ fn ct_log_api_url(log_url: &str, path: &str) -> Result<url::Url> {
 fn raw_ct_log_host(url: &str) -> Option<&str> {
     let authority = url.split_once("://")?.1;
     let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
-    let host = authority.rsplit_once('@').map(|(_, host)| host).unwrap_or(authority);
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
 
     if let Some(host) = host.strip_prefix('[') {
         host.split_once(']').map(|(host, _)| host)

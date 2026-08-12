@@ -58,7 +58,9 @@ async fn test_ws_sends_configured_ping() {
         ping_interval_seconds: 1,
     });
 
-    let app = Router::new().route("/ws", get(handle_websocket)).with_state(state);
+    let app = Router::new()
+        .route("/ws", get(handle_websocket))
+        .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test assertion should succeed");

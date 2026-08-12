@@ -45,12 +45,11 @@ impl StarttlsTester {
         // Build the negotiator via the canonical dispatcher so every protocol
         // with an implementation (SMTP, IMAP, POP3, FTP, XMPP, LDAP, IRC,
         // PostgreSQL, MySQL, NNTP, Sieve, LMTP, Telnet) is exercised.
-        let negotiator: Arc<dyn StarttlsNegotiator> =
-            Arc::from(get_negotiator(
-                protocol,
-                self.target.hostname.clone(),
-                self.server_mode,
-            ));
+        let negotiator: Arc<dyn StarttlsNegotiator> = Arc::from(get_negotiator(
+            protocol,
+            self.target.hostname.clone(),
+            self.server_mode,
+        ));
 
         // Test STARTTLS
         match self.test_starttls_with_negotiator(port, negotiator).await {

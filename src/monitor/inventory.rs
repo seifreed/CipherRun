@@ -3,8 +3,8 @@
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
 use crate::error::TlsError;
-use crate::security::validate_hostname;
 use crate::security::input_validation::looks_like_dotted_ip_literal;
+use crate::security::validate_hostname;
 use crate::utils::network::{canonical_target, normalize_dns_hostname, split_target_host_port};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};

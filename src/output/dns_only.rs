@@ -247,7 +247,10 @@ mod tests {
 
         let mut domains = DnsOnlyMode::extract_domains(&cert);
         domains.sort();
-        assert_eq!(domains, expected_domains(&["example.com", "www.example.com"]));
+        assert_eq!(
+            domains,
+            expected_domains(&["example.com", "www.example.com"])
+        );
     }
 
     #[test]

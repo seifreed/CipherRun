@@ -132,7 +132,11 @@ impl ProxyConfig {
                 )
             }
             (Some(username), None) => {
-                format!("http://{}@{}", urlencoding::encode(username), self.authority())
+                format!(
+                    "http://{}@{}",
+                    urlencoding::encode(username),
+                    self.authority()
+                )
             }
             _ => format!("http://{}", self.authority()),
         }
@@ -416,7 +420,10 @@ mod tests {
 
         assert_eq!(proxy.username.as_deref(), Some("user name"));
         assert_eq!(proxy.password.as_deref(), Some("pa:ss"));
-        assert_eq!(proxy.url(), "http://user%20name:pa%3Ass@proxy.example.com:3128");
+        assert_eq!(
+            proxy.url(),
+            "http://user%20name:pa%3Ass@proxy.example.com:3128"
+        );
     }
 
     #[test]
@@ -608,7 +615,10 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
-        let port = listener.local_addr().expect("listener should expose addr").port();
+        let port = listener
+            .local_addr()
+            .expect("listener should expose addr")
+            .port();
         drop(listener);
 
         let proxy = ProxyConfig {

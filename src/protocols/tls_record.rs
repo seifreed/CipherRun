@@ -1,8 +1,6 @@
 use crate::constants::{BUFFER_SIZE_MAX_WITH_OVERHEAD, TLS_RECORD_HEADER_SIZE};
 
-pub(crate) fn total_len(
-    header: &[u8; TLS_RECORD_HEADER_SIZE],
-) -> std::io::Result<Option<usize>> {
+pub(crate) fn total_len(header: &[u8; TLS_RECORD_HEADER_SIZE]) -> std::io::Result<Option<usize>> {
     let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
     let total_len = TLS_RECORD_HEADER_SIZE
         .checked_add(record_len)

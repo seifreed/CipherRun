@@ -1,10 +1,10 @@
+use crate::application::ScanResults;
 use crate::application::scan_execution::post_processing::{
     ScanNoticeView, ScanPostProcessingView, ScanPostView,
 };
 use crate::application::scan_execution::section_views::{
     ScanExportView, ScanFeatureView, ScanFingerprintView, ScanPrimaryTlsView,
 };
-use crate::application::ScanResults;
 
 pub struct ScanCliView<'a> {
     pub(crate) results: &'a ScanResults,
@@ -309,8 +309,8 @@ impl<'a> ScanCliView<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::application::scan_execution::post_processing::ScanPostProcessingView;
     use crate::application::ScanResults;
+    use crate::application::scan_execution::post_processing::ScanPostProcessingView;
     use crate::fingerprint::{CdnDetection, LoadBalancerInfo};
     use crate::protocols::{Protocol, ProtocolTestResult};
 
