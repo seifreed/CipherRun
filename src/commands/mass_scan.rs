@@ -6,7 +6,6 @@ use super::scan_exporter::{ExportKind, ScanExporter};
 use super::{Command, CommandExit, exit_for_result_list};
 use crate::application::ScanRequest;
 use crate::input::{AsnCidrParser, CidrExpansion};
-use crate::scanner::ScanResults;
 use crate::scanner::mass::{MassScanConfig, MassScanner};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;

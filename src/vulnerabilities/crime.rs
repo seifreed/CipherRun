@@ -224,7 +224,7 @@ mod tests {
         response
     }
 
-    fn finish_server_hello(response: &mut Vec<u8>) {
+    fn finish_server_hello(response: &mut [u8]) {
         let rec_len = (response.len() - 5) as u16;
         write_u16_at(response, 3, rec_len);
         let hs_len = response.len() - 9;

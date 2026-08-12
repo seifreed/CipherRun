@@ -74,10 +74,9 @@ impl ProbeStatus {
                 } else {
                     Some(format!("warning: {}", warning_msg.yellow()))
                 }
-            } else if let Some(time_ms) = self.connection_time_ms {
-                Some(format!("connected in {}ms", time_ms))
             } else {
-                None
+                self.connection_time_ms
+                    .map(|time_ms| format!("connected in {}ms", time_ms))
             };
 
             if let Some(details) = details {

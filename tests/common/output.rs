@@ -7,6 +7,7 @@ use cipherrun::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
 use cipherrun::protocols::{Protocol, ProtocolTestResult};
 use cipherrun::scanner::CertificateAnalysisResult;
 
+#[allow(dead_code)]
 pub fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
     let cipher = CipherSuite {
         hexcode: "1301".to_string(),
@@ -41,6 +42,7 @@ pub fn build_cipher_summary(protocol: Protocol) -> ProtocolCipherSummary {
     }
 }
 
+#[allow(dead_code)]
 pub fn supported_tls13_protocol_result() -> ProtocolTestResult {
     ProtocolTestResult {
         protocol: Protocol::TLS13,
@@ -56,6 +58,7 @@ pub fn supported_tls13_protocol_result() -> ProtocolTestResult {
     }
 }
 
+#[allow(dead_code)]
 pub fn build_certificate_result() -> CertificateAnalysisResult {
     let cert = CertificateInfo {
         subject: "CN=example.com".to_string(),

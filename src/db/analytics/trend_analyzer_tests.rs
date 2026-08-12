@@ -2,7 +2,6 @@ use super::*;
 use crate::db::analytics::test_support::{
     insert_cipher, insert_protocol, insert_scan, insert_vulnerability, setup_db,
 };
-use crate::db::{BindValue, CipherRunDatabase};
 use chrono::{Duration, Utc};
 use std::collections::BTreeMap;
 

@@ -43,13 +43,11 @@ pub fn write_multi_ip_json_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::inconsistency::{
-        Inconsistency, InconsistencyDetails, InconsistencyType, SingleIpScanResult,
-    };
+    use crate::scanner::inconsistency::{Inconsistency, InconsistencyDetails, InconsistencyType};
     use crate::scanner::multi_ip::MultiIpScanReport;
     use crate::scanner::test_support::{empty_aggregated_result, successful_ip_scan};
-    use crate::utils::test_support::example_com_loopback_target;
     use crate::utils::network::Target;
+    use crate::utils::test_support::example_com_loopback_target;
     use crate::vulnerabilities::Severity;
     use std::collections::HashMap;
     use std::net::IpAddr;

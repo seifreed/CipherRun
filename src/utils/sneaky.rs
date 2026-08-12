@@ -96,6 +96,7 @@ mod tests {
         assert_eq!(config.generic_hostname(), "localhost");
     }
 
+    #[test]
     fn test_user_agent_toggle() {
         for (enabled, expected) in [(false, "Chrome"), (true, "Firefox")] {
             let config = SneakyConfig::new(enabled);

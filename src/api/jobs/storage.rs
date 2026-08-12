@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_file_storage() {
-        let (temp_dir, storage) = temp_storage();
+        let (_temp_dir, storage) = temp_storage();
         let job = test_job();
 
         // Save

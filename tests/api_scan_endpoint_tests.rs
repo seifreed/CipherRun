@@ -15,7 +15,7 @@ fn assert_bad_request_message(body: &Value, expected_message_fragment: &str) {
 
 #[tokio::test]
 async fn test_scan_create_with_valid_target() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
 
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
@@ -31,7 +31,7 @@ async fn test_scan_create_with_valid_target() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::CREATED);
     assert!(body["scan_id"].is_string());
@@ -42,10 +42,10 @@ async fn test_scan_create_with_valid_target() {
 
 #[tokio::test]
 async fn test_scan_create_with_invalid_target_empty() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload("", serde_json::json!({}));
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "cannot be empty");
@@ -53,11 +53,11 @@ async fn test_scan_create_with_invalid_target_empty() {
 
 #[tokio::test]
 async fn test_scan_create_with_invalid_target_too_long() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let long_target = "a".repeat(256);
     let scan_request = common::api::scan_request_payload(long_target, serde_json::json!({}));
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "too long");
@@ -65,11 +65,11 @@ async fn test_scan_create_with_invalid_target_too_long() {
 
 #[tokio::test]
 async fn test_scan_create_with_malformed_target() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request =
         common::api::scan_request_payload("not a valid target!!!", serde_json::json!({}));
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Invalid target");
@@ -77,7 +77,7 @@ async fn test_scan_create_with_malformed_target() {
 
 #[tokio::test]
 async fn test_scan_create_rejects_conflicting_ip_family_options() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
         serde_json::json!({
@@ -88,7 +88,7 @@ async fn test_scan_create_rejects_conflicting_ip_family_options() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Cannot enable both IPv4-only and IPv6-only scanning");
@@ -96,7 +96,7 @@ async fn test_scan_create_rejects_conflicting_ip_family_options() {
 
 #[tokio::test]
 async fn test_scan_create_rejects_zero_timeout() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
         serde_json::json!({
@@ -106,7 +106,7 @@ async fn test_scan_create_rejects_zero_timeout() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Socket timeout must be greater than 0 seconds");
@@ -114,7 +114,7 @@ async fn test_scan_create_rejects_zero_timeout() {
 
 #[tokio::test]
 async fn test_scan_create_rejects_private_ip_override() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
         serde_json::json!({
@@ -124,7 +124,7 @@ async fn test_scan_create_rejects_private_ip_override() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Invalid IP override");
@@ -132,7 +132,7 @@ async fn test_scan_create_rejects_private_ip_override() {
 
 #[tokio::test]
 async fn test_scan_create_rejects_private_webhook_url() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = serde_json::json!({
         "target": "example.com:443",
         "options": {
@@ -142,7 +142,7 @@ async fn test_scan_create_rejects_private_webhook_url() {
     });
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Invalid webhook_url");
@@ -150,7 +150,7 @@ async fn test_scan_create_rejects_private_webhook_url() {
 
 #[tokio::test]
 async fn test_scan_create_rejects_malformed_ip_override() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
         serde_json::json!({
@@ -160,7 +160,7 @@ async fn test_scan_create_rejects_malformed_ip_override() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_bad_request_message(&body, "Invalid IP override");
@@ -168,7 +168,7 @@ async fn test_scan_create_rejects_malformed_ip_override() {
 
 #[tokio::test]
 async fn test_scan_create_accepts_starttls_protocol_only() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "mail.example.com:25",
         serde_json::json!({
@@ -177,7 +177,7 @@ async fn test_scan_create_accepts_starttls_protocol_only() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
 
     assert_eq!(status, StatusCode::CREATED);
     assert!(body["scan_id"].is_string());
@@ -186,9 +186,9 @@ async fn test_scan_create_accepts_starttls_protocol_only() {
 
 #[tokio::test]
 async fn test_scan_delete_nonexistent_returns_404() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let (status, body) = common::api::send_json(
-        &mut router,
+        &router,
         "DELETE",
         "/api/v1/scan/nonexistent-scan-id-12345",
         Some("test-user-key"),
@@ -203,9 +203,9 @@ async fn test_scan_delete_nonexistent_returns_404() {
 
 #[tokio::test]
 async fn test_scan_get_nonexistent_returns_404() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let (status, body) = common::api::send_json(
-        &mut router,
+        &router,
         "GET",
         "/api/v1/scan/nonexistent-scan-id-12345",
         Some("test-user-key"),
@@ -220,7 +220,7 @@ async fn test_scan_get_nonexistent_returns_404() {
 
 #[tokio::test]
 async fn test_scan_create_and_get_status() {
-    let mut router = common::api::test_api_router();
+    let router = common::api::test_api_router();
     let scan_request = common::api::scan_request_payload(
         "example.com:443",
         serde_json::json!({
@@ -230,12 +230,12 @@ async fn test_scan_create_and_get_status() {
     );
 
     let (status, body) =
-        common::api::create_scan(&mut router, Some("test-user-key"), scan_request).await;
+        common::api::create_scan(&router, Some("test-user-key"), scan_request).await;
     assert_eq!(status, StatusCode::CREATED);
     let scan_id = body["scan_id"].as_str().unwrap();
 
     let (status, body) = common::api::send_json(
-        &mut router,
+        &router,
         "GET",
         &format!("/api/v1/scan/{}", scan_id),
         Some("test-user-key"),

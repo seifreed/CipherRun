@@ -98,7 +98,6 @@ fn top_domain_row_to_stats(
 mod tests {
     use super::*;
     use crate::api::config::ApiConfig;
-    use crate::api::jobs::ScanExecutor;
     use crate::api::state::AppState;
     use crate::api::test_support::build_test_state;
     use crate::db::{DatabaseConfig, DatabasePool, create_unique_test_db_path, run_migrations};
