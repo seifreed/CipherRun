@@ -9,8 +9,11 @@ use crate::security::{
 use crate::utils::network::canonical_target;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 /// OpenSSL s_client options
 #[derive(Debug, Clone)]
@@ -207,12 +210,6 @@ impl OpenSslClient {
             cmd.arg("-state");
         }
 
-        // Add timeout
-        if let Some(timeout) = options.timeout {
-            cmd.arg("-timeout");
-            cmd.arg(timeout.as_secs().to_string());
-        }
-
         // Add verify locations
         if let Some(ref locations) = options.verify_locations {
             validate_file_path_arg(locations, "-CAfile/-CApath")?;
@@ -274,10 +271,61 @@ impl OpenSslClient {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output()?;
+        let (output, timed_out) =
+            if let Some(timeout) = options.timeout {
+                let mut child = cmd.spawn()?;
+                let stdout = child.stdout.take().ok_or_else(|| {
+                    crate::TlsError::Other("OpenSSL stdout pipe unavailable".into())
+                })?;
+                let stderr = child.stderr.take().ok_or_else(|| {
+                    crate::TlsError::Other("OpenSSL stderr pipe unavailable".into())
+                })?;
+                let stdout_reader = thread::spawn(move || read_pipe(stdout));
+                let stderr_reader = thread::spawn(move || read_pipe(stderr));
+                let deadline = Instant::now() + timeout;
+                let mut timed_out = false;
+
+                let status = loop {
+                    if let Some(status) = child.try_wait()? {
+                        break status;
+                    }
+                    if Instant::now() >= deadline {
+                        timed_out = true;
+                        let _ = child.kill();
+                        break child.wait()?;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                };
+
+                let stdout = stdout_reader
+                    .join()
+                    .map_err(|_| crate::TlsError::Other("OpenSSL stdout reader failed".into()))??;
+                let stderr = stderr_reader
+                    .join()
+                    .map_err(|_| crate::TlsError::Other("OpenSSL stderr reader failed".into()))??;
+                (
+                    std::process::Output {
+                        status,
+                        stdout,
+                        stderr,
+                    },
+                    timed_out,
+                )
+            } else {
+                (cmd.output()?, false)
+            };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if timed_out {
+            stderr.push_str(&format!(
+                "OpenSSL process timed out after {} seconds",
+                options
+                    .timeout
+                    .expect("timeout is set on this branch")
+                    .as_secs_f64()
+            ));
+        }
         let exit_code = output.status.code().unwrap_or(-1);
         let success = output.status.success();
 
@@ -330,6 +378,12 @@ impl OpenSslClient {
             .map(ToString::to_string)
             .collect())
     }
+}
+
+fn read_pipe(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    pipe.read_to_end(&mut output)?;
+    Ok(output)
 }
 
 fn validate_file_path_arg(value: &std::ffi::OsStr, flag: &str) -> crate::Result<()> {
@@ -654,6 +708,39 @@ SSL-Session:
 
         assert!(result.stdout.contains("-starttls\npostgres"));
         assert!(result.success);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_enforces_timeout_without_passing_numeric_timeout_to_openssl() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir should be created");
+        let script = dir.path().join("openssl");
+        fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexec sleep 2\n")
+            .expect("script should be written");
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("script should be executable");
+
+        let started = std::time::Instant::now();
+        let result = OpenSslClient::with_path(&script)
+            .run(&OpenSslClientOptions {
+                host: "example.com".to_string(),
+                timeout: Some(Duration::from_millis(50)),
+                ..Default::default()
+            })
+            .expect("script should run");
+
+        assert!(!result.success);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(result.stderr.contains("timed out"));
+        assert!(!result.stdout.contains("-timeout"));
     }
 
     #[test]

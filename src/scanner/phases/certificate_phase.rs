@@ -137,7 +137,7 @@ impl CertificatePhase {
             .map_err(|e| {
                 crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
             })??;
-        if !result.success {
+        if !result.success && !has_pem_certificates(&result.stdout) {
             let error_output = if result.stderr.trim().is_empty() {
                 result.stdout.trim()
             } else {
@@ -372,6 +372,10 @@ impl ScanPhase for CertificatePhase {
     }
 }
 
+fn has_pem_certificates(output: &str) -> bool {
+    output.contains("-----BEGIN CERTIFICATE-----")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,5 +491,13 @@ mod tests {
         let mut args = ScanRequest::default();
         args.scan.certs.analyze_certificates = true;
         assert!(phase.should_run(&args));
+    }
+
+    #[test]
+    fn test_nonzero_openssl_result_can_still_provide_certificates() {
+        assert!(has_pem_certificates(
+            "warning\n-----BEGIN CERTIFICATE-----\n"
+        ));
+        assert!(!has_pem_certificates("poll error\n"));
     }
 }
