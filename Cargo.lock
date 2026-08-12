@@ -478,7 +478,6 @@ dependencies = [
  "indicatif",
  "ipnetwork",
  "lettre",
- "log",
  "md5",
  "openssl",
  "parking_lot",
