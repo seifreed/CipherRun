@@ -18,21 +18,24 @@ pub(crate) fn u24_len(len: usize, context: &str) -> Result<[u8; 3]> {
 }
 
 pub(crate) fn sni_extension(server_name: &[u8]) -> Result<Vec<u8>> {
+    let data = sni_extension_data(server_name)?;
+    let ext_len = u16_len(data.len(), "SNI extension")?;
+
+    let mut sni = Vec::with_capacity(usize::from(ext_len) + 4);
+    sni.extend_from_slice(&[0x00, 0x00]);
+    sni.extend_from_slice(&ext_len.to_be_bytes());
+    sni.extend_from_slice(&data);
+    Ok(sni)
+}
+
+pub(crate) fn sni_extension_data(server_name: &[u8]) -> Result<Vec<u8>> {
     let name_len = u16_len(server_name.len(), "SNI server name")?;
     let list_len = name_len
         .checked_add(3)
         .ok_or_else(|| crate::TlsError::InvalidInput {
             message: "SNI server name list exceeds maximum length".to_string(),
         })?;
-    let ext_len = list_len
-        .checked_add(2)
-        .ok_or_else(|| crate::TlsError::InvalidInput {
-            message: "SNI extension exceeds maximum length".to_string(),
-        })?;
-
-    let mut sni = Vec::with_capacity(usize::from(ext_len) + 4);
-    sni.extend_from_slice(&[0x00, 0x00]);
-    sni.extend_from_slice(&ext_len.to_be_bytes());
+    let mut sni = Vec::with_capacity(usize::from(list_len) + 2);
     sni.extend_from_slice(&list_len.to_be_bytes());
     sni.push(0x00);
     sni.extend_from_slice(&name_len.to_be_bytes());

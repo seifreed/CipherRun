@@ -57,7 +57,8 @@ impl ClientHelloNetworkCapture {
         let mut extensions = Vec::new();
 
         // SNI (server_name) - Extension 0
-        let sni_data = self.build_sni_extension()?;
+        let sni_data =
+            crate::protocols::tls_vector::sni_extension_data(self.target.hostname.as_bytes())?;
         extensions.push((0, sni_data));
 
         // supported_groups - Extension 10
@@ -108,34 +109,6 @@ impl ClientHelloNetworkCapture {
             cipher_suites,
             extensions,
         ))
-    }
-
-    /// Build SNI extension data
-    fn build_sni_extension(&self) -> Result<Vec<u8>> {
-        let hostname = self.target.hostname.as_bytes();
-        let mut data = Vec::new();
-        let hostname_len = u16::try_from(hostname.len()).map_err(|_| TlsError::ParseError {
-            message: "SNI hostname is too long".to_string(),
-        })?;
-        let list_len = hostname_len
-            .checked_add(3)
-            .ok_or_else(|| TlsError::ParseError {
-                message: "SNI hostname is too long".to_string(),
-            })?;
-
-        // Server name list length
-        data.extend_from_slice(&list_len.to_be_bytes());
-
-        // Server name type (0 = hostname)
-        data.push(0);
-
-        // Server name length
-        data.extend_from_slice(&hostname_len.to_be_bytes());
-
-        // Server name
-        data.extend_from_slice(hostname);
-
-        Ok(data)
     }
 
     /// Build supported_groups extension data
