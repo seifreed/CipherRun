@@ -29,7 +29,10 @@ fn parse_custom_indices(index_args: &[String]) -> Result<HashMap<String, u64>> {
     let mut custom_indices = HashMap::new();
     for index_str in index_args {
         let Some((source, index_value)) = index_str.split_once('=') else {
-            crate::tls_bail!("Invalid --ct-index format: {index_str}. Expected SOURCE=INDEX");
+            crate::tls_bail!(
+                "Invalid --ct-index format: {}. Expected SOURCE=INDEX",
+                index_str
+            );
         };
         let source = source.trim();
         if source.is_empty() {
@@ -42,7 +45,7 @@ fn parse_custom_indices(index_args: &[String]) -> Result<HashMap<String, u64>> {
                 message: format!("Invalid index value for source {source}: {index_value}"),
             })?;
         if custom_indices.insert(source.to_string(), index).is_some() {
-            crate::tls_bail!("Duplicate --ct-index source: {source}");
+            crate::tls_bail!("Duplicate --ct-index source: {}", source);
         }
     }
     Ok(custom_indices)
@@ -104,11 +107,7 @@ mod tests {
     #[test]
     fn test_parse_custom_indices_rejects_invalid_inputs() {
         for (case, args, expected) in [
-            (
-                "invalid format",
-                vec!["google:123"],
-                "Expected SOURCE=INDEX",
-            ),
+            ("invalid format", vec!["google:123"], "google:123"),
             ("invalid value", vec!["google=abc"], "Invalid index value"),
             (
                 "duplicate source",

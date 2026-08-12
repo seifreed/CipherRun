@@ -13,7 +13,7 @@ impl ServerHelloParser {
             0x0302 => Ok(Protocol::TLS11),
             0x0303 => Ok(Protocol::TLS12),
             0x0304 => Ok(Protocol::TLS13),
-            _ => crate::tls_bail!("Unknown ServerHello protocol version 0x{value:04x}"),
+            _ => crate::tls_bail!("Unknown ServerHello protocol version 0x{:04x}", value),
         }
     }
 

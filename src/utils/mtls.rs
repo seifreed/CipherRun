@@ -84,10 +84,10 @@ fn single_private_key(
     source: &str,
 ) -> crate::Result<PrivateKeyDer<'static>> {
     if keys.is_empty() {
-        crate::tls_bail!("No private key found in {source}");
+        crate::tls_bail!("No private key found in {}", source);
     }
     if keys.len() > 1 {
-        crate::tls_bail!("Multiple private keys found in {source}");
+        crate::tls_bail!("Multiple private keys found in {}", source);
     }
     keys.pop().ok_or_else(|| crate::error::TlsError::MtlsError {
         message: format!("No private key found in {source} (should have been caught earlier)"),
