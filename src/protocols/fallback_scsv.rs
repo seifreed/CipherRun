@@ -6,9 +6,6 @@ mod client_hello;
 mod model;
 mod network;
 mod orchestration;
-#[cfg(test)]
-mod test_support;
-
 pub use model::FallbackScsvTestResult;
 
 use crate::Result;
@@ -127,14 +124,13 @@ impl<'a> FallbackScsvTester<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::example_target;
     use super::*;
     use crate::constants::{COMPRESSION_NULL, CONTENT_TYPE_ALERT, VERSION_TLS_1_2};
     use crate::protocols::Protocol;
-    use crate::utils::test_support::localhost_target;
+    use crate::utils::test_support::{example_com_target, localhost_target};
 
     fn example_client_hello(include_scsv: bool) -> Vec<u8> {
-        let target = example_target();
+        let target = example_com_target();
         FallbackScsvTester::new(&target)
             .build_client_hello_with_scsv(VERSION_TLS_1_2, include_scsv)
             .expect("ClientHello should build")
@@ -157,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_scsv_toggle() {
-        let target = example_target();
+        let target = example_com_target();
         let tester = FallbackScsvTester::new(&target);
 
         for include_scsv in [true, false] {
@@ -173,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_with_test_all_ips_sets_flag() {
-        let target = example_target();
+        let target = example_com_target();
 
         let tester = FallbackScsvTester::new(&target).with_test_all_ips(true);
         assert!(tester.test_all_ips);
@@ -181,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_format_protocol_list_and_select_fallback() {
-        let target = example_target();
+        let target = example_com_target();
 
         let tester = FallbackScsvTester::new(&target);
         let list = tester.format_protocol_list(&[Protocol::TLS12, Protocol::TLS13]);
@@ -198,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rejects_inappropriate_fallback_early_returns() {
-        let target = example_target();
+        let target = example_com_target();
 
         let mut tester = FallbackScsvTester::new(&target);
         tester.max_supported_protocol = Some(Protocol::SSLv3);
@@ -228,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_supported_protocol_result_is_inconclusive() {
-        let target = example_target();
+        let target = example_com_target();
 
         let mut tester = FallbackScsvTester::new(&target);
         tester.max_supported_protocol = Some(Protocol::TLS12);

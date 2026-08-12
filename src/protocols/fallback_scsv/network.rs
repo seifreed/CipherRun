@@ -267,8 +267,8 @@ impl FallbackScsvTester<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::example_target;
     use super::*;
+    use crate::utils::test_support::example_com_target;
 
     #[test]
     fn test_aggregate_scsv_inconclusive_wins_over_not_supported() {
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_truncated_alert() {
-        let target = example_target();
+        let target = example_com_target();
         let tester = FallbackScsvTester::new(&target);
 
         let buffer = [CONTENT_TYPE_ALERT, 0x03, 0x03, 0x00, 0x02, 0x02];
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_alert_record() {
-        let target = example_target();
+        let target = example_com_target();
         let tester = FallbackScsvTester::new(&target);
 
         let mut buffer = [0u8; 7];
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_baseline_fallback_accepted_rejects_truncated_non_alert_record() {
-        let target = example_target();
+        let target = example_com_target();
         let tester = FallbackScsvTester::new(&target);
 
         let buffer = [0x16, 0x03, 0x03, 0x00, 0x10, 0x02];
