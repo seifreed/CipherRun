@@ -80,18 +80,20 @@ impl SessionResumptionTester {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        #[cfg(windows)]
-        let timeout = i64::from(session.timeout());
-        #[cfg(not(windows))]
-        let timeout = session.timeout();
-        #[cfg(windows)]
-        let session_time = i64::from(session.time());
-        #[cfg(not(windows))]
-        let session_time = session.time();
-        Self::session_times_valid(session_time, timeout, current_time)
+        Self::session_times_valid(session.time(), session.timeout(), current_time)
     }
 
-    fn session_times_valid(session_time: i64, timeout: i64, current_time: u64) -> bool {
+    fn session_times_valid<T, U>(session_time: T, timeout: U, current_time: u64) -> bool
+    where
+        T: TryInto<i64>,
+        U: TryInto<i64>,
+    {
+        let Ok(session_time) = session_time.try_into() else {
+            return false;
+        };
+        let Ok(timeout) = timeout.try_into() else {
+            return false;
+        };
         let Ok(session_time) = u64::try_from(session_time) else {
             return false;
         };

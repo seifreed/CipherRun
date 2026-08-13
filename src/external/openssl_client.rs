@@ -108,7 +108,7 @@ impl OpenSslClient {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn openssl_path(&self) -> &std::ffi::OsStr {
         &self.openssl_path
     }

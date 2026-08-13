@@ -15,6 +15,7 @@ impl ScanResultsStoreFactory for ConfigFileScanResultsStoreFactory {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
     #[cfg(unix)]
     use std::ffi::OsString;
