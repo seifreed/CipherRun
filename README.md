@@ -143,7 +143,7 @@ Terminal, JSON, CSV, HTML, XML
 - **Compliance**: 7 frameworks
 - **Database**: SQL migrations + analytics
 
-For architectural rules, layer boundaries, and contribution guidance, see [ARCHITECTURE.md](ARCHITECTURE.md).
+Layer boundaries are enforced by `tests/architecture_guards.rs`.
 
 ---
 
