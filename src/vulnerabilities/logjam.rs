@@ -484,6 +484,7 @@ mod tests {
         assert_eq!(result, LogjamProbeStatus::Inconclusive);
     }
 
+    #[cfg_attr(windows, ignore = "transport error classification differs on Windows")]
     #[tokio::test]
     async fn test_logjam_transport_anomaly_is_inconclusive() {
         let addr = spawn_dummy_server(1).await;

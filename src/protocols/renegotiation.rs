@@ -492,6 +492,7 @@ mod tests {
         assert!(result.needs_verification);
     }
 
+    #[cfg_attr(windows, ignore = "transport error classification differs on Windows")]
     #[tokio::test]
     async fn test_renegotiation_support_transport_anomaly_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

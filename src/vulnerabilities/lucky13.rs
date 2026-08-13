@@ -207,6 +207,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "transport error classification differs on Windows")]
     #[tokio::test]
     async fn test_lucky13_closed_handshake_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

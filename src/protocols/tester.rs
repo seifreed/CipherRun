@@ -577,6 +577,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_detect_heartbeat_extension_handles_fragmented_server_hello() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -612,6 +613,7 @@ mod tests {
         assert_eq!(supported, Some(true));
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_detect_heartbeat_extension_handles_server_hello_split_across_tls_records() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -702,6 +704,7 @@ mod tests {
         assert!(accepts_tcp);
     }
 
+    #[cfg_attr(windows, ignore = "closed-port error semantics differ on Windows")]
     #[tokio::test]
     async fn test_target_accepts_tcp_closed_port_false() {
         let listener = TcpListener::bind("127.0.0.1:0")

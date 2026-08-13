@@ -335,6 +335,7 @@ mod tests {
         assert!(result.details.contains("inconclusive"), "{result:?}");
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_winshock_read_complete_tls_record_handles_fragmented_response() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

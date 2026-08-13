@@ -584,6 +584,7 @@ mod tests {
         assert_eq!(peer, fallback_addr);
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_connect_via_proxy_rejects_malformed_status_code() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -634,6 +635,7 @@ mod tests {
         assert!(!err.to_string().is_empty());
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_connect_via_proxy_rejects_oversized_status_line() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

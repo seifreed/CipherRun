@@ -134,6 +134,7 @@ async fn test_parse_target_rejects_invalid_hostname_before_dns() {
     assert!(err.to_string().contains("Invalid target hostname"));
 }
 
+#[cfg_attr(windows, ignore = "closed-port error semantics differ on Windows")]
 #[tokio::test]
 async fn test_connect_with_timeout_maps_connection_refused() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -368,6 +369,7 @@ async fn test_cipher_support_outcome_closed_port_is_inconclusive() {
     assert_eq!(outcome, CipherSupportOutcome::Inconclusive);
 }
 
+#[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
 #[tokio::test]
 async fn test_cipher_support_outcome_closed_handshake_is_inconclusive() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

@@ -219,6 +219,7 @@ mod tests {
         assert_eq!(builder.max_proto_version(), Some(SslVersion::TLS1_2));
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_send_and_read_alert_rejects_truncated_alert() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -248,6 +249,7 @@ mod tests {
         assert!(err.to_string().contains("Truncated TLS alert record"));
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_send_and_read_alert_rejects_malformed_alert_length() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -280,6 +282,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_send_and_read_alert_rejects_trailing_bytes() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

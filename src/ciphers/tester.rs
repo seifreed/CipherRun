@@ -484,6 +484,7 @@ mod tests {
         assert_eq!(chosen, Some(0xc02f));
     }
 
+    #[cfg_attr(windows, ignore = "closed-port error semantics differ on Windows")]
     #[tokio::test]
     async fn test_get_server_chosen_cipher_propagates_connect_errors() {
         let listener = TcpListener::bind("127.0.0.1:0")

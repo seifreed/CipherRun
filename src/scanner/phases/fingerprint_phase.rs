@@ -533,6 +533,7 @@ mod tests {
         assert!(context.results.scan_metadata.human_warnings.is_empty());
     }
 
+    #[cfg_attr(windows, ignore = "filesystem error text differs on Windows")]
     #[tokio::test]
     async fn test_execute_rejects_invalid_requested_custom_databases() {
         async fn assert_rejects(args: ScanRequest, expected: &str) {

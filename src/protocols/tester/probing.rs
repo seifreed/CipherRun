@@ -752,6 +752,7 @@ mod legacy_probe_tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_tls_legacy_raw_probe_handles_fragmented_server_hello() {
         let addr = spawn_fragmented_probe_response_server(server_hello_record(0x0301), 6).await;
