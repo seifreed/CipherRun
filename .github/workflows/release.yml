@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate tag and package
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cipherrun") | .version')"
+
+          if [[ "$tag" == "$version" || -z "$version" || "$version" != "$package_version" ]]; then
+            echo "Tag $tag does not match Cargo package version $package_version"
+            exit 1
+          fi
+
+          cargo package --locked
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$env:TARGET"
+        if: runner.os == 'Windows'
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
+        shell: bash
+        if: runner.os != 'Windows'
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          root="cipherrun-${RELEASE_TAG}-${TARGET}"
+          mkdir -p "package/${root}" release
+          cp "target/${TARGET}/release/cipherrun" "package/${root}/cipherrun"
+          cp LICENSE README.md "package/${root}/"
+          archive="release/${root}.tar.gz"
+          tar -C package -czf "$archive" "$root"
+          hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          printf '%s  %s\n' "$hash" "$(basename "$archive")" > "${archive}.sha256"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $root = "cipherrun-$env:RELEASE_TAG-$env:TARGET"
+          $staging = "package/$root"
+          New-Item -ItemType Directory -Force -Path $staging, release | Out-Null
+          Copy-Item "target/$env:TARGET/release/cipherrun.exe" "$staging/cipherrun.exe"
+          Copy-Item LICENSE, README.md $staging
+          $archive = "release/$root.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $archive -Leaf)" | Set-Content "$archive.sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish crate
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "Repository secret CARGO_REGISTRY_TOKEN is not configured"
+            exit 1
+          fi
+
+          if curl --fail --silent --show-error "https://crates.io/api/v1/crates/cipherrun/${VERSION}" > /dev/null; then
+            echo "cipherrun ${VERSION} is already published; continuing"
+          else
+            cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+          fi
+
+  release:
+    name: Create GitHub Release
+    needs: [validate, build, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create checksums manifest
+        shell: bash
+        run: |
+          shasum -a 256 dist/*.tar.gz dist/*.zip | sed 's#dist/##' > dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "CipherRun $TAG" \
+            --generate-notes
