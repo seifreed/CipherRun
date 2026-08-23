@@ -6,6 +6,7 @@ pub struct BreachTestResult {
     /// or empty HTTP response). Prevents reporting unreachable servers as
     /// confirmed-not-vulnerable.
     pub inconclusive: bool,
+    pub potential_exposure: bool,
     pub compression_enabled: bool,
     pub dynamic_content: bool,
     pub sensitive_data_reflection: bool,
@@ -22,19 +23,19 @@ impl BreachTestResult {
         let compression_enabled = compression.unwrap_or(false);
         let dynamic_content = dynamic.unwrap_or(false);
         let sensitive_data_reflection = sensitive.unwrap_or(false);
-
-        let vulnerable =
+        let potential_exposure =
             !inconclusive && compression_enabled && dynamic_content && sensitive_data_reflection;
 
         Self {
-            vulnerable,
+            vulnerable: false,
             inconclusive,
+            potential_exposure,
             compression_enabled,
             dynamic_content,
             sensitive_data_reflection,
             details: details(
                 inconclusive,
-                vulnerable,
+                potential_exposure,
                 compression_enabled,
                 dynamic_content,
                 sensitive_data_reflection,
@@ -53,15 +54,15 @@ pub(super) fn merge_probe_bool(current: Option<bool>, next: Option<bool>) -> Opt
 
 fn details(
     inconclusive: bool,
-    vulnerable: bool,
+    potential_exposure: bool,
     compression_enabled: bool,
     dynamic_content: bool,
     sensitive_data_reflection: bool,
 ) -> String {
     if inconclusive {
         "Inconclusive - one or more BREACH probes could not complete (TCP/TLS error or empty HTTP response)".to_string()
-    } else if vulnerable {
-        "Vulnerable to BREACH (CVE-2013-3587): HTTP compression enabled with dynamic content containing secrets".to_string()
+    } else if potential_exposure {
+        "Potential exposure to BREACH (CVE-2013-3587): HTTP compression and reflection prerequisites observed on GET /. Practical exploitability was not demonstrated.".to_string()
     } else if compression_enabled {
         let mut reasons = Vec::new();
         if !dynamic_content {
@@ -71,11 +72,11 @@ fn details(
             reasons.push("no sensitive data reflection detected");
         }
         format!(
-            "Partially vulnerable - HTTP compression enabled but {}",
+            "No BREACH exposure observed on GET /: HTTP compression enabled but {}",
             reasons.join(" and ")
         )
     } else {
-        "Not vulnerable - HTTP compression not enabled".to_string()
+        "No BREACH exposure observed on GET /: HTTP compression not enabled".to_string()
     }
 }
 
@@ -98,11 +99,13 @@ mod tests {
     }
 
     #[test]
-    fn all_positive_probes_mark_vulnerable() {
+    fn all_positive_probes_mark_potential_exposure() {
         let result = BreachTestResult::from_probe_results(Some(true), Some(true), Some(true));
 
-        assert!(result.vulnerable);
+        assert!(!result.vulnerable);
         assert!(!result.inconclusive);
-        assert!(result.details.contains("Vulnerable to BREACH"));
+        assert!(result.potential_exposure);
+        assert!(result.details.contains("Potential exposure to BREACH"));
+        assert!(result.details.contains("was not demonstrated"));
     }
 }

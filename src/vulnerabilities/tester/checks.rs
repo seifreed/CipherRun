@@ -473,11 +473,11 @@ impl VulnerabilityScanner {
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::BREACH,
             vulnerable: result.vulnerable,
-            inconclusive: result.inconclusive,
+            inconclusive: result.inconclusive || result.potential_exposure,
             details: result.details,
             cve: Some("CVE-2013-3587".to_string()),
             cwe: Some("CWE-200".to_string()),
-            severity: if result.vulnerable {
+            severity: if result.potential_exposure {
                 Severity::Medium
             } else {
                 Severity::Info
