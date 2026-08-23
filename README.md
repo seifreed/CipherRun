@@ -93,6 +93,8 @@ Set `job_storage_dir` in `api.toml` for durable standalone job state. Queued,
 running, completed, failed, and cancelled jobs survive restarts; interrupted
 running jobs are safely returned to the queue. Omitting it selects the
 development-only in-memory backend.
+`job_retention_seconds` controls terminal job TTL (seven days by default);
+queued and running work is never removed by retention cleanup.
 
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 

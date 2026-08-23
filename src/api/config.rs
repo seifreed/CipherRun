@@ -56,6 +56,10 @@ pub struct ApiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_storage_dir: Option<PathBuf>,
 
+    /// Retention time for completed, failed, and cancelled jobs.
+    #[serde(default = "default_job_retention_seconds")]
+    pub job_retention_seconds: u64,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -103,6 +107,10 @@ pub struct ApiCredential {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_job_retention_seconds() -> u64 {
+    7 * 24 * 60 * 60
 }
 
 impl ApiCredential {
@@ -169,6 +177,7 @@ impl Default for ApiConfig {
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,
             job_storage_dir: None,
+            job_retention_seconds: default_job_retention_seconds(),
             enable_swagger: false,
             policy_dir: None,
         }
@@ -395,6 +404,11 @@ impl ApiConfig {
         if self.job_queue_capacity == 0 {
             return Err(TlsError::ConfigError {
                 message: "job_queue_capacity must be greater than 0".to_string(),
+            });
+        }
+        if self.job_retention_seconds == 0 {
+            return Err(TlsError::ConfigError {
+                message: "job_retention_seconds must be greater than 0".to_string(),
             });
         }
         if self.request_timeout_seconds == 0 {

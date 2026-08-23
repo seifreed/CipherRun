@@ -25,6 +25,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Hashed API credential records with explicit identity, tenant, lifecycle, and expiry metadata.
 - Connected durable file job storage with restart recovery to the standalone API server.
 - Principal-scoped atomic scan idempotency via the `Idempotency-Key` request header.
+- Configurable terminal-job TTL with startup and periodic persisted-artifact cleanup.
 
 ### Changed
 

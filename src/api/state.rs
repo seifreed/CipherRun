@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 /// How often the per-key rate-limiter is swept to evict stale entries. Without
 /// this the limiter's maps grow unbounded for the process lifetime.
 const RATE_LIMITER_CLEANUP_INTERVAL_SECS: u64 = 300;
+const JOB_RETENTION_CLEANUP_INTERVAL_SECS: u64 = 3600;
 
 const MAX_TIMESTAMPS: usize = 100_000;
 
@@ -226,15 +227,21 @@ impl AppState {
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
         // Create job queue
-        let job_queue: Arc<dyn JobQueue> = if let Some(path) = &config.job_storage_dir {
-            let storage = Arc::new(FileJobStorage::new(path)?);
-            Arc::new(InMemoryJobQueue::with_storage(
-                config.job_queue_capacity,
-                storage,
-            )?)
-        } else {
-            Arc::new(InMemoryJobQueue::new(config.job_queue_capacity))
-        };
+        let retention_seconds = i64::try_from(config.job_retention_seconds).map_err(|_| {
+            crate::TlsError::ConfigError {
+                message: "job_retention_seconds exceeds the supported range".to_string(),
+            }
+        })?;
+        let storage = config
+            .job_storage_dir
+            .as_ref()
+            .map(|path| FileJobStorage::new(path).map(|storage| Arc::new(storage) as Arc<_>))
+            .transpose()?;
+        let job_queue: Arc<dyn JobQueue> = Arc::new(InMemoryJobQueue::with_options(
+            config.job_queue_capacity,
+            storage,
+            Some(chrono::Duration::seconds(retention_seconds)),
+        )?);
 
         // Create executor
         let executor = Arc::new(
@@ -271,6 +278,24 @@ impl AppState {
         tokio::spawn(async move {
             if let Err(e) = executor.start().await {
                 tracing::error!("Executor error: {}", e);
+            }
+        });
+
+        let job_queue = self.job_queue.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
+                JOB_RETENTION_CLEANUP_INTERVAL_SECS,
+            ));
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match job_queue.prune_expired().await {
+                    Ok(removed) if removed > 0 => {
+                        tracing::info!("Removed {} expired scan jobs", removed);
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::error!("Failed to prune expired scan jobs: {}", error),
+                }
             }
         });
 

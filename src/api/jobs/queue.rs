@@ -253,6 +253,11 @@ pub trait JobQueue: Send + Sync {
 
     /// Get active jobs count
     async fn active_jobs_count(&self) -> Result<usize>;
+
+    /// Remove terminal jobs whose configured retention period has elapsed.
+    async fn prune_expired(&self) -> Result<usize> {
+        Ok(0)
+    }
 }
 
 /// In-memory job queue implementation
@@ -261,6 +266,7 @@ pub struct InMemoryJobQueue {
     jobs: Arc<RwLock<HashMap<String, ScanJob>>>,
     max_capacity: usize,
     storage: Option<Arc<dyn JobStorage>>,
+    retention: Option<chrono::Duration>,
 }
 
 impl InMemoryJobQueue {
@@ -271,22 +277,46 @@ impl InMemoryJobQueue {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             max_capacity,
             storage: None,
+            retention: None,
         }
     }
 
     pub fn with_storage(max_capacity: usize, storage: Arc<dyn JobStorage>) -> Result<Self> {
-        let mut loaded = storage.load_all_jobs()?;
+        Self::with_options(max_capacity, Some(storage), None)
+    }
+
+    pub fn with_options(
+        max_capacity: usize,
+        storage: Option<Arc<dyn JobStorage>>,
+        retention: Option<chrono::Duration>,
+    ) -> Result<Self> {
+        let mut loaded = storage
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |storage| storage.load_all_jobs())?;
         loaded.sort_by_key(|job| job.queued_at);
 
         let mut queue = VecDeque::new();
         let mut jobs = HashMap::new();
         for mut job in loaded {
+            if retention.is_some_and(|retention| {
+                Self::is_terminal(job.status)
+                    && job
+                        .completed_at
+                        .is_some_and(|completed| completed + retention <= Utc::now())
+            }) {
+                if let Some(storage) = &storage {
+                    storage.delete_job(&job.id)?;
+                }
+                continue;
+            }
             if jobs.contains_key(&job.id) {
                 tls_bail!("Duplicate persisted job id: {}", job.id);
             }
             if matches!(job.status, ScanStatus::Running) {
                 job.mark_queued();
-                storage.save_job(&job)?;
+                if let Some(storage) = &storage {
+                    storage.save_job(&job)?;
+                }
             }
             if matches!(job.status, ScanStatus::Queued) {
                 queue.push_back(job.clone());
@@ -310,7 +340,8 @@ impl InMemoryJobQueue {
             queue: Arc::new(RwLock::new(queue)),
             jobs: Arc::new(RwLock::new(jobs)),
             max_capacity,
-            storage: Some(storage),
+            storage,
+            retention,
         })
     }
 
@@ -338,6 +369,28 @@ impl InMemoryJobQueue {
     /// result shortly after completion; only the oldest beyond that cap are
     /// dropped. The caller must already hold the `jobs` write lock.
     fn prune_terminal_jobs(&self, jobs: &mut HashMap<String, ScanJob>) {
+        if let Some(retention) = self.retention {
+            let now = Utc::now();
+            let expired: Vec<String> = jobs
+                .values()
+                .filter(|job| {
+                    Self::is_terminal(job.status)
+                        && job
+                            .completed_at
+                            .is_some_and(|completed| completed + retention <= now)
+                })
+                .map(|job| job.id.clone())
+                .collect();
+            for id in expired {
+                jobs.remove(&id);
+                if let Some(storage) = &self.storage
+                    && let Err(error) = storage.delete_job(&id)
+                {
+                    tracing::warn!("Failed to remove expired persisted job {}: {}", id, error);
+                }
+            }
+        }
+
         let terminal_count = jobs
             .values()
             .filter(|j| Self::is_terminal(j.status))
@@ -507,6 +560,13 @@ impl JobQueue for InMemoryJobQueue {
             .filter(|j| matches!(j.status, ScanStatus::Running))
             .count();
         Ok(count)
+    }
+
+    async fn prune_expired(&self) -> Result<usize> {
+        let mut jobs = self.jobs.write().await;
+        let before = jobs.len();
+        self.prune_terminal_jobs(&mut jobs);
+        Ok(before.saturating_sub(jobs.len()))
     }
 }
 
@@ -825,5 +885,38 @@ mod tests {
         other_principal.idempotency_key = Some("request-1".to_string());
         other_principal.request_fingerprint = Some("fingerprint-2".to_string());
         assert_ne!(queue.enqueue(other_principal).await.unwrap(), first_id);
+    }
+
+    #[tokio::test]
+    async fn retention_removes_expired_terminal_jobs_but_keeps_active_jobs() {
+        let directory = tempfile::tempdir().expect("temp directory should exist");
+        let storage =
+            Arc::new(FileJobStorage::new(directory.path()).expect("storage should initialize"));
+        let queue = InMemoryJobQueue::with_options(
+            10,
+            Some(storage.clone()),
+            Some(chrono::Duration::seconds(60)),
+        )
+        .expect("queue should initialize");
+
+        let active = ScanJob::new("active:443".to_string(), ScanOptions::default(), None);
+        let active_id = active.id.clone();
+        queue
+            .enqueue(active)
+            .await
+            .expect("active job should enqueue");
+
+        let mut expired = ScanJob::new("expired:443".to_string(), ScanOptions::default(), None);
+        let expired_id = expired.id.clone();
+        expired.mark_failed("expected fixture failure");
+        expired.completed_at = Some(Utc::now() - chrono::Duration::seconds(61));
+        queue
+            .update_job(&expired)
+            .await
+            .expect("expired job update should complete");
+
+        assert!(queue.get_job(&expired_id).await.unwrap().is_none());
+        assert!(storage.load_job(&expired_id).unwrap().is_none());
+        assert!(queue.get_job(&active_id).await.unwrap().is_some());
     }
 }
