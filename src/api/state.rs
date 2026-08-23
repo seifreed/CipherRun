@@ -3,7 +3,7 @@
 use crate::Result;
 use crate::api::{
     config::ApiConfig,
-    jobs::{InMemoryJobQueue, JobQueue, ScanExecutor},
+    jobs::{FileJobStorage, InMemoryJobQueue, JobQueue, ScanExecutor},
     middleware::rate_limit::PerKeyRateLimiter,
     models::response::ProgressMessage,
 };
@@ -226,8 +226,15 @@ impl AppState {
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
         // Create job queue
-        let job_queue: Arc<dyn JobQueue> =
-            Arc::new(InMemoryJobQueue::new(config.job_queue_capacity));
+        let job_queue: Arc<dyn JobQueue> = if let Some(path) = &config.job_storage_dir {
+            let storage = Arc::new(FileJobStorage::new(path)?);
+            Arc::new(InMemoryJobQueue::with_storage(
+                config.job_queue_capacity,
+                storage,
+            )?)
+        } else {
+            Arc::new(InMemoryJobQueue::new(config.job_queue_capacity))
+        };
 
         // Create executor
         let executor = Arc::new(

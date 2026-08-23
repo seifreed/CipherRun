@@ -3,6 +3,7 @@
 use crate::Result;
 use crate::api::jobs::ScanJob;
 use crate::api::models::response::ScanStatus;
+use std::io::Write;
 use uuid::Uuid;
 
 const MAX_JOB_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -138,7 +139,10 @@ impl JobStorage for FileJobStorage {
                 ),
             });
         }
-        std::fs::write(path, json)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.base_path)?;
+        temporary.write_all(json.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(&path).map_err(|error| error.error)?;
         Ok(())
     }
 

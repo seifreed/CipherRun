@@ -6,7 +6,7 @@ pub mod storage;
 
 pub use executor::ScanExecutor;
 pub use queue::{InMemoryJobQueue, JobQueue, ScanJob};
-pub use storage::JobStorage;
+pub use storage::{FileJobStorage, JobStorage};
 
 #[cfg(test)]
 mod tests {

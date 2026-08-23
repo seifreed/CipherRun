@@ -52,6 +52,10 @@ pub struct ApiConfig {
     /// Job queue capacity
     pub job_queue_capacity: usize,
 
+    /// Directory for durable standalone job storage. Memory-only when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_storage_dir: Option<PathBuf>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -164,6 +168,7 @@ impl Default for ApiConfig {
             request_timeout_seconds: 300, // 5 minutes
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,
+            job_storage_dir: None,
             enable_swagger: false,
             policy_dir: None,
         }

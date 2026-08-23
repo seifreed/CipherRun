@@ -1,5 +1,6 @@
 // Job Queue Implementation
 
+use crate::api::jobs::JobStorage;
 use crate::api::models::{request::ScanOptions, response::ScanStatus};
 use crate::scanner::ScanResults;
 use crate::{Result, tls_bail};
@@ -249,6 +250,7 @@ pub struct InMemoryJobQueue {
     queue: Arc<RwLock<VecDeque<ScanJob>>>,
     jobs: Arc<RwLock<HashMap<String, ScanJob>>>,
     max_capacity: usize,
+    storage: Option<Arc<dyn JobStorage>>,
 }
 
 impl InMemoryJobQueue {
@@ -258,7 +260,55 @@ impl InMemoryJobQueue {
             queue: Arc::new(RwLock::new(VecDeque::new())),
             jobs: Arc::new(RwLock::new(HashMap::new())),
             max_capacity,
+            storage: None,
         }
+    }
+
+    pub fn with_storage(max_capacity: usize, storage: Arc<dyn JobStorage>) -> Result<Self> {
+        let mut loaded = storage.load_all_jobs()?;
+        loaded.sort_by_key(|job| job.queued_at);
+
+        let mut queue = VecDeque::new();
+        let mut jobs = HashMap::new();
+        for mut job in loaded {
+            if jobs.contains_key(&job.id) {
+                tls_bail!("Duplicate persisted job id: {}", job.id);
+            }
+            if matches!(job.status, ScanStatus::Running) {
+                job.mark_queued();
+                storage.save_job(&job)?;
+            }
+            if matches!(job.status, ScanStatus::Queued) {
+                queue.push_back(job.clone());
+            }
+            jobs.insert(job.id.clone(), job);
+        }
+
+        let active = jobs
+            .values()
+            .filter(|job| matches!(job.status, ScanStatus::Queued | ScanStatus::Running))
+            .count();
+        if active > max_capacity {
+            tls_bail!(
+                "Persisted queue contains {} active jobs, exceeding capacity {}",
+                active,
+                max_capacity
+            );
+        }
+
+        Ok(Self {
+            queue: Arc::new(RwLock::new(queue)),
+            jobs: Arc::new(RwLock::new(jobs)),
+            max_capacity,
+            storage: Some(storage),
+        })
+    }
+
+    fn persist(&self, job: &ScanJob) -> Result<()> {
+        if let Some(storage) = &self.storage {
+            storage.save_job(job)?;
+        }
+        Ok(())
     }
 }
 
@@ -296,6 +346,11 @@ impl InMemoryJobQueue {
         let to_remove = terminal_count - self.max_capacity;
         for (id, _) in terminal.into_iter().take(to_remove) {
             jobs.remove(&id);
+            if let Some(storage) = &self.storage
+                && let Err(error) = storage.delete_job(&id)
+            {
+                tracing::warn!("Failed to remove pruned persisted job {}: {}", id, error);
+            }
         }
     }
 }
@@ -318,6 +373,7 @@ impl JobQueue for InMemoryJobQueue {
         if jobs.contains_key(&job_id) {
             tls_bail!("Job already exists: {}", job_id);
         }
+        self.persist(&job)?;
         queue.push_back(job.clone());
         jobs.insert(job_id.clone(), job);
 
@@ -338,10 +394,10 @@ impl JobQueue for InMemoryJobQueue {
                     // until the executor marks it started after awaiting a
                     // concurrency permit, leaving it counted by neither
                     // queue_length nor active_jobs_count during that window.
-                    if let Some(entry) = jobs.get_mut(&job.id) {
-                        entry.mark_started();
-                    }
-                    let current_job = jobs.get(&job.id).cloned().unwrap_or(job);
+                    let mut current_job = jobs.get(&job.id).cloned().unwrap_or(job);
+                    current_job.mark_started();
+                    self.persist(&current_job)?;
+                    jobs.insert(current_job.id.clone(), current_job.clone());
                     return Ok(Some(current_job));
                 }
                 Some(_) => {
@@ -365,6 +421,7 @@ impl JobQueue for InMemoryJobQueue {
 
     async fn update_job(&self, job: &ScanJob) -> Result<()> {
         let mut jobs = self.jobs.write().await;
+        self.persist(job)?;
         jobs.insert(job.id.clone(), job.clone());
         self.prune_terminal_jobs(&mut jobs);
         Ok(())
@@ -383,6 +440,7 @@ impl JobQueue for InMemoryJobQueue {
                 return Ok(false);
             }
         }
+        self.persist(job)?;
         jobs.insert(job.id.clone(), job.clone());
         self.prune_terminal_jobs(&mut jobs);
         Ok(true)
@@ -392,10 +450,13 @@ impl JobQueue for InMemoryJobQueue {
         let mut queue = self.queue.write().await;
         let mut jobs = self.jobs.write().await;
 
-        if let Some(job) = jobs.get_mut(id) {
+        if let Some(job) = jobs.get(id) {
             // Only cancel if not already completed/failed
             if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
-                job.mark_cancelled();
+                let mut cancelled = job.clone();
+                cancelled.mark_cancelled();
+                self.persist(&cancelled)?;
+                jobs.insert(id.to_string(), cancelled);
                 queue.retain(|queued| queued.id != id);
                 self.prune_terminal_jobs(&mut jobs);
                 return Ok(true);
@@ -428,6 +489,7 @@ impl JobQueue for InMemoryJobQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::jobs::FileJobStorage;
 
     #[tokio::test]
     async fn test_enqueue_dequeue() {
@@ -642,5 +704,43 @@ mod tests {
             .expect("test assertion should succeed");
         assert_eq!(job.status, ScanStatus::Cancelled);
         assert_eq!(queue.queue_length().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn persistent_queue_recovers_running_job_as_queued() {
+        let directory = tempfile::tempdir().expect("temp directory should exist");
+        let storage =
+            Arc::new(FileJobStorage::new(directory.path()).expect("storage should initialize"));
+        let job = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            ScanOptions::default(),
+            None,
+            "principal-1".to_string(),
+            "key-1".to_string(),
+            Some("tenant-1".to_string()),
+        );
+        let id = job.id.clone();
+
+        let queue = InMemoryJobQueue::with_storage(10, storage.clone())
+            .expect("persistent queue should initialize");
+        queue.enqueue(job).await.expect("job should enqueue");
+        let running = queue
+            .dequeue()
+            .await
+            .expect("dequeue should succeed")
+            .expect("job should exist");
+        assert_eq!(running.status, ScanStatus::Running);
+        drop(queue);
+
+        let recovered =
+            InMemoryJobQueue::with_storage(10, storage).expect("queue should recover from disk");
+        let recovered_job = recovered
+            .get_job(&id)
+            .await
+            .expect("lookup should succeed")
+            .expect("recovered job should exist");
+        assert_eq!(recovered_job.status, ScanStatus::Queued);
+        assert_eq!(recovered_job.principal_id, "principal-1");
+        assert_eq!(recovered.queue_length().await.unwrap(), 1);
     }
 }
