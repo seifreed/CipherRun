@@ -165,6 +165,20 @@ fn rejects_private_ip_override() {
 }
 
 #[test]
+fn allows_private_ip_override_only_with_matching_network_policy() {
+    let request = ScanRequest {
+        ip: Some("10.20.1.5".to_string()),
+        network: ScanRequestNetwork {
+            allow_cidrs: vec!["10.20.0.0/16".parse().unwrap()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(request.validate_common().is_ok());
+}
+
+#[test]
 fn rejects_malformed_ip_override() {
     let request = ScanRequest {
         ip: Some("not-an-ip".to_string()),

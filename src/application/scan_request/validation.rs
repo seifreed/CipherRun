@@ -44,7 +44,8 @@ impl ScanRequest {
                 .parse::<std::net::IpAddr>()
                 .map_err(|_| invalid_input(format!("Invalid IP override: {}", ip_override)))?;
 
-            crate::security::input_validation::validate_resolved_ips(&[ip], false)
+            self.network
+                .validate_resolved_ips(&[ip])
                 .map_err(|error| invalid_input(format!("Invalid IP override: {}", error)))?;
 
             if self.network.ipv4_only && ip.is_ipv6() {
@@ -94,9 +95,10 @@ impl ScanRequest {
             crate::security::validate_hostname(sni_name)
                 .map_err(|error| invalid_input(format!("Invalid SNI hostname: {}", error)))?;
             let normalized_sni_name = sni_name.trim_end_matches('.').to_ascii_lowercase();
-            if normalized_sni_name == "localhost"
-                || normalized_sni_name.ends_with(".local")
-                || normalized_sni_name.ends_with(".internal")
+            if !self.network.permits_private_resolution()
+                && (normalized_sni_name == "localhost"
+                    || normalized_sni_name.ends_with(".local")
+                    || normalized_sni_name.ends_with(".internal"))
             {
                 return Err(invalid_input(
                     "Invalid SNI hostname: private/local hostnames are not allowed",

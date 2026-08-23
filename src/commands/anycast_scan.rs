@@ -58,8 +58,16 @@ impl Command for AnycastScanCommand {
             message: "--scan-all-ips requires a target".to_string(),
         })?;
 
-        let target =
-            Target::parse_with_port_override(target_input, Self::port_override(&self.args)).await?;
+        let request = self.args.to_scan_request()?;
+        let target = Target::parse_with_port_override_and_private(
+            target_input,
+            Self::port_override(&self.args),
+            request.network.permits_private_resolution(),
+        )
+        .await?;
+        request
+            .network
+            .validate_resolved_ips(&target.ip_addresses)?;
 
         let scanner = AnycastScanner::new(target.hostname.clone(), target.port, self.args.clone());
         let results = scanner.scan_all_ips().await?;

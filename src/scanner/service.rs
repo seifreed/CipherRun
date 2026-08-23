@@ -4,7 +4,6 @@ use crate::application::ScanRequest;
 use crate::protocols::pre_handshake::{PreHandshakeScanResult, PreHandshakeScanner};
 use crate::rating::{RatingCalculator, RatingResult, grader::Grade};
 use crate::scanner::probe_status::{ErrorType, ProbeStatus};
-use crate::security::input_validation::validate_resolved_ips;
 use crate::utils::custom_resolvers::CustomResolver;
 use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::{Target, canonical_target, split_target_host_port};
@@ -267,15 +266,14 @@ impl Scanner {
         let port = Self::effective_port(&self.request, embedded_port);
 
         let target = if self.request.network.resolvers.is_empty() {
-            Target::parse_with_port_override(
+            Target::parse_with_port_override_and_private(
                 target_str,
                 Self::parse_port_override(&self.request, embedded_port),
+                self.request.network.permits_private_resolution(),
             )
             .await?
         } else if let Ok(ip) = hostname.parse::<IpAddr>() {
-            validate_resolved_ips(&[ip], false).map_err(|error| crate::TlsError::InvalidInput {
-                message: format!("Resolved target failed SSRF validation: {}", error),
-            })?;
+            self.request.network.validate_resolved_ips(&[ip])?;
             Target::with_ips(hostname, port, vec![ip])?
         } else {
             let resolver = CustomResolver::new(self.request.network.resolvers.clone())?;
@@ -285,11 +283,13 @@ impl Scanner {
                     hostname, error
                 ))
             })?;
-            validate_resolved_ips(&ips, false).map_err(|error| crate::TlsError::InvalidInput {
-                message: format!("Resolved target failed SSRF validation: {}", error),
-            })?;
+            self.request.network.validate_resolved_ips(&ips)?;
             Target::with_ips(hostname, port, ips)?
         };
+
+        self.request
+            .network
+            .validate_resolved_ips(&target.ip_addresses)?;
 
         self.apply_address_family_filter(target)
     }

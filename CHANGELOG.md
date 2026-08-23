@@ -15,6 +15,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Stable automation exit codes, `--fail-on`, and the `--fail-on-policy` alias.
 - Semantic `cipherrun diff` for versioned scan-result files.
 - Single-target baseline drift detection with `--baseline`.
+- Explicit local CLI private-network policy with `--allow-private` and CIDR-scoped exceptions.
 
 ### Changed
 

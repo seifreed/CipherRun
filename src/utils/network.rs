@@ -59,6 +59,14 @@ impl Target {
     ///
     /// The override wins over any embedded port in the input.
     pub async fn parse_with_port_override(input: &str, port_override: Option<u16>) -> Result<Self> {
+        Self::parse_with_port_override_and_private(input, port_override, false).await
+    }
+
+    pub async fn parse_with_port_override_and_private(
+        input: &str,
+        port_override: Option<u16>,
+        allow_private_resolution: bool,
+    ) -> Result<Self> {
         let (hostname, parsed_port) = split_target_host_port(input)?;
         let hostname = normalize_dns_hostname(hostname);
         validate_hostname(&hostname)
@@ -67,7 +75,11 @@ impl Target {
         if port == 0 {
             crate::tls_bail!("Port must be between 1 and 65535");
         }
-        let ip_addresses = resolve_hostname(&hostname).await?;
+        let ip_addresses = if allow_private_resolution {
+            resolve_hostname_unsafe(&hostname).await?
+        } else {
+            resolve_hostname(&hostname).await?
+        };
 
         // Validate non-empty IP addresses
         if ip_addresses.is_empty() {

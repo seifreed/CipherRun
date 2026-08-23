@@ -479,6 +479,17 @@ fn test_validate_api_server_standalone() {
 }
 
 #[test]
+fn test_api_server_rejects_local_private_network_exceptions() {
+    let args = Args::parse_with_sources_from(["cipherrun", "--serve", "--allow-private"]).unwrap();
+    assert!(
+        args.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("local CLI scan options")
+    );
+}
+
+#[test]
 fn test_validate_monitor_standalone() {
     validate_ok(build_args(|args| args.monitoring.enable = true));
 }

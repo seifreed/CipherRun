@@ -30,6 +30,14 @@ pub struct NetworkArgs {
     #[arg(long = "resolvers", value_delimiter = ',')]
     pub resolvers: Vec<String>,
 
+    /// Allow private/reserved target addresses for this local CLI invocation
+    #[arg(long = "allow-private")]
+    pub allow_private: bool,
+
+    /// Allow private/reserved targets only within these CIDRs
+    #[arg(long = "allow-cidr", value_name = "CIDR", value_delimiter = ',')]
+    pub allow_cidrs: Vec<String>,
+
     /// Test all IP addresses resolved for hostname (default behavior when multiple IPs found)
     /// When a hostname resolves to multiple IPs (load balancers, Anycast), all IPs are tested
     /// by default and results are aggregated using worst-case approach. Use --first-ip-only
@@ -77,6 +85,8 @@ impl Default for NetworkArgs {
             ipv6_only: false,
             proxy: None,
             resolvers: Vec::new(),
+            allow_private: false,
+            allow_cidrs: Vec::new(),
             test_all_ips: false,
             first_ip_only: false,
             scan_all_ips: false,
@@ -107,6 +117,8 @@ mod tests {
         assert!(!args.ipv6_only);
         assert!(args.proxy.is_none());
         assert!(args.resolvers.is_empty());
+        assert!(!args.allow_private);
+        assert!(args.allow_cidrs.is_empty());
         assert!(!args.test_all_ips);
         assert!(!args.first_ip_only);
         assert!(!args.scan_all_ips);

@@ -341,6 +341,14 @@ impl Args {
             CustomResolver::new(self.network.resolvers.clone())?;
         }
 
+        if self.api_server.enable
+            && (self.network.allow_private || !self.network.allow_cidrs.is_empty())
+        {
+            crate::tls_bail!(
+                "--allow-private and --allow-cidr are local CLI scan options and cannot configure the API server"
+            );
+        }
+
         if self.output.append && self.output.overwrite {
             crate::tls_bail!("Cannot combine --append with --overwrite");
         }
@@ -482,6 +490,19 @@ impl Args {
                 ipv6_only: self.network.ipv6_only,
                 proxy: self.network.proxy.clone(),
                 resolvers: self.network.resolvers.clone(),
+                allow_private: self.network.allow_private,
+                allow_cidrs: self
+                    .network
+                    .allow_cidrs
+                    .iter()
+                    .map(|cidr| {
+                        cidr.parse::<ipnetwork::IpNetwork>().map_err(|error| {
+                            crate::TlsError::InvalidInput {
+                                message: format!("Invalid --allow-cidr '{cidr}': {error}"),
+                            }
+                        })
+                    })
+                    .collect::<crate::Result<Vec<_>>>()?,
                 test_all_ips: self.network.test_all_ips,
                 first_ip_only: self.network.first_ip_only,
                 max_concurrent_ciphers: self.network.max_concurrent_ciphers,

@@ -135,6 +135,10 @@ cipherrun --policy policy.yaml --fail-on-policy example.com
 # Compare versioned scan results (exit 4 on drift)
 cipherrun diff baseline.json current.json
 cipherrun --baseline baseline.json example.com
+
+# Explicitly authorized internal-network scans (local CLI only)
+cipherrun --allow-private intranet.example.internal
+cipherrun --allow-cidr 10.20.0.0/16 host.internal
 ```
 
 ### STARTTLS Examples

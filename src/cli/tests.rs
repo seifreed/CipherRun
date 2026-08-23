@@ -740,6 +740,24 @@ fn test_validate_rejects_invalid_proxy() {
 }
 
 #[test]
+fn test_to_scan_request_rejects_invalid_allowed_cidr() {
+    let args = Args {
+        network: NetworkArgs {
+            allow_cidrs: vec!["10.20.0.0/not-a-prefix".to_string()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(
+        args.to_scan_request()
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid --allow-cidr")
+    );
+}
+
+#[test]
 fn test_validate_rejects_append_and_overwrite() {
     let args = Args {
         output: OutputArgs {
