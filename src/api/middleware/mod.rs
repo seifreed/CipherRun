@@ -37,7 +37,9 @@ mod tests {
 
         let auth = AuthExtension {
             permission: Permission::User,
-            api_key: "key".to_string(),
+            key_id: "key-id".to_string(),
+            principal_id: "principal-id".to_string(),
+            tenant_id: None,
             from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
@@ -46,6 +48,6 @@ mod tests {
         assert_eq!(permission, Permission::User);
 
         let ext = get_auth_extension(&req).expect("auth ext exists");
-        assert_eq!(ext.api_key, "key");
+        assert_eq!(ext.key_id, "key-id");
     }
 }

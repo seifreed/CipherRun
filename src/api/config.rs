@@ -68,6 +68,14 @@ pub enum Permission {
     ReadOnly,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedKey {
+    pub key_id: String,
+    pub principal_id: String,
+    pub tenant_id: Option<String>,
+    pub permission: Permission,
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         let mut api_keys = HashMap::new();
@@ -209,6 +217,10 @@ impl ApiConfig {
     /// - How many characters match
     /// - The position of the first mismatch
     pub fn validate_key(&self, key: &str) -> Option<Permission> {
+        self.authenticate_key(key).map(|key| key.permission)
+    }
+
+    pub fn authenticate_key(&self, key: &str) -> Option<AuthenticatedKey> {
         if key.is_empty() {
             return None;
         }
@@ -244,7 +256,15 @@ impl ApiConfig {
             }
         }
 
-        result
+        result.map(|permission| {
+            let key_id = key_id(key);
+            AuthenticatedKey {
+                principal_id: key_id.clone(),
+                key_id,
+                tenant_id: None,
+                permission,
+            }
+        })
     }
 
     /// Add API key
@@ -313,6 +333,11 @@ impl ApiConfig {
     }
 }
 
+fn key_id(secret: &str) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, secret.as_bytes());
+    format!("key-{}", hex::encode(&digest.as_ref()[..12]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +360,22 @@ mod tests {
         assert_eq!(config.validate_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.remove_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.validate_key("test-key"), None);
+    }
+
+    #[test]
+    fn authenticated_key_exposes_stable_id_not_secret() {
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        config.add_key("top-secret".to_string(), Permission::User);
+
+        let authenticated = config
+            .authenticate_key("top-secret")
+            .expect("key should authenticate");
+
+        assert_eq!(authenticated.permission, Permission::User);
+        assert_eq!(authenticated.key_id, authenticated.principal_id);
+        assert!(!authenticated.key_id.contains("top-secret"));
+        assert_eq!(authenticated.key_id, key_id("top-secret"));
     }
 
     #[test]

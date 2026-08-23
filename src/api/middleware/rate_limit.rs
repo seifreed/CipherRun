@@ -23,21 +23,6 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-/// Mask an API key for safe logging (shows first 4 and last 4 characters)
-fn mask_key(key: &str) -> String {
-    let chars: Vec<char> = key.chars().collect();
-    if chars.len() > 8 {
-        let first: String = chars.iter().take(4).collect();
-        let last: String = chars.iter().rev().take(4).rev().collect();
-        format!("{}...{}", first, last)
-    } else if chars.len() > 4 {
-        let first: String = chars.iter().take(4).collect();
-        format!("{}****", first)
-    } else {
-        "****".to_string()
-    }
-}
-
 /// Type alias for the governor rate limiter with state information middleware
 /// This allows us to get remaining capacity information after each check
 type Limiter =
@@ -332,15 +317,12 @@ pub async fn rate_limit(
     if let Some(auth) = auth_ext {
         // Check if user is Admin - admins bypass rate limiting
         if auth.permission == Permission::Admin {
-            tracing::debug!(
-                "Admin key {} - bypassing rate limit",
-                mask_key(&auth.api_key)
-            );
+            tracing::debug!("Admin key {} - bypassing rate limit", auth.key_id);
             return Ok(next.run(req).await);
         }
 
         // Check rate limit for this API key
-        match state.rate_limiter.check(&auth.api_key) {
+        match state.rate_limiter.check(&auth.key_id) {
             RateLimitResult::Allowed {
                 limit,
                 remaining,
@@ -348,7 +330,7 @@ pub async fn rate_limit(
             } => {
                 tracing::debug!(
                     "Rate limit check passed for key {}: {}/{} remaining",
-                    mask_key(&auth.api_key),
+                    auth.key_id,
                     remaining,
                     limit
                 );
@@ -378,7 +360,7 @@ pub async fn rate_limit(
             } => {
                 tracing::warn!(
                     "Rate limit exceeded for key {}: limit={}, retry_after={}s",
-                    mask_key(&auth.api_key),
+                    auth.key_id,
                     limit,
                     retry_after
                 );

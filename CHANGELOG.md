@@ -21,6 +21,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Per-IP finding evidence now records the affected address, port, and SNI in multi-IP JSON.
 - Published timing methodology with median, p95, standard error, and 95% confidence intervals.
 - Reproducible weak/modern TLS fixtures and differential scanner validation in the lab image.
+- Per-credential scan ownership with non-secret key identifiers and cross-owner access denial.
 
 ### Changed
 

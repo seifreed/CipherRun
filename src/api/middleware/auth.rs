@@ -16,7 +16,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct AuthExtension {
     pub permission: Permission,
-    pub api_key: String,
+    pub key_id: String,
+    pub principal_id: String,
+    pub tenant_id: Option<String>,
     /// Whether the API key was provided via query parameter (less secure than header)
     pub from_query_param: bool,
 }
@@ -130,14 +132,15 @@ pub async fn authenticate(
     }
 
     // Validate API key
-    let permission = config
-        .validate_key(&api_key)
+    let authenticated = config
+        .authenticate_key(&api_key)
         .ok_or_else(|| ApiError::Unauthorized("Invalid API key".to_string()))?;
 
-    // Store both permission and API key in request extensions for later use
     let auth_ext = AuthExtension {
-        permission,
-        api_key: api_key.to_string(),
+        permission: authenticated.permission,
+        key_id: authenticated.key_id,
+        principal_id: authenticated.principal_id,
+        tenant_id: authenticated.tenant_id,
         from_query_param,
     };
     req.extensions_mut().insert(auth_ext);
@@ -210,7 +213,9 @@ mod tests {
 
         let auth = AuthExtension {
             permission: Permission::User,
-            api_key: "key".to_string(),
+            key_id: "key-id".to_string(),
+            principal_id: "principal-id".to_string(),
+            tenant_id: None,
             from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
@@ -219,7 +224,7 @@ mod tests {
         assert_eq!(permission, Permission::User);
 
         let ext = get_auth_extension(&req).expect("auth ext exists");
-        assert_eq!(ext.api_key, "key");
+        assert_eq!(ext.key_id, "key-id");
     }
 
     #[test]

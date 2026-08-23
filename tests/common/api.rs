@@ -33,6 +33,9 @@ pub fn test_api_config() -> ApiConfig {
         .insert("test-user-key".to_string(), Permission::User);
     config
         .api_keys
+        .insert("test-other-key".to_string(), Permission::User);
+    config
+        .api_keys
         .insert("test-readonly-key".to_string(), Permission::ReadOnly);
     config.rate_limit_per_minute = 1000;
     config.enable_cors = false;

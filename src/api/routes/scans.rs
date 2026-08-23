@@ -1,5 +1,7 @@
 // Scan Routes
 
+use crate::api::config::Permission;
+use crate::api::middleware::AuthExtension;
 use crate::api::{
     adapters::scan as scan_adapter,
     jobs::ScanJob,
@@ -15,13 +17,21 @@ use crate::api::{
 };
 use crate::security::webhook::validate_webhook_url;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, State, WebSocketUpgrade},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
 use tracing::info;
+
+fn authorize_scan(job: &ScanJob, auth: &AuthExtension) -> Result<(), ApiError> {
+    if auth.permission == Permission::Admin || job.principal_id == auth.principal_id {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound("Scan not found".to_string()))
+    }
+}
 
 fn normalize_scan_options(
     options: Option<crate::api::models::request::ScanOptions>,
@@ -54,6 +64,7 @@ fn normalize_scan_options(
 )]
 pub async fn create_scan(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
     Json(request): Json<ScanRequest>,
 ) -> Result<(StatusCode, Json<ScanResponse>), ApiError> {
     info!("Creating new scan for target: {}", request.target);
@@ -82,7 +93,14 @@ pub async fn create_scan(
     info!("Validated target: {}", final_target);
 
     // Create scan job with validated target
-    let job = ScanJob::new(final_target.clone(), options, request.webhook_url);
+    let job = ScanJob::new_owned(
+        final_target.clone(),
+        options,
+        request.webhook_url,
+        auth.principal_id,
+        auth.key_id,
+        auth.tenant_id,
+    );
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
@@ -115,10 +133,12 @@ pub async fn create_scan(
 )]
 pub async fn get_scan_status(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
     Path(id): Path<String>,
 ) -> Result<Json<ScanStatusResponse>, ApiError> {
     // Get job via adapter
     let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
+    authorize_scan(&job, &auth)?;
 
     Ok(Json(present_scan_status(job)))
 }
@@ -144,10 +164,12 @@ pub async fn get_scan_status(
 )]
 pub async fn get_scan_results(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get job via adapter
     let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
+    authorize_scan(&job, &auth)?;
 
     // Check if scan is completed
     if matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
@@ -198,9 +220,11 @@ pub async fn get_scan_results(
 )]
 pub async fn cancel_scan(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let job = scan_adapter::get_scan(state.job_queue.as_ref(), &id).await?;
+    authorize_scan(&job, &auth)?;
 
     if !matches!(job.status, ScanStatus::Queued | ScanStatus::Running) {
         return Err(ApiError::BadRequest(
@@ -249,9 +273,10 @@ pub async fn websocket_handler(
     ws: WebSocketUpgrade,
     Path(scan_id): Path<String>,
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
 ) -> Response {
     match scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await {
-        Ok(_) => {
+        Ok(job) if authorize_scan(&job, &auth).is_ok() => {
             let ws_state = Arc::new(crate::api::ws::progress::WsState {
                 progress_tx: state.progress_tx.clone(),
                 ping_interval_seconds: state.config.ws_ping_interval_seconds,
@@ -259,6 +284,7 @@ pub async fn websocket_handler(
 
             ws.on_upgrade(move |socket| scan_websocket_handler(socket, scan_id, ws_state))
         }
+        Ok(_) => ApiError::NotFound("Scan not found".to_string()).into_response(),
         Err(error) => error.into_response(),
     }
 }
@@ -300,6 +326,16 @@ mod tests {
         })
     }
 
+    fn test_auth() -> Extension<AuthExtension> {
+        Extension(AuthExtension {
+            permission: Permission::User,
+            key_id: "test-key".to_string(),
+            principal_id: "test-principal".to_string(),
+            tenant_id: None,
+            from_query_param: false,
+        })
+    }
+
     fn valid_hostname_253() -> String {
         format!(
             "{}.{}.{}.{}",
@@ -323,7 +359,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("", Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("empty target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -334,7 +370,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("a".repeat(256), Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("too long target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -348,7 +384,7 @@ mod tests {
             Some(ScanOptions::full()),
         );
 
-        let (_, Json(response)) = create_scan(State(state), Json(request))
+        let (_, Json(response)) = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect("max hostname with port should succeed");
         assert!(response.target.ends_with(":443"));
@@ -359,7 +395,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("2001:4860:4860::8888", Some(ScanOptions::full()));
 
-        let (_, Json(response)) = create_scan(State(state), Json(request))
+        let (_, Json(response)) = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect("public IPv6 target without port should succeed");
 
@@ -369,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_scan_status_not_found() {
         let state = build_state();
-        let err = get_scan_status(State(state), Path("missing".to_string()))
+        let err = get_scan_status(State(state), test_auth(), Path("missing".to_string()))
             .await
             .expect_err("missing job should fail");
         assert!(matches!(err, ApiError::NotFound(_)));
@@ -378,7 +414,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_scan_results_not_completed() {
         let state = build_state();
-        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.principal_id = "test-principal".to_string();
         let id = job.id.clone();
         state
             .job_queue
@@ -386,7 +423,7 @@ mod tests {
             .await
             .expect("enqueue should succeed");
 
-        let err = get_scan_results(State(state), Path(id))
+        let err = get_scan_results(State(state), test_auth(), Path(id))
             .await
             .expect_err("not completed should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -396,7 +433,7 @@ mod tests {
     async fn test_cancel_scan_returns_not_found_for_missing_job() {
         let state = build_state();
 
-        let err = cancel_scan(State(state), Path("missing".to_string()))
+        let err = cancel_scan(State(state), test_auth(), Path("missing".to_string()))
             .await
             .expect_err("missing scan should fail");
         assert!(matches!(err, ApiError::NotFound(_)));
@@ -406,6 +443,7 @@ mod tests {
     async fn test_cancel_scan_returns_bad_request_for_completed_job() {
         let state = build_state();
         let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
         let id = job.id.clone();
         job.mark_completed(crate::scanner::ScanResults::default());
         state
@@ -414,7 +452,7 @@ mod tests {
             .await
             .expect("enqueue should succeed");
 
-        let err = cancel_scan(State(state), Path(id))
+        let err = cancel_scan(State(state), test_auth(), Path(id))
             .await
             .expect_err("completed scan should not be cancellable");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -425,7 +463,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("example.com", None);
 
-        let (_, Json(response)) = create_scan(State(state.clone()), Json(request))
+        let (_, Json(response)) = create_scan(State(state.clone()), test_auth(), Json(request))
             .await
             .expect("request should succeed");
         let job = state
@@ -444,7 +482,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("example.com", Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("empty options should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -463,7 +501,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("conflicting IP family options should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -481,7 +519,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("zero timeout should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -499,7 +537,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("private IP override should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -517,7 +555,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("malformed IP override should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -535,7 +573,7 @@ mod tests {
             webhook_url: Some("https://localhost/callback".to_string()),
         };
 
-        let err = create_scan(State(state), Json(request))
+        let err = create_scan(State(state), test_auth(), Json(request))
             .await
             .expect_err("private webhook target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -585,6 +623,7 @@ mod tests {
     async fn start_ws_test_server(state: Arc<AppState>) -> (String, oneshot::Sender<()>) {
         let app = Router::new()
             .route("/api/v1/scan/{id}/stream", get(websocket_handler))
+            .layer(Extension(test_auth().0))
             .with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:0")

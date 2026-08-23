@@ -122,6 +122,24 @@ async fn test_auth_user_key_can_create_scan_returns_201() {
 }
 
 #[tokio::test]
+async fn test_scan_owner_isolation_and_admin_access() {
+    let app = common::api::test_api_router();
+    let (status, created) =
+        common::api::create_scan(&app, Some("test-user-key"), scan_payload()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let scan_id = created["scan_id"].as_str().expect("scan id should exist");
+    let path = format!("/api/v1/scan/{scan_id}");
+
+    let (owner_status, _) = common::api::send_get_json(&app, &path, Some("test-user-key")).await;
+    let (other_status, _) = common::api::send_get_json(&app, &path, Some("test-other-key")).await;
+    let (admin_status, _) = common::api::send_get_json(&app, &path, Some("test-admin-key")).await;
+
+    assert_eq!(owner_status, StatusCode::OK);
+    assert_eq!(other_status, StatusCode::NOT_FOUND);
+    assert_eq!(admin_status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_auth_readonly_key_cannot_cancel_scan_returns_403() {
     let app = common::api::test_api_router();
     let (status, body) = common::api::send_json(

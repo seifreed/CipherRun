@@ -17,6 +17,18 @@ pub struct ScanJob {
     /// Unique job ID
     pub id: String,
 
+    /// Principal that created and owns this scan. Empty for legacy/internal jobs.
+    #[serde(default)]
+    pub principal_id: String,
+
+    /// Stable non-secret identifier of the API credential that created this scan.
+    #[serde(default)]
+    pub created_by_key_id: String,
+
+    /// Tenant scope. Unset until the credential is assigned to a tenant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+
     /// Target to scan
     pub target: String,
 
@@ -62,6 +74,9 @@ impl ScanJob {
     pub fn new(target: String, options: ScanOptions, webhook_url: Option<String>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
+            principal_id: String::new(),
+            created_by_key_id: String::new(),
+            tenant_id: None,
             target,
             options,
             status: ScanStatus::Queued,
@@ -76,6 +91,21 @@ impl ScanJob {
             estimated_completion: None,
             eta_seconds: None,
         }
+    }
+
+    pub fn new_owned(
+        target: String,
+        options: ScanOptions,
+        webhook_url: Option<String>,
+        principal_id: String,
+        created_by_key_id: String,
+        tenant_id: Option<String>,
+    ) -> Self {
+        let mut job = Self::new(target, options, webhook_url);
+        job.principal_id = principal_id;
+        job.created_by_key_id = created_by_key_id;
+        job.tenant_id = tenant_id;
+        job
     }
 
     /// Update progress
