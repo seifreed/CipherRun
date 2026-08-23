@@ -36,7 +36,7 @@ pub struct ComplianceArgs {
     pub policy: Option<PathBuf>,
 
     /// Exit with non-zero code if policy violations found (for CI/CD)
-    #[arg(long = "enforce")]
+    #[arg(long = "enforce", visible_alias = "fail-on-policy")]
     pub enforce: bool,
 
     /// Policy output format (terminal, json, csv)
@@ -151,6 +151,12 @@ mod tests {
         assert_eq!(args.framework.as_deref(), Some("pci-dss-v4"));
         assert_eq!(args.policy_format, "json");
         assert_eq!(args.severity.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn test_fail_on_policy_alias_enables_enforcement() {
+        let parsed = TestCli::parse_from(["test", "--fail-on-policy"]);
+        assert!(parsed.args.enforce);
     }
 
     #[test]

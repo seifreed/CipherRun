@@ -12,6 +12,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Structured JSON finding evidence with limitations, references, remediation, and probe safety metadata.
 - JSON Schema 1.1, compatibility policy, and versioned scan-result fixtures.
 - SARIF 2.1.0 and JUnit XML exports for CI systems.
+- Stable automation exit codes, `--fail-on`, and the `--fail-on-policy` alias.
 
 ### Changed
 

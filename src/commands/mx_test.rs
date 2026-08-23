@@ -53,6 +53,7 @@ impl MxTestCommand {
             || self.args.output.xml.is_some()
             || self.args.output.sarif.is_some()
             || self.args.output.junit.is_some()
+            || self.args.output.fail_on.is_some()
     }
 
     fn export_collection_json(
@@ -254,6 +255,13 @@ impl Command for MxTestCommand {
         }
 
         let report = self.build_execution_report(&mx_tester, &results).await?;
+        let findings_exit = self
+            .args
+            .output
+            .fail_on
+            .filter(|threshold| threshold.is_met_by(report.results()))
+            .map(|_| CommandExit::findings_failure())
+            .unwrap_or_else(CommandExit::success);
         let cli_view = report.cli_view(self.args.compliance.enforce);
         let post_exit = if self.args.output.quiet {
             ScanPostPresenter::new(&self.args).exit_for_post_view(&cli_view.post_view())
@@ -265,11 +273,13 @@ impl Command for MxTestCommand {
             self.render_post_scan_notices(&report, &export_outcome);
         }
 
-        if scan_exit.is_success() {
-            Ok(post_exit)
-        } else {
-            Ok(scan_exit)
+        if !scan_exit.is_success() {
+            return Ok(scan_exit);
         }
+        if !post_exit.is_success() {
+            return Ok(post_exit);
+        }
+        Ok(findings_exit)
     }
 
     fn name(&self) -> &'static str {

@@ -62,6 +62,7 @@ impl CommandRouter {
             || args.output.json_pretty
             || args.output.append
             || args.output.overwrite
+            || args.output.fail_on.is_some()
     }
 
     /// Route CLI arguments to the appropriate Command

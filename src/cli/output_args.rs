@@ -2,8 +2,33 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum FailOnSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl FailOnSeverity {
+    pub fn is_met_by(self, results: &crate::scanner::ScanResults) -> bool {
+        let threshold = match self {
+            Self::Info => crate::vulnerabilities::Severity::Info,
+            Self::Low => crate::vulnerabilities::Severity::Low,
+            Self::Medium => crate::vulnerabilities::Severity::Medium,
+            Self::High => crate::vulnerabilities::Severity::High,
+            Self::Critical => crate::vulnerabilities::Severity::Critical,
+        };
+        results.vulnerabilities.iter().any(|finding| {
+            finding.status() == crate::vulnerabilities::FindingStatus::ConfirmedVulnerable
+                && finding.severity >= threshold
+        })
+    }
+}
 
 /// Output format and display options
 ///
@@ -46,6 +71,10 @@ pub struct OutputArgs {
     /// Output JUnit XML for CI test reporting
     #[arg(long = "junit", value_name = "FILE")]
     pub junit: Option<PathBuf>,
+
+    /// Exit 2 when a confirmed finding meets this severity threshold
+    #[arg(long = "fail-on", value_name = "SEVERITY", value_enum)]
+    pub fail_on: Option<FailOnSeverity>,
 
     /// Output all supported formats with basename (like nmap -oA)
     #[arg(short = 'o', long = "output-all", value_name = "BASENAME")]
@@ -140,6 +169,7 @@ mod tests {
         assert!(args.xml.is_none());
         assert!(args.sarif.is_none());
         assert!(args.junit.is_none());
+        assert!(args.fail_on.is_none());
         assert!(args.output_all.is_none());
         assert!(args.outprefix.is_none());
         assert!(!args.quiet);
@@ -170,5 +200,38 @@ mod tests {
             assert_eq!(args.no_color, no_color);
             assert_eq!(args.no_colour, no_colour);
         }
+    }
+
+    #[test]
+    fn fail_on_requires_confirmed_finding_at_threshold() {
+        let finding =
+            |severity, vulnerable, inconclusive| crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                vulnerable,
+                inconclusive,
+                details: "test".to_string(),
+                cve: None,
+                cwe: None,
+                severity,
+            };
+        let mut results = crate::scanner::ScanResults {
+            vulnerabilities: vec![finding(crate::vulnerabilities::Severity::High, true, true)],
+            ..Default::default()
+        };
+        assert!(!FailOnSeverity::High.is_met_by(&results));
+
+        results.vulnerabilities.push(finding(
+            crate::vulnerabilities::Severity::Medium,
+            true,
+            false,
+        ));
+        assert!(!FailOnSeverity::High.is_met_by(&results));
+
+        results.vulnerabilities.push(finding(
+            crate::vulnerabilities::Severity::Critical,
+            true,
+            false,
+        ));
+        assert!(FailOnSeverity::High.is_met_by(&results));
     }
 }

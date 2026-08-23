@@ -61,7 +61,16 @@ impl Command for ScanCommand {
         };
         let workflow_result = ScanWorkflow::execute(input, &services).await?;
         let presenter = ScanPresenter::new(&self.args);
-        let exit = presenter.present(&workflow_result)?;
+        let mut exit = presenter.present(&workflow_result)?;
+        if exit.is_success()
+            && self
+                .args
+                .output
+                .fail_on
+                .is_some_and(|threshold| threshold.is_met_by(workflow_result.results()))
+        {
+            exit = CommandExit::findings_failure();
+        }
 
         Ok(self.finalize_outcome(exit).exit)
     }

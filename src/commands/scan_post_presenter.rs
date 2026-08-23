@@ -33,15 +33,15 @@ impl<'a> ScanPostPresenter<'a> {
         let mut exit = CommandExit::success();
 
         if post_view.compliance_failed() {
-            exit = self.merge_non_zero_exit(exit, CommandExit::failure(1));
+            exit = self.merge_non_zero_exit(exit, CommandExit::policy_failure());
         }
 
         if post_view.should_render_policy_failure_notice() {
-            exit = self.merge_non_zero_exit(exit, CommandExit::failure(1));
+            exit = self.merge_non_zero_exit(exit, CommandExit::policy_failure());
         }
 
         if post_view.should_return_failure_exit() && exit.code() == 0 {
-            return CommandExit::failure(1);
+            return CommandExit::policy_failure();
         }
 
         exit
@@ -120,7 +120,7 @@ impl<'a> ScanPostPresenter<'a> {
         }
 
         if compliance_report.overall_status == ComplianceStatus::Fail {
-            return Ok(Some(CommandExit::failure(1)));
+            return Ok(Some(CommandExit::policy_failure()));
         }
 
         Ok(None)
@@ -140,8 +140,8 @@ impl<'a> ScanPostPresenter<'a> {
         println!("{}", formatted_result);
 
         if post_view.should_render_policy_failure_notice() {
-            println!("\nPolicy evaluation failed - command will return exit code 1");
-            return Ok(Some(CommandExit::failure(1)));
+            println!("\nPolicy evaluation failed - command will return exit code 3");
+            return Ok(Some(CommandExit::policy_failure()));
         }
 
         Ok(None)
@@ -210,7 +210,7 @@ mod tests {
 
         let exit = presenter.exit_for_post_view(&post_view);
 
-        assert_eq!(exit.code(), 1);
+        assert_eq!(exit.code(), CommandExit::POLICY_FAILURE);
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
 
         let exit = presenter.exit_for_post_view(&post_view);
 
-        assert_eq!(exit.code(), 1);
+        assert_eq!(exit.code(), CommandExit::POLICY_FAILURE);
     }
 
     fn compliance_report(status: ComplianceStatus) -> ComplianceReport {

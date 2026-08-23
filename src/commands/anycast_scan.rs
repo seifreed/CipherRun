@@ -68,7 +68,19 @@ impl Command for AnycastScanCommand {
         }
         self.export_results(&results)?;
 
-        Ok(Self::exit_for_results(&results))
+        let exit = Self::exit_for_results(&results);
+        if exit.is_success()
+            && self.args.output.fail_on.is_some_and(|threshold| {
+                results
+                    .ip_results
+                    .iter()
+                    .any(|result| threshold.is_met_by(&result.results))
+            })
+        {
+            return Ok(CommandExit::findings_failure());
+        }
+
+        Ok(exit)
     }
 
     fn name(&self) -> &'static str {

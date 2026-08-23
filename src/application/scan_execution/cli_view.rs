@@ -176,7 +176,7 @@ impl<'a> ScanCliView<'a> {
     }
 
     pub fn should_skip_artifacts(&self) -> bool {
-        self.should_fail_exit()
+        false
     }
 
     pub fn should_handle_artifacts(&self) -> bool {
@@ -476,5 +476,26 @@ mod tests {
         assert!(!view.should_render_post_scan_notices_for(false));
         assert_eq!(view.stored_scan_id_for_post_scan_notices(false), None);
         assert!(!view.should_render_post_scan_notices());
+    }
+
+    #[test]
+    fn policy_failure_keeps_scan_artifacts_exportable() {
+        let mut results = ScanResults::default();
+        results
+            .protocols
+            .push(new_protocol_result(Protocol::TLS12, true));
+        let post_processing = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: true,
+        };
+        let view = ScanCliView {
+            results: &results,
+            post_processing,
+        };
+
+        assert!(!view.should_skip_artifacts());
+        assert!(view.should_export_artifacts());
     }
 }

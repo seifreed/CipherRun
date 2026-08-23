@@ -257,6 +257,17 @@ impl Command for MassScanCommand {
             exporter.write_text_file(&json_file, &json, "JSON", ExportKind::Json)?;
         }
 
+        if exit.is_success()
+            && self.args.output.fail_on.is_some_and(|threshold| {
+                filtered_results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().ok())
+                    .any(|results| threshold.is_met_by(results))
+            })
+        {
+            return Ok(CommandExit::findings_failure());
+        }
+
         Ok(exit)
     }
 

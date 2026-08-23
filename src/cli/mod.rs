@@ -38,7 +38,7 @@ pub use fingerprint_args::FingerprintArgs;
 pub use http_args::HttpArgs;
 pub use monitoring_args::MonitoringArgs;
 pub use network_args::{DEFAULT_MAX_PARALLEL, NetworkArgs};
-pub use output_args::OutputArgs;
+pub use output_args::{FailOnSeverity, OutputArgs};
 pub use scan_args::ScanArgs;
 pub use starttls_args::StarttlsArgs;
 pub use subcommands::CipherRunSubcommand;

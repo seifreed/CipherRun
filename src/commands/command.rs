@@ -11,12 +11,24 @@ pub struct CommandExit {
 }
 
 impl CommandExit {
+    pub const OPERATIONAL_FAILURE: i32 = 1;
+    pub const FINDINGS_FAILURE: i32 = 2;
+    pub const POLICY_FAILURE: i32 = 3;
+
     pub const fn success() -> Self {
         Self { code: 0 }
     }
 
     pub const fn failure(code: i32) -> Self {
         Self { code }
+    }
+
+    pub const fn findings_failure() -> Self {
+        Self::failure(Self::FINDINGS_FAILURE)
+    }
+
+    pub const fn policy_failure() -> Self {
+        Self::failure(Self::POLICY_FAILURE)
     }
 
     pub const fn code(self) -> i32 {
@@ -30,7 +42,7 @@ impl CommandExit {
 
 pub(crate) fn exit_for_result_list<T, U>(results: &[(T, Result<U>)]) -> CommandExit {
     if results.iter().any(|(_, result)| result.is_err()) {
-        CommandExit::failure(1)
+        CommandExit::failure(CommandExit::OPERATIONAL_FAILURE)
     } else {
         CommandExit::success()
     }
@@ -107,5 +119,13 @@ mod tests {
         ];
 
         assert_eq!(exit_for_result_list(&results).code(), 1);
+    }
+
+    #[test]
+    fn automation_exit_codes_are_stable() {
+        assert_eq!(CommandExit::success().code(), 0);
+        assert_eq!(CommandExit::OPERATIONAL_FAILURE, 1);
+        assert_eq!(CommandExit::findings_failure().code(), 2);
+        assert_eq!(CommandExit::policy_failure().code(), 3);
     }
 }

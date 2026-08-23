@@ -127,6 +127,10 @@ cipherrun --html report.html example.com
 
 # CI artifacts
 cipherrun --sarif results.sarif --junit results.junit.xml example.com
+
+# CI failure thresholds
+cipherrun --fail-on high example.com
+cipherrun --policy policy.yaml --fail-on-policy example.com
 ```
 
 ### STARTTLS Examples
@@ -170,6 +174,10 @@ Criterion benchmarks live in `benches/`, and `cargo-fuzz` targets plus seed corp
 ```
 Terminal, JSON, CSV, HTML, XML, SARIF 2.1.0, JUnit XML
 ```
+
+Exit codes are stable for automation: `0` success, `1` operational/partial-scan
+failure, `2` confirmed finding at the `--fail-on` threshold, and `3` failed
+policy or mapped compliance checks.
 
 ---
 
