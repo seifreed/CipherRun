@@ -84,6 +84,11 @@ export CIPHERRUN_API_CONFIG="$PWD/api.toml"
 docker compose -f compose.production.yml up --build
 ```
 
+The bootstrap command writes only a SHA-256 credential hash to `api.toml` and
+places the one-time plaintext token in `api.token`; both files are created with
+owner-only permissions and existing files are never overwritten. Move the token
+to your secret manager and remove the local token file after enrollment.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash

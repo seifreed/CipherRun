@@ -21,8 +21,14 @@ pub struct ApiConfig {
     /// Maximum concurrent scans
     pub max_concurrent_scans: usize,
 
-    /// API keys (key -> permission level)
+    /// Plaintext API keys for programmatic embedding and tests only.
+    /// This field is never read from or written to configuration files.
+    #[serde(skip)]
     pub api_keys: HashMap<String, Permission>,
+
+    /// Hashed credentials loaded from configuration files.
+    #[serde(default)]
+    pub credentials: Vec<ApiCredential>,
 
     /// Enable CORS
     pub enable_cors: bool,
@@ -76,6 +82,46 @@ pub struct AuthenticatedKey {
     pub permission: Permission,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiCredential {
+    pub key_id: String,
+    pub secret_hash: String,
+    pub principal_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    pub permission: Permission,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default = "default_true")]
+    pub active: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+impl ApiCredential {
+    pub fn from_secret(
+        key_id: String,
+        secret: &str,
+        principal_id: String,
+        tenant_id: Option<String>,
+        permission: Permission,
+    ) -> Self {
+        Self {
+            key_id,
+            secret_hash: hash_secret(secret),
+            principal_id,
+            tenant_id,
+            permission,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            active: true,
+        }
+    }
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         let mut api_keys = HashMap::new();
@@ -110,6 +156,7 @@ impl Default for ApiConfig {
             port: 8080,
             max_concurrent_scans: 10,
             api_keys,
+            credentials: Vec::new(),
             enable_cors: false, // SECURITY: Disable CORS by default
             allowed_origins: Vec::new(),
             rate_limit_per_minute: 100,
@@ -180,30 +227,54 @@ impl ApiConfig {
     }
 
     /// Create example config file
-    pub fn create_example(path: impl AsRef<Path>) -> Result<()> {
+    pub fn create_example(path: impl AsRef<Path>) -> Result<PathBuf> {
         let path = path.as_ref();
-        let config = Self::default();
+        let token_path = path.with_extension("token");
+        let secret = generate_secure_api_key();
+        let mut config = Self::default();
+        config.api_keys.clear();
+        config.credentials = vec![ApiCredential::from_secret(
+            "bootstrap-admin".to_string(),
+            &secret,
+            "bootstrap-admin".to_string(),
+            Some("default".to_string()),
+            Permission::Admin,
+        )];
         let toml = toml::to_string_pretty(&config).map_err(|e| TlsError::ConfigError {
             message: format!("Failed to serialize API config: {e}"),
         })?;
 
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+        let mut token_file = open_owner_only_new(&token_path)?;
+        let mut config_file = match open_owner_only_new(path) {
+            Ok(file) => file,
+            Err(error) => {
+                let _ = std::fs::remove_file(&token_path);
+                return Err(error);
+            }
+        };
+
+        let write_result = (|| {
+            config_file
+                .write_all(toml.as_bytes())
+                .map_err(|source| TlsError::FileSystemError {
+                    path: path.display().to_string(),
+                    source,
+                })?;
+            token_file
+                .write_all(secret.as_bytes())
+                .map_err(|source| TlsError::FileSystemError {
+                    path: token_path.display().to_string(),
+                    source,
+                })
+        })();
+
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&token_path);
+            return Err(error);
         }
-        let mut file = options.open(path).map_err(|e| TlsError::FileSystemError {
-            path: path.display().to_string(),
-            source: e,
-        })?;
-        file.write_all(toml.as_bytes())
-            .map_err(|e| TlsError::FileSystemError {
-                path: path.display().to_string(),
-                source: e,
-            })?;
-        Ok(())
+
+        Ok(token_path)
     }
 
     /// Validate API key and return permission level
@@ -231,7 +302,7 @@ impl ApiConfig {
 
         // Quick reject if key length doesn't match any valid key
         // This is the only length-based optimization that doesn't leak key content
-        if !valid_lengths.contains(&key.len()) {
+        if self.credentials.is_empty() && !valid_lengths.contains(&key.len()) {
             return None;
         }
 
@@ -256,15 +327,38 @@ impl ApiConfig {
             }
         }
 
-        result.map(|permission| {
+        if let Some(permission) = result {
             let key_id = key_id(key);
-            AuthenticatedKey {
+            return Some(AuthenticatedKey {
                 principal_id: key_id.clone(),
                 key_id,
                 tenant_id: None,
                 permission,
+            });
+        }
+
+        let presented_hash = hash_secret(key);
+        let now = chrono::Utc::now();
+        let mut authenticated = None;
+        for credential in &self.credentials {
+            let hashes_match: bool = presented_hash
+                .as_bytes()
+                .ct_eq(credential.secret_hash.as_bytes())
+                .into();
+            let usable = credential.active
+                && credential
+                    .expires_at
+                    .is_none_or(|expires_at| expires_at > now);
+            if hashes_match && usable {
+                authenticated = Some(AuthenticatedKey {
+                    key_id: credential.key_id.clone(),
+                    principal_id: credential.principal_id.clone(),
+                    tenant_id: credential.tenant_id.clone(),
+                    permission: credential.permission,
+                });
             }
-        })
+        }
+        authenticated
     }
 
     /// Add API key
@@ -313,15 +407,40 @@ impl ApiConfig {
                 message: "ws_ping_interval_seconds must be greater than 0".to_string(),
             });
         }
-        if self.api_keys.is_empty() {
+        if self.api_keys.is_empty() && self.credentials.is_empty() {
             return Err(TlsError::ConfigError {
-                message: "api_keys must contain at least one key".to_string(),
+                message: "credentials must contain at least one key".to_string(),
             });
         }
         if self.api_keys.keys().any(|key| key.is_empty()) {
             return Err(TlsError::ConfigError {
                 message: "api_keys must not contain empty keys".to_string(),
             });
+        }
+        let mut key_ids = std::collections::HashSet::new();
+        for credential in &self.credentials {
+            if credential.key_id.is_empty() || credential.principal_id.is_empty() {
+                return Err(TlsError::ConfigError {
+                    message: "credential key_id and principal_id must not be empty".to_string(),
+                });
+            }
+            if !key_ids.insert(&credential.key_id) {
+                return Err(TlsError::ConfigError {
+                    message: format!("duplicate credential key_id: {}", credential.key_id),
+                });
+            }
+            validate_secret_hash(&credential.secret_hash)?;
+            if credential
+                .expires_at
+                .is_some_and(|expires_at| expires_at <= credential.created_at)
+            {
+                return Err(TlsError::ConfigError {
+                    message: format!(
+                        "credential {} expires_at must be after created_at",
+                        credential.key_id
+                    ),
+                });
+            }
         }
         if self.enable_cors && self.allowed_origins.is_empty() {
             return Err(TlsError::ConfigError {
@@ -336,6 +455,41 @@ impl ApiConfig {
 fn key_id(secret: &str) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, secret.as_bytes());
     format!("key-{}", hex::encode(&digest.as_ref()[..12]))
+}
+
+fn hash_secret(secret: &str) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, secret.as_bytes());
+    format!("sha256:{}", hex::encode(digest.as_ref()))
+}
+
+fn validate_secret_hash(hash: &str) -> Result<()> {
+    let Some(encoded) = hash.strip_prefix("sha256:") else {
+        return Err(TlsError::ConfigError {
+            message: "credential secret_hash must use the sha256:<hex> format".to_string(),
+        });
+    };
+    if encoded.len() != 64 || hex::decode(encoded).is_err() {
+        return Err(TlsError::ConfigError {
+            message: "credential secret_hash must contain a 32-byte SHA-256 digest".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn open_owner_only_new(path: &Path) -> Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|source| TlsError::FileSystemError {
+            path: path.display().to_string(),
+            source,
+        })
 }
 
 #[cfg(test)]
@@ -403,9 +557,19 @@ mod tests {
     fn test_create_example_writes_file() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let path = dir.path().join("api.toml");
-        ApiConfig::create_example(&path).expect("write should succeed");
+        let token_path = ApiConfig::create_example(&path).expect("write should succeed");
         let contents = std::fs::read_to_string(&path).expect("read should succeed");
+        let token = std::fs::read_to_string(token_path).expect("token should be readable");
         assert!(contents.contains("host"));
+        assert!(contents.contains("secret_hash"));
+        assert!(!contents.contains(&token));
+
+        let loaded = ApiConfig::from_file(&path).expect("generated config should load");
+        let authenticated = loaded
+            .authenticate_key(&token)
+            .expect("bootstrap token should authenticate");
+        assert_eq!(authenticated.key_id, "bootstrap-admin");
+        assert_eq!(authenticated.tenant_id.as_deref(), Some("default"));
     }
 
     #[test]
@@ -428,13 +592,42 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let path = dir.path().join("api.toml");
-        ApiConfig::create_example(&path).expect("write should succeed");
+        let token_path = ApiConfig::create_example(&path).expect("write should succeed");
 
         let mode = std::fs::metadata(path)
             .expect("config metadata should exist")
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+        let token_mode = std::fs::metadata(token_path)
+            .expect("token metadata should exist")
+            .permissions()
+            .mode();
+        assert_eq!(token_mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn hashed_credentials_enforce_active_state_and_expiry() {
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        let mut credential = ApiCredential::from_secret(
+            "key-1".to_string(),
+            "secret",
+            "principal-1".to_string(),
+            Some("tenant-1".to_string()),
+            Permission::User,
+        );
+        config.credentials.push(credential.clone());
+        assert!(config.authenticate_key("secret").is_some());
+
+        credential.active = false;
+        config.credentials = vec![credential.clone()];
+        assert!(config.authenticate_key("secret").is_none());
+
+        credential.active = true;
+        credential.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+        config.credentials = vec![credential];
+        assert!(config.authenticate_key("secret").is_none());
     }
 
     #[test]
@@ -461,6 +654,22 @@ enable_swagger = true
 
         let err = ApiConfig::from_file(&path).expect_err("invalid config should fail at load");
         assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn config_file_rejects_legacy_plaintext_api_keys() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        let mut serialized = toml::to_string_pretty(&config).expect("config should serialize");
+        serialized.push_str("\napi_keys = { plaintext = \"Admin\" }\n");
+        std::fs::write(&path, serialized).expect("fixture should be written");
+
+        let error = ApiConfig::from_file(&path)
+            .expect_err("plaintext file credentials must not be accepted");
+
+        assert!(error.to_string().contains("credentials"));
     }
 
     #[test]

@@ -15,7 +15,7 @@ pub(crate) mod test_support;
 pub mod ws;
 
 // Re-export commonly used types
-pub use config::{ApiConfig, Permission};
+pub use config::{ApiConfig, ApiCredential, Permission};
 pub use server::ApiServer;
 pub use state::AppState;
 

@@ -89,11 +89,12 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
     // Handle --api-config-example (generate API config example and exit)
     if let Some(config_path) = &args.api_server.config_example {
         use cipherrun::api::ApiConfig;
-        ApiConfig::create_example(config_path)?;
+        let token_path = ApiConfig::create_example(config_path)?;
         println!(
             "✓ Example API configuration saved to: {}",
             config_path.display()
         );
+        println!("✓ Bootstrap token saved to: {}", token_path.display());
         return Ok(CommandExit::success());
     }
 

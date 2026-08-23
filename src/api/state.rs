@@ -501,7 +501,7 @@ mod tests {
         let mut config = ApiConfig::default();
         config.api_keys.clear();
 
-        assert_state_config_rejected(config, "api_keys");
+        assert_state_config_rejected(config, "credentials");
     }
 
     #[test]

@@ -126,7 +126,6 @@ mod tests {
 host = "127.0.0.1"
 port = 8080
 max_concurrent_scans = 0
-api_keys = { "test-key" = "User" }
 enable_cors = false
 rate_limit_per_minute = 100
 max_body_size = 1048576
@@ -134,6 +133,15 @@ request_timeout_seconds = 300
 ws_ping_interval_seconds = 30
 job_queue_capacity = 1000
 enable_swagger = true
+
+[[credentials]]
+key_id = "test-key"
+secret_hash = "sha256:62af8704764faf8ea82fc61ce9c4c3908b6cb97d463a634e9e587d7c885db0ef"
+principal_id = "test-user"
+tenant_id = "test-tenant"
+permission = "User"
+created_at = "2026-01-01T00:00:00Z"
+active = true
 "#;
 
     fn write_invalid_api_config(dir: &tempfile::TempDir) -> std::path::PathBuf {
