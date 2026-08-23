@@ -1,4 +1,5 @@
 use super::{ScannerFormatter, VulnerabilityResult};
+use crate::vulnerabilities::FindingStatus;
 use colored::Colorize;
 use std::collections::HashMap;
 
@@ -31,25 +32,37 @@ impl<'a> ScannerFormatter<'a> {
         println!("{}", "=".repeat(self.expand_width(50)));
 
         let mut vulnerable_count = 0;
+        let mut potential_count = 0;
         let mut inconclusive_count = 0;
         let mut by_severity: HashMap<crate::vulnerabilities::Severity, usize> = HashMap::new();
         let show_inconclusive_inline = self.show_warnings_inline();
 
         for result in results {
-            if result.vulnerable {
-                vulnerable_count += 1;
-                *by_severity.entry(result.severity).or_insert(0) += 1;
-                self.display_single_vulnerability(result);
-            } else if result.inconclusive {
-                inconclusive_count += 1;
-                if show_inconclusive_inline {
+            match result.status() {
+                FindingStatus::ConfirmedVulnerable => {
+                    vulnerable_count += 1;
+                    *by_severity.entry(result.severity).or_insert(0) += 1;
                     self.display_single_vulnerability(result);
                 }
+                FindingStatus::PotentialExposure => {
+                    potential_count += 1;
+                    self.display_single_vulnerability(result);
+                }
+                FindingStatus::Inconclusive => {
+                    inconclusive_count += 1;
+                    if show_inconclusive_inline {
+                        self.display_single_vulnerability(result);
+                    }
+                }
+                FindingStatus::NotVulnerable
+                | FindingStatus::NotApplicable
+                | FindingStatus::NotExecuted => {}
             }
         }
 
         self.display_vulnerability_summary(
             vulnerable_count,
+            potential_count,
             inconclusive_count,
             &by_severity,
             show_inconclusive_inline,
@@ -58,10 +71,10 @@ impl<'a> ScannerFormatter<'a> {
 
     /// Display a single vulnerability result
     fn display_single_vulnerability(&self, result: &VulnerabilityResult) {
-        let marker = if result.vulnerable {
-            "X".red().bold().to_string()
-        } else {
-            "?".yellow().bold().to_string()
+        let marker = match result.status() {
+            FindingStatus::ConfirmedVulnerable => "X".red().bold().to_string(),
+            FindingStatus::PotentialExposure => "!".yellow().bold().to_string(),
+            _ => "?".yellow().bold().to_string(),
         };
         println!("\n{} {:?}", marker, result.vuln_type);
         println!("  Severity: {}", result.severity.colored_display());
@@ -87,6 +100,7 @@ impl<'a> ScannerFormatter<'a> {
     fn display_vulnerability_summary(
         &self,
         vulnerable_count: usize,
+        potential_count: usize,
         inconclusive_count: usize,
         by_severity: &HashMap<crate::vulnerabilities::Severity, usize>,
         show_inconclusive_inline: bool,
@@ -94,9 +108,13 @@ impl<'a> ScannerFormatter<'a> {
         use crate::vulnerabilities::Severity;
 
         println!("\n{}", "=".repeat(self.expand_width(50)));
-        if vulnerable_count == 0 && inconclusive_count == 0 {
+        if vulnerable_count == 0 && potential_count == 0 && inconclusive_count == 0 {
             println!("{}", "Y No vulnerabilities found!".green().bold());
-        } else if vulnerable_count == 0 && inconclusive_count > 0 && !show_inconclusive_inline {
+        } else if vulnerable_count == 0
+            && potential_count == 0
+            && inconclusive_count > 0
+            && !show_inconclusive_inline
+        {
             println!("{}", "? No confirmed vulnerabilities found".yellow().bold());
         } else {
             if vulnerable_count > 0 {
@@ -104,6 +122,13 @@ impl<'a> ScannerFormatter<'a> {
                     "{} {} vulnerability(ies) found",
                     "!".red().bold(),
                     vulnerable_count.to_string().red().bold()
+                );
+            }
+            if potential_count > 0 {
+                println!(
+                    "{} {} potential exposure(s) require review",
+                    "!".yellow().bold(),
+                    potential_count.to_string().yellow().bold()
                 );
             }
             if inconclusive_count > 0 && show_inconclusive_inline {

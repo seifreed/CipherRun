@@ -304,10 +304,22 @@ fn write_vulnerabilities_block(
     xml.push_str("  <vulnerabilities>\n");
     for vuln in vulnerabilities {
         xml.push_str("    <vulnerability>\n");
+        xml.push_str(&format!(
+            "      <finding_id>{}</finding_id>\n",
+            vuln.finding_id()
+        ));
         xml.push_str(&format!("      <type>{:?}</type>\n", vuln.vuln_type));
         xml.push_str(&format!(
             "      <status>{}</status>\n",
             escape_xml(vuln.status_label())
+        ));
+        xml.push_str(&format!(
+            "      <detection_method>{:?}</detection_method>\n",
+            vuln.detection_method()
+        ));
+        xml.push_str(&format!(
+            "      <confidence>{:?}</confidence>\n",
+            vuln.confidence()
         ));
         xml.push_str(&format!(
             "      <vulnerable>{}</vulnerable>\n",

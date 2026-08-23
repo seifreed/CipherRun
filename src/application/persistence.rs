@@ -156,7 +156,7 @@ impl PersistedScan {
         let vulnerabilities = results
             .vulnerabilities
             .iter()
-            .filter(|v| v.vulnerable)
+            .filter(|v| v.status() == crate::vulnerabilities::FindingStatus::ConfirmedVulnerable)
             .map(|v| PersistedVulnerability {
                 vulnerability_type: format!("{:?}", v.vuln_type),
                 severity: match v.severity {
@@ -332,6 +332,27 @@ mod tests {
         assert_eq!(persisted.target_port, 443);
         assert_eq!(persisted.scan_duration_ms, 123);
         assert!(persisted.revocation.is_none());
+    }
+
+    #[test]
+    fn legacy_persistence_does_not_promote_potential_exposure() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::BREACH,
+                vulnerable: true,
+                inconclusive: true,
+                details: "BREACH prerequisites observed".to_string(),
+                cve: Some("CVE-2013-3587".to_string()),
+                cwe: Some("CWE-200".to_string()),
+                severity: crate::vulnerabilities::Severity::Medium,
+            }],
+            ..Default::default()
+        };
+
+        let persisted =
+            PersistedScan::from_scan_results(&results).expect("persistence conversion succeeds");
+        assert!(persisted.vulnerabilities.is_empty());
     }
 
     #[test]

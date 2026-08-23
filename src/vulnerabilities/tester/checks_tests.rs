@@ -389,8 +389,8 @@ fn vulnerability_result_status_label_vulnerable() {
         cwe: None,
         severity: Severity::Critical,
     };
-    assert_eq!(result.status_label(), "Vulnerable");
-    assert_eq!(result.status_csv_value(), "vulnerable");
+    assert_eq!(result.status_label(), "Confirmed Vulnerable");
+    assert_eq!(result.status_csv_value(), "confirmed_vulnerable");
 }
 
 #[test]

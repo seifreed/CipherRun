@@ -98,13 +98,17 @@ const HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
                     <tr>
                         <td>{{vuln_type}}</td>
                         <td>
-                            {{#if vulnerable}}
+                            {{#if confirmed}}
                                 <span class="status-fail">VULNERABLE</span>
                             {{else}}
-                                {{#if inconclusive}}
-                                    <span class="status-warn">INCONCLUSIVE</span>
+                                {{#if potential}}
+                                    <span class="status-warn">POTENTIAL EXPOSURE</span>
                                 {{else}}
-                                    <span class="status-success">Not Vulnerable</span>
+                                    {{#if inconclusive}}
+                                        <span class="status-warn">INCONCLUSIVE</span>
+                                    {{else}}
+                                        <span class="status-success">{{status}}</span>
+                                    {{/if}}
                                 {{/if}}
                             {{/if}}
                         </td>
@@ -248,7 +252,13 @@ pub fn generate_html_report(results: &ScanResults) -> Result<String> {
             ),
         })).collect::<Vec<_>>(),
         "vulnerabilities": results.vulnerabilities.iter().map(|v| json!({
+            "finding_id": v.finding_id(),
             "vuln_type": format!("{:?}", v.vuln_type),
+            "status": v.status_csv_value(),
+            "confirmed": v.status() == crate::vulnerabilities::FindingStatus::ConfirmedVulnerable,
+            "potential": v.status() == crate::vulnerabilities::FindingStatus::PotentialExposure,
+            "detection_method": v.detection_method(),
+            "confidence": v.confidence(),
             "vulnerable": v.vulnerable,
             "inconclusive": v.inconclusive,
             "severity": format!("{:?}", v.severity).to_lowercase(),
@@ -556,6 +566,26 @@ mod tests {
         assert!(html.contains("VULNERABLE"));
         assert!(html.contains("severity-high"));
         assert!(html.contains("Test detail"));
+    }
+
+    #[test]
+    fn test_html_distinguishes_potential_exposure() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::BREACH,
+                vulnerable: true,
+                inconclusive: true,
+                details: "BREACH prerequisites observed".to_string(),
+                cve: Some("CVE-2013-3587".to_string()),
+                cwe: Some("CWE-200".to_string()),
+                severity: Severity::Medium,
+            }],
+            ..scan_results()
+        };
+
+        let html = generate_html_report(&results).expect("test assertion should succeed");
+        assert!(html.contains("POTENTIAL EXPOSURE"));
+        assert!(!html.contains(">VULNERABLE<"));
     }
 
     #[test]

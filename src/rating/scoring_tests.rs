@@ -206,44 +206,40 @@ fn test_user_reported_issue_fix() {
 }
 
 #[test]
-fn test_inconclusive_vulnerability_does_not_penalize_grade() {
-    // A vulnerability the scanner could not confirm (inconclusive) is surfaced
-    // in the report but must not tank the grade on unconfirmed evidence.
+fn test_potential_exposure_does_not_penalize_grade() {
+    // A potential exposure is surfaced in the report but must not tank the
+    // grade without confirmed vulnerable behavior.
     let protocols_with_tls13 = vec![
         protocol_result(Protocol::TLS12, false, 10),
         protocol_result(Protocol::TLS13, true, 5),
     ];
     let ciphers = HashMap::new();
 
-    let inconclusive_critical = vec![crate::vulnerabilities::VulnerabilityResult {
+    let potential_critical = vec![crate::vulnerabilities::VulnerabilityResult {
         vuln_type: crate::vulnerabilities::VulnerabilityType::ROBOT,
         vulnerable: true,
         inconclusive: true,
-        details: "Timing signal below noise floor — unconfirmed".to_string(),
+        details: "Timing signal below noise floor - potential exposure".to_string(),
         cve: None,
         cwe: None,
         severity: crate::vulnerabilities::Severity::Critical,
     }];
 
     let baseline = RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &[]);
-    let with_inconclusive = RatingCalculator::calculate(
-        &protocols_with_tls13,
-        &ciphers,
-        None,
-        &inconclusive_critical,
-    );
+    let with_potential =
+        RatingCalculator::calculate(&protocols_with_tls13, &ciphers, None, &potential_critical);
 
     assert_eq!(
-        with_inconclusive.score, baseline.score,
-        "Inconclusive vulnerability must not change the score"
+        with_potential.score, baseline.score,
+        "Potential exposure must not change the score"
     );
     assert_eq!(
-        with_inconclusive.grade, baseline.grade,
-        "Inconclusive vulnerability must not change the grade"
+        with_potential.grade, baseline.grade,
+        "Potential exposure must not change the grade"
     );
     assert!(
-        with_inconclusive.warnings.is_empty(),
-        "Inconclusive vulnerability must not emit a grade-impact warning"
+        with_potential.warnings.is_empty(),
+        "Potential exposure must not emit a grade-impact warning"
     );
 }
 

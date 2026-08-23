@@ -445,10 +445,11 @@ impl VulnerabilityScanner {
                 self.starttls_server_mode,
             );
         let result = tester.test().await?;
+        let potential_exposure = matches!(result.status, RobotStatus::WeakOracle);
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::ROBOT,
-            vulnerable: result.vulnerable,
+            vulnerable: result.vulnerable || potential_exposure,
             inconclusive: matches!(
                 result.status,
                 RobotStatus::Inconclusive | RobotStatus::WeakOracle
@@ -458,6 +459,8 @@ impl VulnerabilityScanner {
             cwe: Some("CWE-203".to_string()),
             severity: if result.vulnerable {
                 Severity::High
+            } else if potential_exposure {
+                Severity::Medium
             } else {
                 Severity::Info
             },
@@ -472,7 +475,7 @@ impl VulnerabilityScanner {
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::BREACH,
-            vulnerable: result.vulnerable,
+            vulnerable: result.potential_exposure,
             inconclusive: result.inconclusive || result.potential_exposure,
             details: result.details,
             cve: Some("CVE-2013-3587".to_string()),
@@ -583,7 +586,7 @@ impl VulnerabilityScanner {
 
         Ok(VulnerabilityResult {
             vuln_type: VulnerabilityType::LUCKY13,
-            vulnerable: result.vulnerable,
+            vulnerable: result.vulnerable || result.partially_vulnerable,
             inconclusive: result.inconclusive || result.partially_vulnerable,
             details: result.details,
             cve: Some("CVE-2013-0169".to_string()),

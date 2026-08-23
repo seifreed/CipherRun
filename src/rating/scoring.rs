@@ -397,11 +397,7 @@ impl RatingCalculator {
             // the grade on unconfirmed evidence: doing so contradicts its
             // "Inconclusive" status and re-introduces the timing-jitter false
             // positives the detectors deliberately downgrade to inconclusive.
-            if vuln.inconclusive {
-                continue;
-            }
-
-            if vuln.vulnerable {
+            if vuln.status() == crate::vulnerabilities::FindingStatus::ConfirmedVulnerable {
                 use crate::vulnerabilities::Severity;
                 let (deduction, warning) = match vuln.severity {
                     Severity::Critical => {

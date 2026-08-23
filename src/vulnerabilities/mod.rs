@@ -8,6 +8,62 @@ pub use aggregation::merge_vulnerability_result_with_error;
 
 use serde::{Deserialize, Serialize};
 
+/// Explicit verdict for a published security finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingStatus {
+    ConfirmedVulnerable,
+    PotentialExposure,
+    NotVulnerable,
+    Inconclusive,
+    NotApplicable,
+    NotExecuted,
+}
+
+impl FindingStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ConfirmedVulnerable => "Confirmed Vulnerable",
+            Self::PotentialExposure => "Potential Exposure",
+            Self::NotVulnerable => "Not Vulnerable",
+            Self::Inconclusive => "Inconclusive",
+            Self::NotApplicable => "Not Applicable",
+            Self::NotExecuted => "Not Executed",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConfirmedVulnerable => "confirmed_vulnerable",
+            Self::PotentialExposure => "potential_exposure",
+            Self::NotVulnerable => "not_vulnerable",
+            Self::Inconclusive => "inconclusive",
+            Self::NotApplicable => "not_applicable",
+            Self::NotExecuted => "not_executed",
+        }
+    }
+}
+
+/// How CipherRun obtained a finding verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionMethod {
+    ActiveProbe,
+    ProtocolNegotiation,
+    ConfigurationInference,
+    TimingAnalysis,
+    Heuristic,
+}
+
+/// Confidence in a finding verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingConfidence {
+    Low,
+    Medium,
+    High,
+}
+
 /// Vulnerability types ordered by severity (most critical first)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VulnerabilityType {
@@ -98,24 +154,98 @@ pub struct VulnerabilityResult {
 }
 
 impl VulnerabilityResult {
-    pub fn status_label(&self) -> &'static str {
-        if self.vulnerable {
-            "Vulnerable"
-        } else if self.inconclusive {
-            "Inconclusive"
-        } else {
-            "Not Vulnerable"
+    /// Returns the normalized finding verdict while legacy boolean producers
+    /// are migrated to the explicit model.
+    pub const fn status(&self) -> FindingStatus {
+        match (self.vulnerable, self.inconclusive) {
+            (true, false) => FindingStatus::ConfirmedVulnerable,
+            (true, true) => FindingStatus::PotentialExposure,
+            (false, true) => FindingStatus::Inconclusive,
+            (false, false) if matches!(self.vuln_type, VulnerabilityType::GREASE) => {
+                FindingStatus::NotApplicable
+            }
+            (false, false) => FindingStatus::NotVulnerable,
         }
     }
 
-    pub fn status_csv_value(&self) -> &'static str {
-        if self.vulnerable {
-            "vulnerable"
-        } else if self.inconclusive {
-            "inconclusive"
-        } else {
-            "not_vulnerable"
+    pub const fn finding_id(&self) -> &'static str {
+        match self.vuln_type {
+            VulnerabilityType::Heartbleed => "CR-TLS-HEARTBLEED-001",
+            VulnerabilityType::CCSInjection => "CR-TLS-CCS-INJECTION-001",
+            VulnerabilityType::Ticketbleed => "CR-TLS-TICKETBLEED-001",
+            VulnerabilityType::ROBOT => "CR-TLS-ROBOT-001",
+            VulnerabilityType::POODLE => "CR-TLS-POODLE-001",
+            VulnerabilityType::POODLEtls => "CR-TLS-POODLE-TLS-001",
+            VulnerabilityType::BEAST => "CR-TLS-BEAST-001",
+            VulnerabilityType::CRIME => "CR-TLS-CRIME-001",
+            VulnerabilityType::BREACH => "CR-TLS-BREACH-001",
+            VulnerabilityType::SWEET32 => "CR-TLS-SWEET32-001",
+            VulnerabilityType::FREAK => "CR-TLS-FREAK-001",
+            VulnerabilityType::LOGJAM => "CR-TLS-LOGJAM-001",
+            VulnerabilityType::DROWN => "CR-TLS-DROWN-001",
+            VulnerabilityType::LUCKY13 => "CR-TLS-LUCKY13-001",
+            VulnerabilityType::Renegotiation => "CR-TLS-RENEGOTIATION-001",
+            VulnerabilityType::TLSFallback => "CR-TLS-FALLBACK-SCSV-001",
+            VulnerabilityType::RC4 => "CR-TLS-RC4-001",
+            VulnerabilityType::NullCipher => "CR-TLS-NULL-CIPHER-001",
+            VulnerabilityType::Winshock => "CR-TLS-WINSHOCK-001",
+            VulnerabilityType::StarttlsInjection => "CR-TLS-STARTTLS-INJECTION-001",
+            VulnerabilityType::Opossum => "CR-TLS-OPOSSUM-001",
+            VulnerabilityType::EarlyDataReplay => "CR-TLS-EARLY-DATA-REPLAY-001",
+            VulnerabilityType::PaddingOracle2016 => "CR-TLS-PADDING-ORACLE-2016-001",
+            VulnerabilityType::ZombiePoodle => "CR-TLS-ZOMBIE-POODLE-001",
+            VulnerabilityType::GoldenDoodle => "CR-TLS-GOLDEN-DOODLE-001",
+            VulnerabilityType::SleepingPoodle => "CR-TLS-SLEEPING-POODLE-001",
+            VulnerabilityType::OpenSsl0Length => "CR-TLS-OPENSSL-ZERO-LENGTH-001",
+            VulnerabilityType::GREASE => "CR-TLS-GREASE-INTOLERANCE-001",
         }
+    }
+
+    pub const fn detection_method(&self) -> DetectionMethod {
+        match self.vuln_type {
+            VulnerabilityType::LUCKY13 | VulnerabilityType::SleepingPoodle => {
+                DetectionMethod::TimingAnalysis
+            }
+            VulnerabilityType::BREACH => DetectionMethod::Heuristic,
+            VulnerabilityType::BEAST
+            | VulnerabilityType::CRIME
+            | VulnerabilityType::SWEET32
+            | VulnerabilityType::FREAK
+            | VulnerabilityType::LOGJAM
+            | VulnerabilityType::Renegotiation
+            | VulnerabilityType::TLSFallback
+            | VulnerabilityType::RC4
+            | VulnerabilityType::NullCipher
+            | VulnerabilityType::GREASE => DetectionMethod::ProtocolNegotiation,
+            VulnerabilityType::EarlyDataReplay => DetectionMethod::ConfigurationInference,
+            _ => DetectionMethod::ActiveProbe,
+        }
+    }
+
+    pub const fn confidence(&self) -> FindingConfidence {
+        match self.status() {
+            FindingStatus::Inconclusive | FindingStatus::NotExecuted => FindingConfidence::Low,
+            FindingStatus::PotentialExposure => FindingConfidence::Medium,
+            FindingStatus::ConfirmedVulnerable | FindingStatus::NotVulnerable => {
+                match self.detection_method() {
+                    DetectionMethod::ActiveProbe | DetectionMethod::ProtocolNegotiation => {
+                        FindingConfidence::High
+                    }
+                    DetectionMethod::ConfigurationInference
+                    | DetectionMethod::TimingAnalysis
+                    | DetectionMethod::Heuristic => FindingConfidence::Medium,
+                }
+            }
+            FindingStatus::NotApplicable => FindingConfidence::High,
+        }
+    }
+
+    pub fn status_label(&self) -> &'static str {
+        self.status().label()
+    }
+
+    pub fn status_csv_value(&self) -> &'static str {
+        self.status().as_str()
     }
 }
 
@@ -200,6 +330,25 @@ mod tests {
         let json = serde_json::to_string(&result).expect("test assertion should succeed");
         assert!(json.contains("Heartbleed"));
         assert!(json.contains("CVE-2014-0160"));
+    }
+
+    #[test]
+    fn finding_status_distinguishes_potential_exposure() {
+        let result = VulnerabilityResult {
+            vuln_type: VulnerabilityType::BREACH,
+            vulnerable: true,
+            inconclusive: true,
+            details: "prerequisites observed".to_string(),
+            cve: Some("CVE-2013-3587".to_string()),
+            cwe: Some("CWE-200".to_string()),
+            severity: Severity::Medium,
+        };
+
+        assert_eq!(result.status(), FindingStatus::PotentialExposure);
+        assert_eq!(result.status_csv_value(), "potential_exposure");
+        assert_eq!(result.finding_id(), "CR-TLS-BREACH-001");
+        assert_eq!(result.detection_method(), DetectionMethod::Heuristic);
+        assert_eq!(result.confidence(), FindingConfidence::Medium);
     }
 
     #[test]

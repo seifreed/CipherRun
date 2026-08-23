@@ -6,6 +6,14 @@ All notable changes to CipherRun are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Explicit finding statuses, detection methods, confidence levels, and stable finding IDs.
+
+### Changed
+
+- Potential BREACH, weak ROBOT, and partial Lucky13 results are distinct from confirmed vulnerabilities.
+
 ## [0.3.2] - 2026-08-23
 
 ### Added
