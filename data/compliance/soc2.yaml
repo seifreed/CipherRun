@@ -4,6 +4,15 @@ version: 2017
 description: Service Organization Control 2 - Trust Services Criteria for Security, Availability, and Confidentiality
 organization: American Institute of Certified Public Accountants (AICPA)
 effective_date: 2017-01-01
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: American Institute of Certified Public Accountants
+    document: 2017 Trust Services Criteria with Revised Points of Focus
+    version: "2022 revision"
+    publication_date: "2023-09-30"
+    url: https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: SOC2-CC6.1

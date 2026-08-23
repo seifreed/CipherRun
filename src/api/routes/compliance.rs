@@ -99,6 +99,18 @@ pub struct ComplianceCheckResponse {
     /// Framework version
     pub framework_version: String,
 
+    /// Independently versioned CipherRun rule pack
+    pub rule_pack_version: Option<String>,
+
+    /// SHA-256 of the exact loaded rule pack YAML
+    pub rule_pack_sha256: Option<String>,
+
+    /// Primary publication version mapped by this pack
+    pub source_version: Option<String>,
+
+    /// Primary publication URL mapped by this pack
+    pub source_url: Option<String>,
+
     /// Target evaluated
     pub target: String,
 

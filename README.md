@@ -160,6 +160,9 @@ cipherrun -t imap mail.example.com:143
 
 JSON output is versioned independently from the CLI. The canonical schema, compatibility policy, changelog, and fixtures are published in [`schemas/`](schemas/README.md).
 
+Bundled compliance mappings carry an independent rule-pack version, primary
+publication reference, review date, and runtime SHA-256 of the exact YAML.
+
 ---
 
 ## QA

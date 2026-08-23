@@ -10,11 +10,20 @@ pub fn present_compliance_report(
     report: &ComplianceReport,
     detailed: bool,
 ) -> ComplianceCheckResponse {
+    let rule_pack = crate::compliance::BuiltinFrameworkSource::metadata(&framework.id).ok();
     ComplianceCheckResponse {
         disclaimer: report.disclaimer.clone(),
         framework_id: framework.id.clone(),
         framework_name: framework.name.clone(),
         framework_version: framework.version.clone(),
+        rule_pack_version: rule_pack.as_ref().map(|metadata| metadata.version.clone()),
+        rule_pack_sha256: rule_pack
+            .as_ref()
+            .map(|metadata| metadata.content_sha256.clone()),
+        source_version: rule_pack
+            .as_ref()
+            .map(|metadata| metadata.source.version.clone()),
+        source_url: rule_pack.map(|metadata| metadata.source.url),
         target: report.target.clone(),
         status: compliance_status(report.overall_status).to_string(),
         summary: ComplianceSummary {

@@ -22,7 +22,7 @@ pub use framework::{ComplianceFramework, Requirement};
 pub use loader::FrameworkLoader;
 pub use reporter::Reporter;
 pub use rule::{Rule, RuleType};
-pub use source::BuiltinFrameworkSource;
+pub use source::{BuiltinFrameworkSource, RulePackMetadata, RulePackSource};
 
 pub const COMPLIANCE_DISCLAIMER: &str = "TLS posture checks mapped to selected technical controls. Passing these checks does not establish certification or full regulatory compliance.";
 

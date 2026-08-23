@@ -4,6 +4,15 @@ version: 1.0
 description: Health Insurance Portability and Accountability Act - Technical Safeguards for ePHI Transmission Security
 organization: U.S. Department of Health and Human Services (HHS)
 effective_date: 2003-04-21
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: U.S. Department of Health and Human Services
+    document: 45 CFR 164.312 - Technical safeguards
+    version: "current eCFR"
+    publication_date: "2003-02-20"
+    url: https://www.ecfr.gov/current/title-45/subtitle-A/subchapter-C/part-164/subpart-C/section-164.312
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: HIPAA-164.312-e-1

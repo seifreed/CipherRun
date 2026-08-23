@@ -106,6 +106,12 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
         for (id, description) in frameworks {
             println!("  {} - {}", id, description);
+            let metadata = BuiltinFrameworkSource::metadata(id)?;
+            println!(
+                "    rule pack {} | source {} | sha256 {}",
+                metadata.version, metadata.source.version, metadata.content_sha256
+            );
+            println!("    {}", metadata.source.url);
         }
 
         println!("\nUsage: cipherrun --compliance <FRAMEWORK_ID> <TARGET>");

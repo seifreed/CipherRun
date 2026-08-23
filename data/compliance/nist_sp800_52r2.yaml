@@ -4,6 +4,15 @@ version: 2.0
 description: Guidelines for the Selection, Configuration, and Use of Transport Layer Security (TLS) Implementations
 organization: National Institute of Standards and Technology (NIST)
 effective_date: 2019-08-01
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: National Institute of Standards and Technology
+    document: Guidelines for the Selection, Configuration, and Use of TLS Implementations
+    version: "SP 800-52 Rev. 2"
+    publication_date: "2019-08-29"
+    url: https://doi.org/10.6028/NIST.SP.800-52r2
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: NIST-3.1

@@ -4,6 +4,15 @@ version: "2024"
 description: Checks TLS endpoint readiness against NIST FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) post-quantum standards
 organization: NIST
 effective_date: "2024-08-13"
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: National Institute of Standards and Technology
+    document: FIPS 203 and FIPS 204 Post-Quantum Cryptography Standards
+    version: "FIPS 203/204 final"
+    publication_date: "2024-08-13"
+    url: https://csrc.nist.gov/pubs/fips/203/final
+    last_reviewed_at: "2026-08-23"
 requirements:
   - id: FIPS-PQC-1.1
     name: Prohibited — Standalone RSA Key Exchange

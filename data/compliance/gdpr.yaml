@@ -4,6 +4,15 @@ version: 1.0
 description: General Data Protection Regulation - Technical and Organizational Measures for Data Protection (Article 32)
 organization: European Union
 effective_date: 2018-05-25
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: European Union
+    document: Regulation (EU) 2016/679, Article 32
+    version: "2016/679"
+    publication_date: "2016-04-27"
+    url: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: GDPR-32-1-a

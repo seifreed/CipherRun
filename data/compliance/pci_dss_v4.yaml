@@ -4,6 +4,15 @@ version: 4.0.1
 description: Payment Card Industry Data Security Standard v4.0.1
 organization: PCI Security Standards Council
 effective_date: 2024-03-31
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: PCI Security Standards Council
+    document: Payment Card Industry Data Security Standard
+    version: "4.0.1"
+    publication_date: "2024-06-11"
+    url: https://www.pcisecuritystandards.org/document_library/
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: PCI-4.2.1

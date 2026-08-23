@@ -1,9 +1,18 @@
 id: nist-sp800-131a
-name: NIST SP 800-131A Rev 3 Cryptographic Algorithm Transitions
-version: "Rev3"
-description: Enforces NIST SP 800-131A Rev 3 algorithm transition requirements for TLS endpoints
+name: NIST SP 800-131A Rev 3 Initial Public Draft
+version: "Rev3 IPD"
+description: Maps the NIST SP 800-131A Rev 3 initial public draft transition guidance to TLS endpoint checks
 organization: NIST
-effective_date: "2024-01-01"
+effective_date: "2024-10-21"
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: National Institute of Standards and Technology
+    document: Transitioning the Use of Cryptographic Algorithms and Key Lengths
+    version: "SP 800-131A Rev. 3 Initial Public Draft"
+    publication_date: "2024-10-21"
+    url: https://doi.org/10.6028/NIST.SP.800-131Ar3.ipd
+    last_reviewed_at: "2026-08-23"
 requirements:
   - id: SP131A-1.1
     name: RSA Key Size Minimum 2048 bits

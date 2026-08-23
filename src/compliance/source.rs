@@ -1,20 +1,48 @@
 use crate::application::ComplianceFrameworkSource;
 use crate::compliance::framework::ComplianceFramework;
 use crate::compliance::loader::FrameworkLoader;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const MAX_FRAMEWORK_FILE_BYTES: u64 = 1024 * 1024;
 
 pub struct BuiltinFrameworkSource;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulePackSource {
+    pub organization: String,
+    pub document: String,
+    pub version: String,
+    pub publication_date: String,
+    pub url: String,
+    pub last_reviewed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RulePackMetadata {
+    pub version: String,
+    pub source: RulePackSource,
+    pub content_sha256: String,
+}
+
+#[derive(Deserialize)]
+struct RulePackHeader {
+    rule_pack: RulePackDeclaration,
+}
+
+#[derive(Deserialize)]
+struct RulePackDeclaration {
+    version: String,
+    source: RulePackSource,
+}
+
 impl BuiltinFrameworkSource {
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> crate::Result<ComplianceFramework> {
-        let path_ref = path.as_ref();
-        let size = std::fs::metadata(path_ref)
+    fn read_framework_file(path: &Path) -> crate::Result<String> {
+        let size = std::fs::metadata(path)
             .map_err(|e| {
                 crate::error::TlsError::Other(format!(
                     "Failed to inspect framework file '{}': {}",
-                    path_ref.display(),
+                    path.display(),
                     e
                 ))
             })?
@@ -23,26 +51,71 @@ impl BuiltinFrameworkSource {
             return Err(crate::error::TlsError::ConfigError {
                 message: format!(
                     "Framework file '{}' is too large: {} bytes (max {})",
-                    path_ref.display(),
+                    path.display(),
                     size,
                     MAX_FRAMEWORK_FILE_BYTES
                 ),
             });
         }
-
-        let content = std::fs::read_to_string(&path).map_err(|e| {
+        std::fs::read_to_string(path).map_err(|e| {
             crate::error::TlsError::Other(format!(
                 "Failed to read framework file '{}': {}",
-                path_ref.display(),
+                path.display(),
                 e
             ))
-        })?;
+        })
+    }
+
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> crate::Result<ComplianceFramework> {
+        let path_ref = path.as_ref();
+        let content = Self::read_framework_file(path_ref)?;
         FrameworkLoader::load_from_string(&content).map_err(|e| {
             crate::error::TlsError::Other(format!(
                 "Failed to parse framework YAML '{}': {}",
                 path_ref.display(),
                 e
             ))
+        })
+    }
+
+    pub fn metadata(framework_id: &str) -> crate::Result<RulePackMetadata> {
+        let filename = Self::builtin_filename(framework_id)?;
+        let data_path = format!("data/compliance/{filename}");
+        let content = if Path::new(&data_path).exists() {
+            Self::read_framework_file(Path::new(&data_path))?
+        } else {
+            Self::builtin_embedded(filename)
+                .ok_or_else(|| crate::error::TlsError::ConfigError {
+                    message: format!("No embedded framework available for: {framework_id}"),
+                })?
+                .to_string()
+        };
+        Self::metadata_from_content(&content)
+    }
+
+    fn metadata_from_content(content: &str) -> crate::Result<RulePackMetadata> {
+        let header: RulePackHeader =
+            serde_yaml::from_str(content).map_err(|error| crate::error::TlsError::ConfigError {
+                message: format!("Invalid rule pack metadata: {error}"),
+            })?;
+        let declaration = header.rule_pack;
+        if declaration.version.trim().is_empty()
+            || declaration.source.organization.trim().is_empty()
+            || declaration.source.document.trim().is_empty()
+            || declaration.source.version.trim().is_empty()
+            || declaration.source.publication_date.trim().is_empty()
+            || declaration.source.url.trim().is_empty()
+            || declaration.source.last_reviewed_at.trim().is_empty()
+        {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "Rule pack metadata fields cannot be empty".to_string(),
+            });
+        }
+        let digest = ring::digest::digest(&ring::digest::SHA256, content.as_bytes());
+        Ok(RulePackMetadata {
+            version: declaration.version,
+            source: declaration.source,
+            content_sha256: hex::encode(digest.as_ref()),
         })
     }
 
@@ -72,7 +145,7 @@ impl BuiltinFrameworkSource {
             ),
             (
                 "nist-sp800-131a",
-                "NIST SP 800-131A Rev 3 - Cryptographic Algorithm Transitions",
+                "NIST SP 800-131A Rev 3 Initial Public Draft - Cryptographic Algorithm Transitions",
             ),
             (
                 "nist-fips-pqc",
@@ -135,6 +208,8 @@ impl ComplianceFrameworkSource for BuiltinFrameworkSource {
         // run outside the source tree.
         let data_path = format!("data/compliance/{}", filename);
         if Path::new(&data_path).exists() {
+            let content = Self::read_framework_file(Path::new(&data_path))?;
+            Self::metadata_from_content(&content)?;
             return Self::load_from_file(&data_path);
         }
 
@@ -143,6 +218,7 @@ impl ComplianceFrameworkSource for BuiltinFrameworkSource {
                 message: format!("No embedded framework available for: {}", framework_id),
             }
         })?;
+        Self::metadata_from_content(embedded)?;
         FrameworkLoader::load_from_string(embedded).map_err(|e| {
             crate::error::TlsError::Other(format!(
                 "Failed to parse embedded framework '{}': {}",
@@ -169,6 +245,9 @@ mod tests {
             FrameworkLoader::load_from_string(embedded).unwrap_or_else(|e| {
                 panic!("embedded framework '{framework_id}' failed to parse: {e}")
             });
+            let metadata = BuiltinFrameworkSource::metadata_from_content(embedded)
+                .unwrap_or_else(|e| panic!("embedded framework '{framework_id}' metadata: {e}"));
+            assert_eq!(metadata.content_sha256.len(), 64);
         }
     }
 

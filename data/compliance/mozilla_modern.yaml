@@ -4,6 +4,15 @@ version: 5.7
 description: Mozilla Server Side TLS Configuration - Modern Profile (maximum security, some compatibility loss)
 organization: Mozilla Foundation
 effective_date: 2023-01-01
+rule_pack:
+  version: "2026.08.1"
+  source:
+    organization: Mozilla Foundation
+    document: Server Side TLS Guidelines - Modern Configuration
+    version: "5.7"
+    publication_date: "2023-01-01"
+    url: https://ssl-config.mozilla.org/guidelines/5.7/
+    last_reviewed_at: "2026-08-23"
 
 requirements:
   - id: MOZ-MODERN-1
