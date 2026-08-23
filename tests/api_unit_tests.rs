@@ -44,7 +44,7 @@ fn test_api_config_creation() {
     assert!(config.max_concurrent_scans > 0);
     assert_eq!(config.rate_limit_per_minute, 100);
     assert_eq!(config.job_queue_capacity, 1000);
-    assert!(config.enable_swagger);
+    assert!(!config.enable_swagger);
 }
 
 #[test]

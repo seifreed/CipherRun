@@ -109,7 +109,7 @@ impl Default for ApiConfig {
             request_timeout_seconds: 300, // 5 minutes
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,
-            enable_swagger: true,
+            enable_swagger: false,
             policy_dir: None,
         }
     }

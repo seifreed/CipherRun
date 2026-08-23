@@ -190,7 +190,7 @@ impl ApiServer {
         {
             if self.config.enable_swagger {
                 tracing::warn!(
-                    "Swagger UI requested via config but the `swagger` cargo feature is                      not enabled; build with `--features swagger` to serve it."
+                    "Swagger UI requested via config but the `swagger` cargo feature is not enabled; build with `--features swagger` to serve it."
                 );
             }
         }
@@ -211,10 +211,13 @@ impl ApiServer {
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         info!("CipherRun API server listening on {}", addr);
-        info!(
-            "OpenAPI documentation available at: http://{}/api/docs",
-            addr
-        );
+        #[cfg(feature = "swagger")]
+        if self.config.enable_swagger {
+            info!(
+                "OpenAPI documentation available at: http://{}/api/docs",
+                addr
+            );
+        }
         info!("Health check endpoint: http://{}/health", addr);
 
         // Serve
