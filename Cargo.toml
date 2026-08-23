@@ -12,19 +12,6 @@ documentation = "https://docs.rs/cipherrun"
 readme = "README.md"
 keywords = ["security", "tls", "ssl", "scanner", "cryptography"]
 categories = ["command-line-utilities", "cryptography", "network-programming"]
-exclude = [
-    "tests/*",
-    "testssl.sh/*",
-    "sslscan/*",
-    "/targets.txt",
-    "*.pcap",
-    ".git*",
-    "Dockerfile",
-    "docker-compose.yml",
-    "Makefile",
-    "/tmp/*",
-]
-
 include = [
     "src/**/*",
     "data/**/*.json",
@@ -35,8 +22,10 @@ include = [
     "data/**/*.css",
     "migrations/**/*.sql",
     "Cargo.toml",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "SECURITY.md",
 ]
 
 [lints.rust]
