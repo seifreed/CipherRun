@@ -41,12 +41,13 @@ fn apply_cli_overrides(
 }
 
 fn load_effective_api_config(args: &Args) -> Result<crate::api::ApiConfig> {
-    let has_config_file = args.api_server.config.is_some();
-    let mut config = if let Some(config_path) = &args.api_server.config {
-        crate::api::ApiConfig::from_file_unvalidated(config_path)?
-    } else {
-        crate::api::ApiConfig::default()
+    let Some(config_path) = &args.api_server.config else {
+        return Err(crate::error::TlsError::ConfigError {
+            message: "Refusing to start: no API credentials configured. Generate a configuration with --api-config-example <FILE>, then start with --api-config <FILE>.".to_string(),
+        });
     };
+    let has_config_file = true;
+    let mut config = crate::api::ApiConfig::from_file_unvalidated(config_path)?;
 
     apply_cli_overrides(&mut config, &args.api_server, has_config_file);
     config.validate()?;
@@ -232,5 +233,14 @@ enable_swagger = true
             load_effective_api_config(&args).expect_err("invalid effective config should fail");
 
         assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[test]
+    fn test_effective_api_config_requires_credentials_file() {
+        let err = load_effective_api_config(&Args::default())
+            .expect_err("server must not bootstrap an inaccessible random credential");
+
+        assert!(err.to_string().contains("no API credentials configured"));
+        assert!(err.to_string().contains("--api-config-example"));
     }
 }

@@ -4,6 +4,7 @@ use crate::Result;
 use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
@@ -172,10 +173,23 @@ impl ApiConfig {
         let toml = toml::to_string_pretty(&config).map_err(|e| TlsError::ConfigError {
             message: format!("Failed to serialize API config: {e}"),
         })?;
-        std::fs::write(path, toml).map_err(|e| TlsError::FileSystemError {
+
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(|e| TlsError::FileSystemError {
             path: path.display().to_string(),
             source: e,
         })?;
+        file.write_all(toml.as_bytes())
+            .map_err(|e| TlsError::FileSystemError {
+                path: path.display().to_string(),
+                source: e,
+            })?;
         Ok(())
     }
 
@@ -322,11 +336,40 @@ mod tests {
 
     #[test]
     fn test_create_example_writes_file() {
-        let path = std::env::temp_dir().join("cipherrun-api-config.toml");
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
         ApiConfig::create_example(&path).expect("write should succeed");
         let contents = std::fs::read_to_string(&path).expect("read should succeed");
         assert!(contents.contains("host"));
-        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_create_example_does_not_overwrite_credentials() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        std::fs::write(&path, "existing credentials").expect("fixture should be written");
+
+        ApiConfig::create_example(&path).expect_err("existing credentials must be preserved");
+        assert_eq!(
+            std::fs::read_to_string(path).expect("fixture should remain readable"),
+            "existing credentials"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_create_example_uses_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        ApiConfig::create_example(&path).expect("write should succeed");
+
+        let mode = std::fs::metadata(path)
+            .expect("config metadata should exist")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
