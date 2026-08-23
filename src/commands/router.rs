@@ -5,6 +5,7 @@
 use super::{
     AnalyticsCommand, AnycastScanCommand, ApiServerCommand, Command, CtLogsCommand,
     DatabaseCommand, MassScanCommand, MonitorCommand, MxTestCommand, PqcScanCommand, ScanCommand,
+    ScanDiffCommand,
 };
 use crate::cli::CipherRunSubcommand;
 use crate::{Args, Result, TlsError};
@@ -86,6 +87,14 @@ impl CommandRouter {
         // Priority 0: Subcommands
         if let Some(CipherRunSubcommand::Pqc { ssh, vpn, code }) = args.subcommand.clone() {
             return Ok(Box::new(PqcScanCommand::new(ssh, vpn, code)));
+        }
+        if let Some(CipherRunSubcommand::Diff {
+            previous,
+            current,
+            json,
+        }) = args.subcommand.clone()
+        {
+            return Ok(Box::new(ScanDiffCommand::new(previous, current, json)));
         }
 
         // Priority 1: API server mode

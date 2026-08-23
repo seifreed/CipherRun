@@ -14,6 +14,7 @@ impl CommandExit {
     pub const OPERATIONAL_FAILURE: i32 = 1;
     pub const FINDINGS_FAILURE: i32 = 2;
     pub const POLICY_FAILURE: i32 = 3;
+    pub const DRIFT_FAILURE: i32 = 4;
 
     pub const fn success() -> Self {
         Self { code: 0 }
@@ -29,6 +30,10 @@ impl CommandExit {
 
     pub const fn policy_failure() -> Self {
         Self::failure(Self::POLICY_FAILURE)
+    }
+
+    pub const fn drift_failure() -> Self {
+        Self::failure(Self::DRIFT_FAILURE)
     }
 
     pub const fn code(self) -> i32 {
@@ -127,5 +132,6 @@ mod tests {
         assert_eq!(CommandExit::OPERATIONAL_FAILURE, 1);
         assert_eq!(CommandExit::findings_failure().code(), 2);
         assert_eq!(CommandExit::policy_failure().code(), 3);
+        assert_eq!(CommandExit::drift_failure().code(), 4);
     }
 }

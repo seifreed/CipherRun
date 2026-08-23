@@ -16,6 +16,7 @@ mod monitor;
 mod mx_test;
 mod pqc_scan;
 mod scan;
+mod scan_diff;
 mod scan_exporter;
 mod scan_notice_presenter;
 mod scan_post_presenter;
@@ -37,6 +38,7 @@ pub use monitor::MonitorCommand;
 pub use mx_test::MxTestCommand;
 pub use pqc_scan::PqcScanCommand;
 pub use scan::ScanCommand;
+pub use scan_diff::ScanDiffCommand;
 
 #[cfg(test)]
 mod tests {

@@ -131,6 +131,9 @@ cipherrun --sarif results.sarif --junit results.junit.xml example.com
 # CI failure thresholds
 cipherrun --fail-on high example.com
 cipherrun --policy policy.yaml --fail-on-policy example.com
+
+# Compare versioned scan results (exit 4 on drift)
+cipherrun diff baseline.json current.json
 ```
 
 ### STARTTLS Examples
@@ -177,7 +180,7 @@ Terminal, JSON, CSV, HTML, XML, SARIF 2.1.0, JUnit XML
 
 Exit codes are stable for automation: `0` success, `1` operational/partial-scan
 failure, `2` confirmed finding at the `--fail-on` threshold, and `3` failed
-policy or mapped compliance checks.
+policy or mapped compliance checks. `4` reports drift from `diff` or a baseline.
 
 ---
 
