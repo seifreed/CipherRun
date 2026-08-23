@@ -37,7 +37,7 @@ pub(super) fn validate(data: &Value) -> Result<(), Vec<String>> {
 
     for field in ["scanner_version", "ruleset_version", "data_version"] {
         if let Some(value) = obj.get(field)
-            && !value.as_str().is_some_and(|value| !value.is_empty())
+            && value.as_str().is_none_or(|value| value.is_empty())
         {
             errors.push(format!("{} must be a non-empty string", field));
         }

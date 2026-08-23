@@ -24,7 +24,7 @@ const PLACEHOLDER_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 /// Main scanner struct
 ///
 /// Now Send + Sync compatible for parallel async execution via tokio::spawn.
-/// Uses Arc<RwLock<Target>> for interior mutability to allow &self methods.
+/// Uses `Arc<RwLock<Target>>` for interior mutability to allow &self methods.
 ///
 /// The reporter field follows Dependency Inversion: the Scanner (domain layer)
 /// depends on the `ScanProgressReporter` abstraction rather than a concrete

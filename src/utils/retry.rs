@@ -131,7 +131,7 @@ impl RetryConfig {
 /// # Arguments
 ///
 /// * `config` - Retry configuration controlling behavior
-/// * `operation` - Async closure that returns a Result<T>
+/// * `operation` - Async closure that returns a `Result<T>`
 ///
 /// # Returns
 ///

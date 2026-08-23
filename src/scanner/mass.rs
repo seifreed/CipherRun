@@ -27,7 +27,7 @@ const MAX_TARGET_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Mass scanner for scanning multiple targets
 ///
-/// Performance optimization: Uses Arc<ScanRequest> to avoid expensive cloning
+/// Performance optimization: Uses `Arc<ScanRequest>` to avoid expensive cloning
 /// in parallel scanning operations.
 #[derive(Debug, Clone)]
 pub struct MassScanConfig {

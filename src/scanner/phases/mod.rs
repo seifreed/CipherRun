@@ -178,7 +178,7 @@ pub trait ScanPhase: Send + Sync {
 /// - Clean separation between configuration and results
 ///
 /// Design decisions:
-/// - Arc<ScanRequest> for zero-copy sharing across phases
+/// - `Arc<ScanRequest>` for zero-copy sharing across phases
 /// - Owned Target for phase-specific modifications (e.g., IP override)
 /// - Owned ScanResults for incremental accumulation
 /// - Optional MtlsConfig for mTLS-enabled connections

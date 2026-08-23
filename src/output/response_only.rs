@@ -25,7 +25,7 @@ pub struct ResponseOnlyFormatter;
 impl ResponseOnlyFormatter {
     /// Format scan results as response-only output (no host:port prefix)
     ///
-    /// This removes the "[host:port]" or "host:port" prefix from the beginning
+    /// This removes the `[host:port]` or `host:port` prefix from the beginning
     /// of output lines, keeping only the actual data portion.
     ///
     /// # Arguments

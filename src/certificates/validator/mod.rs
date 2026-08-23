@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Parse a certificate date string into a DateTime<Utc>.
+/// Parse a certificate date string into a `DateTime<Utc>`.
 /// Supports multiple date formats commonly found in certificates.
 pub fn parse_cert_date(date_str: &str) -> Option<DateTime<Utc>> {
     use chrono::NaiveDateTime;
