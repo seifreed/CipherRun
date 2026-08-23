@@ -6,7 +6,9 @@ pub(crate) mod handshake_read;
 pub use aggregation::merge_vulnerability_result;
 pub use aggregation::merge_vulnerability_result_with_error;
 
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 /// Explicit verdict for a published security finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,6 +64,24 @@ pub enum FindingConfidence {
     Low,
     Medium,
     High,
+}
+
+/// Structured evidence published with every vulnerability finding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingEvidence {
+    pub affected_ip: Option<IpAddr>,
+    pub port: Option<u16>,
+    pub sni: Option<String>,
+    pub protocol: Option<String>,
+    pub cipher_suite: Option<String>,
+    pub observed: String,
+    pub expected_result: String,
+    pub attempts: Option<u32>,
+    pub probe_version: String,
+    pub limitations: Vec<String>,
+    pub references: Vec<String>,
+    pub remediation: String,
+    pub potentially_intrusive: bool,
 }
 
 /// Vulnerability types ordered by severity (most critical first)
@@ -141,7 +161,7 @@ impl VulnerabilityType {
 }
 
 /// Vulnerability test result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct VulnerabilityResult {
     pub vuln_type: VulnerabilityType,
     pub vulnerable: bool,
@@ -240,12 +260,94 @@ impl VulnerabilityResult {
         }
     }
 
+    pub fn evidence(&self) -> FindingEvidence {
+        let hint = crate::utils::hints::get_vulnerability_hint(&format!("{:?}", self.vuln_type))
+            .unwrap_or_else(|| crate::utils::hints::get_severity_hint(self.severity));
+        let mut references = hint.references;
+
+        if let Some(cve) = &self.cve {
+            let reference = format!("https://nvd.nist.gov/vuln/detail/{cve}");
+            if !references.contains(&reference) {
+                references.push(reference);
+            }
+        }
+        if let Some(cwe) = self
+            .cwe
+            .as_deref()
+            .and_then(|value| value.strip_prefix("CWE-"))
+        {
+            let reference = format!("https://cwe.mitre.org/data/definitions/{cwe}.html");
+            if !references.contains(&reference) {
+                references.push(reference);
+            }
+        }
+
+        FindingEvidence {
+            affected_ip: None,
+            port: None,
+            sni: None,
+            protocol: None,
+            cipher_suite: None,
+            observed: self.details.clone(),
+            expected_result: "No vulnerable behavior or exposure prerequisites observed."
+                .to_string(),
+            attempts: None,
+            probe_version: env!("CARGO_PKG_VERSION").to_string(),
+            limitations: vec![self.detection_limitation().to_string()],
+            references,
+            remediation: hint.remediation,
+            potentially_intrusive: matches!(self.detection_method(), DetectionMethod::ActiveProbe),
+        }
+    }
+
+    const fn detection_limitation(&self) -> &'static str {
+        match self.detection_method() {
+            DetectionMethod::ActiveProbe => {
+                "The verdict applies only to the tested endpoint and probe version."
+            }
+            DetectionMethod::ProtocolNegotiation => {
+                "Negotiated support does not identify the server implementation."
+            }
+            DetectionMethod::ConfigurationInference => {
+                "Configuration exposure does not prove practical exploitability."
+            }
+            DetectionMethod::TimingAnalysis => {
+                "Remote timing analysis is sensitive to latency and network jitter."
+            }
+            DetectionMethod::Heuristic => {
+                "Observed prerequisites do not demonstrate practical exploitability."
+            }
+        }
+    }
+
     pub fn status_label(&self) -> &'static str {
         self.status().label()
     }
 
     pub fn status_csv_value(&self) -> &'static str {
         self.status().as_str()
+    }
+}
+
+impl Serialize for VulnerabilityResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("VulnerabilityResult", 12)?;
+        state.serialize_field("finding_id", self.finding_id())?;
+        state.serialize_field("status", &self.status())?;
+        state.serialize_field("detection_method", &self.detection_method())?;
+        state.serialize_field("confidence", &self.confidence())?;
+        state.serialize_field("evidence", &self.evidence())?;
+        state.serialize_field("vuln_type", &self.vuln_type)?;
+        state.serialize_field("vulnerable", &self.vulnerable)?;
+        state.serialize_field("inconclusive", &self.inconclusive)?;
+        state.serialize_field("details", &self.details)?;
+        state.serialize_field("cve", &self.cve)?;
+        state.serialize_field("cwe", &self.cwe)?;
+        state.serialize_field("severity", &self.severity)?;
+        state.end()
     }
 }
 
@@ -330,6 +432,22 @@ mod tests {
         let json = serde_json::to_string(&result).expect("test assertion should succeed");
         assert!(json.contains("Heartbleed"));
         assert!(json.contains("CVE-2014-0160"));
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("serialized finding should be valid JSON");
+        assert_eq!(value["finding_id"], "CR-TLS-HEARTBLEED-001");
+        assert_eq!(value["status"], "confirmed_vulnerable");
+        assert_eq!(value["detection_method"], "active_probe");
+        assert_eq!(value["confidence"], "high");
+        assert_eq!(
+            value["evidence"]["probe_version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(value["evidence"]["attempts"], serde_json::Value::Null);
+        assert_eq!(value["evidence"]["potentially_intrusive"], true);
+
+        let round_trip: VulnerabilityResult =
+            serde_json::from_str(&json).expect("enriched finding JSON should remain readable");
+        assert_eq!(round_trip.status(), FindingStatus::ConfirmedVulnerable);
     }
 
     #[test]

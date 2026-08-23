@@ -9,6 +9,7 @@ All notable changes to CipherRun are documented here. The format follows
 ### Added
 
 - Explicit finding statuses, detection methods, confidence levels, and stable finding IDs.
+- Structured JSON finding evidence with limitations, references, remediation, and probe safety metadata.
 
 ### Changed
 
