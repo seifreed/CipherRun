@@ -58,7 +58,12 @@ fn test_variant_result_structure() {
     let timing_data = TimingData {
         valid_padding_avg_ms: 15.5,
         invalid_padding_avg_ms: 10.2,
+        valid_padding_median_ms: 15.0,
+        invalid_padding_median_ms: 10.0,
+        valid_padding_p95_ms: 16.0,
+        invalid_padding_p95_ms: 11.0,
         timing_difference_ms: 5.3,
+        timing_difference_confidence_interval_95_ms: (4.1, 6.5),
         samples_collected: 10,
     };
 

@@ -401,17 +401,32 @@ impl<'a> PoodleTester<'a> {
         let timing_data = Some(TimingData {
             valid_padding_avg_ms: vs.mean,
             invalid_padding_avg_ms: is.mean,
+            valid_padding_median_ms: vs.median,
+            invalid_padding_median_ms: is.median,
+            valid_padding_p95_ms: vs.p95,
+            invalid_padding_p95_ms: is.p95,
             timing_difference_ms: analysis.timing_diff_ms,
+            timing_difference_confidence_interval_95_ms: analysis
+                .difference_confidence_interval_95_ms,
             samples_collected: min_samples,
         });
 
         let details = if analysis.oracle_detected {
             format!(
-                "Suspected Sleeping POODLE timing oracle (INCONCLUSIVE) - valid={:.2}ms (σ={:.2}ms), \
-                 invalid={:.2}ms (σ={:.2}ms), diff={:.2}ms (threshold: {:.1}ms). A remote timing \
+                "Suspected Sleeping POODLE timing oracle (INCONCLUSIVE) - valid mean/median/p95={:.2}/{:.2}/{:.2}ms, \
+                 invalid mean/median/p95={:.2}/{:.2}/{:.2}ms, diff={:.2}ms (95% CI {:.2}-{:.2}ms; threshold: {:.1}ms). A remote timing \
                  difference cannot conclusively confirm the oracle (network jitter dwarfs the MAC \
                  timing signal); confirm with a local/low-latency test.",
-                vs.mean, vs.stddev, is.mean, is.stddev, analysis.timing_diff_ms, adaptive_threshold
+                vs.mean,
+                vs.median,
+                vs.p95,
+                is.mean,
+                is.median,
+                is.p95,
+                analysis.timing_diff_ms,
+                analysis.difference_confidence_interval_95_ms.0,
+                analysis.difference_confidence_interval_95_ms.1,
+                adaptive_threshold
             )
         } else if !analysis.timing_reliable {
             format!(

@@ -143,7 +143,12 @@ pub struct PoodleVariantResult {
 pub struct TimingData {
     pub valid_padding_avg_ms: f64,
     pub invalid_padding_avg_ms: f64,
+    pub valid_padding_median_ms: f64,
+    pub invalid_padding_median_ms: f64,
+    pub valid_padding_p95_ms: f64,
+    pub invalid_padding_p95_ms: f64,
     pub timing_difference_ms: f64,
+    pub timing_difference_confidence_interval_95_ms: (f64, f64),
     pub samples_collected: usize,
 }
 

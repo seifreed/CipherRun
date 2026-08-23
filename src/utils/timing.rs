@@ -13,8 +13,12 @@ pub struct TimingSampleSet {
 #[derive(Debug, Clone)]
 pub struct TimingStatistics {
     pub mean: f64,
+    pub median: f64,
+    pub p95: f64,
     pub variance: f64,
     pub stddev: f64,
+    pub standard_error: f64,
+    pub confidence_interval_95: (f64, f64),
     pub coefficient_of_variation: f64,
     pub count: usize,
 }
@@ -41,6 +45,8 @@ pub struct TimingOracleResult {
     pub timing_reliable: bool,
     pub statistically_significant: bool,
     pub timing_diff_ms: f64,
+    pub difference_standard_error_ms: f64,
+    pub difference_confidence_interval_95_ms: (f64, f64),
     pub valid_stats: TimingStatistics,
     pub invalid_stats: TimingStatistics,
 }
@@ -64,7 +70,7 @@ impl TimingSampleSet {
         self.samples.is_empty()
     }
 
-    /// Compute mean, variance, stddev, and coefficient of variation.
+    /// Compute descriptive statistics and a normal-approximation confidence interval.
     /// Returns `None` if the sample set is empty.
     pub fn compute_statistics(&self) -> Option<TimingStatistics> {
         if self.samples.is_empty() {
@@ -74,15 +80,35 @@ impl TimingSampleSet {
         let count = self.samples.len();
         let mean = self.samples.iter().sum::<f64>() / count as f64;
 
+        let mut sorted = self.samples.clone();
+        sorted.sort_by(f64::total_cmp);
+        let median = if count.is_multiple_of(2) {
+            (sorted[count / 2 - 1] + sorted[count / 2]) / 2.0
+        } else {
+            sorted[count / 2]
+        };
+        let p95 = sorted[((count as f64 * 0.95).ceil() as usize).saturating_sub(1)];
+
         let variance = self.samples.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / count as f64;
         let stddev = variance.sqrt();
+        let sample_variance = if count > 1 {
+            self.samples.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / (count - 1) as f64
+        } else {
+            0.0
+        };
+        let standard_error = (sample_variance / count as f64).sqrt();
+        let margin = 1.96 * standard_error;
 
         let coefficient_of_variation = if mean > 0.0 { stddev / mean } else { f64::MAX };
 
         Some(TimingStatistics {
             mean,
+            median,
+            p95,
             variance,
             stddev,
+            standard_error,
+            confidence_interval_95: (mean - margin, mean + margin),
             coefficient_of_variation,
             count,
         })
@@ -92,7 +118,7 @@ impl TimingSampleSet {
 /// Analyze two sets of timing samples (valid vs invalid) to detect a timing oracle.
 ///
 /// Uses statistical significance testing: the timing difference must exceed
-/// `2 * combined_stddev + significance_base_ms` and the coefficient of variation
+/// the 95% confidence margin plus `significance_base_ms`, and the coefficient of variation
 /// must be below `cv_max` for measurements to be considered reliable.
 pub fn detect_timing_oracle(
     valid: &TimingSampleSet,
@@ -112,18 +138,11 @@ pub fn detect_timing_oracle(
     let timing_reliable = valid_stats.coefficient_of_variation < config.cv_max
         && invalid_stats.coefficient_of_variation < config.cv_max;
 
-    // I9 fix: the proper quantity here is the standard error of the DIFFERENCE
-    // of two sample means — `sqrt(var1/n1 + var2/n2)`. The previous code
-    // computed `sqrt(var1 + var2)` which, for symmetric sample sizes,
-    // over-estimates the dispersion by a factor of ~sqrt(n). That inflated the
-    // significance threshold `2*combined_stddev + base`, producing false
-    // negatives for real timing oracles.
-    let n_valid = (valid_stats.count as f64).max(1.0);
-    let n_invalid = (invalid_stats.count as f64).max(1.0);
-    let combined_stddev =
-        (valid_stats.variance / n_valid + invalid_stats.variance / n_invalid).sqrt();
-    let statistically_significant =
-        timing_diff > 2.0 * combined_stddev + config.significance_base_ms;
+    let difference_standard_error = valid_stats
+        .standard_error
+        .hypot(invalid_stats.standard_error);
+    let margin = 1.96 * difference_standard_error;
+    let statistically_significant = timing_diff > margin + config.significance_base_ms;
 
     let exceeds_threshold = timing_diff > config.timing_threshold_ms;
 
@@ -134,6 +153,11 @@ pub fn detect_timing_oracle(
         timing_reliable,
         statistically_significant,
         timing_diff_ms: timing_diff,
+        difference_standard_error_ms: difference_standard_error,
+        difference_confidence_interval_95_ms: (
+            (timing_diff - margin).max(0.0),
+            timing_diff + margin,
+        ),
         valid_stats,
         invalid_stats,
     })
@@ -165,6 +189,8 @@ mod tests {
         set.push(5.0);
         let stats = set.compute_statistics().unwrap();
         assert_eq!(stats.mean, 5.0);
+        assert_eq!(stats.median, 5.0);
+        assert_eq!(stats.p95, 5.0);
         assert_eq!(stats.variance, 0.0);
         assert_eq!(stats.stddev, 0.0);
         assert_eq!(stats.count, 1);
@@ -178,6 +204,11 @@ mod tests {
         }
         let stats = set.compute_statistics().unwrap();
         assert!((stats.mean - 30.0).abs() < 1e-10);
+        assert!((stats.median - 30.0).abs() < 1e-10);
+        assert!((stats.p95 - 50.0).abs() < 1e-10);
+        assert!((stats.standard_error - 50.0_f64.sqrt()).abs() < 1e-10);
+        assert!((stats.confidence_interval_95.0 - 16.14070708874367).abs() < 1e-10);
+        assert!((stats.confidence_interval_95.1 - 43.85929291125633).abs() < 1e-10);
         assert!((stats.variance - 200.0).abs() < 1e-10);
         assert!((stats.stddev - 200.0_f64.sqrt()).abs() < 1e-10);
         assert_eq!(stats.count, 5);
@@ -200,6 +231,8 @@ mod tests {
         assert!(result.oracle_detected);
         assert!(result.timing_reliable);
         assert!((result.timing_diff_ms - 40.0).abs() < 1e-10);
+        assert_eq!(result.difference_standard_error_ms, 0.0);
+        assert_eq!(result.difference_confidence_interval_95_ms, (40.0, 40.0));
     }
 
     #[test]
