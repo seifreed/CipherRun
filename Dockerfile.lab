@@ -48,7 +48,7 @@ LABEL org.opencontainers.image.title="CipherRun Lab" \
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash bsdextrautils ca-certificates coreutils curl dnsutils file gawk grep iputils-ping \
-        libcap2-bin libssl3 nmap net-tools openssl procps sed socat tcpdump tshark \
+        jq libcap2-bin libssl3 nmap net-tools openssl procps sed socat tcpdump tshark \
         wget zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

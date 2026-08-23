@@ -66,6 +66,24 @@ jobs:
       - name: Check all targets
         run: cargo check --all-targets --locked
 
+  validation-lab:
+    name: Differential TLS validation lab
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run controlled differential fixtures
+        run: make lab-validate
+
+      - name: Upload scanner transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-tls-transcripts
+          path: results/differential/
+          if-no-files-found: error
+
   build-test:
     name: build-test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

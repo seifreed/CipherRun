@@ -108,14 +108,9 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-        ]
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -151,5 +146,13 @@ mod tests {
         // startup; install it here so the config builder has one in tests.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let _config = insecure_client_config();
+    }
+
+    #[test]
+    fn verifier_advertises_tls13_signature_schemes() {
+        let schemes = NoCertVerifier.supported_verify_schemes();
+
+        assert!(schemes.contains(&rustls::SignatureScheme::RSA_PSS_SHA256));
+        assert!(schemes.contains(&rustls::SignatureScheme::ED25519));
     }
 }

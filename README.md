@@ -89,7 +89,12 @@ docker compose -f compose.production.yml up --build
 ```bash
 mkdir -p captures results
 docker compose -f compose.lab.yml run --rm cipherrun-lab
+make lab-validate
 ```
+
+`make lab-validate` starts isolated weak and modern TLS fixtures, records CipherRun,
+sslscan, testssl.sh, and OpenSSL results, and fails when the expected TLS 1.2/1.3
+negotiation boundary changes. See the public [validation coverage matrix](docs/validation-coverage.md).
 
 ---
 
