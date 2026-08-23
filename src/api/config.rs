@@ -27,6 +27,10 @@ pub struct ApiConfig {
     /// Enable CORS
     pub enable_cors: bool,
 
+    /// Browser origins allowed when CORS is enabled
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+
     /// Rate limit per minute per API key
     pub rate_limit_per_minute: u32,
 
@@ -99,6 +103,7 @@ impl Default for ApiConfig {
             max_concurrent_scans: 10,
             api_keys,
             enable_cors: false, // SECURITY: Disable CORS by default
+            allowed_origins: Vec::new(),
             rate_limit_per_minute: 100,
             max_body_size: 1024 * 1024,   // 1MB
             request_timeout_seconds: 300, // 5 minutes
@@ -298,6 +303,12 @@ impl ApiConfig {
                 message: "api_keys must not contain empty keys".to_string(),
             });
         }
+        if self.enable_cors && self.allowed_origins.is_empty() {
+            return Err(TlsError::ConfigError {
+                message: "allowed_origins must contain at least one origin when CORS is enabled"
+                    .to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -324,6 +335,19 @@ mod tests {
         assert_eq!(config.validate_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.remove_key("test-key"), Some(Permission::Admin));
         assert_eq!(config.validate_key("test-key"), None);
+    }
+
+    #[test]
+    fn test_cors_requires_explicit_allowed_origin() {
+        let config = ApiConfig {
+            enable_cors: true,
+            ..Default::default()
+        };
+
+        let err = config
+            .validate()
+            .expect_err("CORS without an allowlist must fail");
+        assert!(err.to_string().contains("allowed_origins"));
     }
 
     #[test]

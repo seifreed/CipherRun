@@ -1,16 +1,7 @@
 // CORS Middleware
 
-use axum::http::HeaderValue;
-use tower_http::cors::{Any, CorsLayer};
-
-/// Create CORS layer with permissive settings for development
-pub fn cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .expose_headers(Any)
-}
+use axum::http::{HeaderValue, header};
+use tower_http::cors::CorsLayer;
 
 /// Create CORS layer with specific origins for production
 pub fn cors_layer_with_origins(origins: Vec<String>) -> crate::Result<CorsLayer> {
@@ -20,6 +11,21 @@ pub fn cors_layer_with_origins(origins: Vec<String>) -> crate::Result<CorsLayer>
     let allow_origins: Vec<HeaderValue> = origins
         .iter()
         .map(|origin| {
+            let url = url::Url::parse(origin).map_err(|error| crate::TlsError::InvalidInput {
+                message: format!("Invalid CORS origin '{origin}': {error}"),
+            })?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.path() != "/"
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(crate::TlsError::InvalidInput {
+                    message: format!("Invalid CORS origin '{origin}': expected an HTTP(S) origin"),
+                });
+            }
             origin
                 .parse()
                 .map_err(|error| crate::TlsError::InvalidInput {
@@ -37,8 +43,11 @@ pub fn cors_layer_with_origins(origins: Vec<String>) -> crate::Result<CorsLayer>
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers(Any)
-        .expose_headers(Any))
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static("x-api-key"),
+        ]))
 }
 
 #[cfg(test)]
@@ -47,29 +56,6 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use axum::{Router, routing::get};
     use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn test_cors_layer_allows_any_origin() {
-        let app = Router::new()
-            .route("/", get(|| async { "ok" }))
-            .layer(cors_layer());
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/")
-                    .header("Origin", "https://example.com")
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let headers = response.headers();
-        assert_eq!(headers.get("access-control-allow-origin").unwrap(), "*");
-    }
 
     #[tokio::test]
     async fn test_cors_layer_with_origins_allows_match() {
@@ -151,5 +137,17 @@ mod tests {
         };
 
         assert!(error.to_string().contains("Invalid CORS origin"));
+    }
+
+    #[test]
+    fn test_cors_layer_with_origins_rejects_url_instead_of_origin() {
+        let error =
+            match cors_layer_with_origins(vec!["https://example.com/path?query=value".to_string()])
+            {
+                Ok(_) => panic!("expected URL with path to fail"),
+                Err(error) => error,
+            };
+
+        assert!(error.to_string().contains("expected an HTTP(S) origin"));
     }
 }

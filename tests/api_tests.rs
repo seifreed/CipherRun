@@ -21,6 +21,7 @@ fn test_api_config_default() {
     assert_eq!(config.port, 8080);
     assert_eq!(config.host, "127.0.0.1"); // Security: should bind to localhost by default
     assert!(!config.enable_cors); // Security: CORS disabled by default
+    assert!(config.allowed_origins.is_empty());
     assert!(config.max_concurrent_scans > 0);
     assert_eq!(config.rate_limit_per_minute, 100);
 }

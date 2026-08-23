@@ -9,7 +9,7 @@ pub mod rate_limit;
 pub use auth::{
     AuthExtension, authenticate, check_permission, get_auth_extension, get_permission, require_user,
 };
-pub use cors::cors_layer;
+pub use cors::cors_layer_with_origins;
 pub use logging::logging_layer;
 pub use metrics::metrics;
 pub use rate_limit::{PerKeyRateLimiter, rate_limit};

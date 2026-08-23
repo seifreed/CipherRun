@@ -90,7 +90,6 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
             Arc::new(config.clone()),
             middleware::authenticate,
         ))
-        .layer(middleware::cors_layer())
         .layer(CompressionLayer::new())
         .layer(middleware::logging_layer())
         .with_state(state)

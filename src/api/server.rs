@@ -58,7 +58,7 @@ impl ApiServer {
     }
 
     /// Build the router
-    fn build_router(&self) -> Router {
+    fn build_router(&self) -> Result<Router> {
         // Create API routes
         let api_routes = Router::new()
             // Scan routes — create/cancel are write actions and require at least
@@ -132,12 +132,11 @@ impl ApiServer {
                 middleware::metrics,
             ));
 
-        // CORS is opt-in via enable_cors (default false). When disabled the
-        // browser same-origin policy applies; when enabled the layer permits any
-        // origin. Previously cors_layer() was applied unconditionally, ignoring
-        // the documented secure default.
+        // CORS is opt-in and only permits explicitly configured origins.
         let router = if self.config.enable_cors {
-            router.layer(middleware::cors_layer())
+            router.layer(middleware::cors_layer_with_origins(
+                self.config.allowed_origins.clone(),
+            )?)
         } else {
             router
         };
@@ -151,7 +150,7 @@ impl ApiServer {
             }),
         );
 
-        router
+        Ok(router
             // Enforce the configured JSON/body size limit for request extractors.
             .layer(DefaultBodyLimit::max(self.config.max_body_size))
             // Bound total request handling time using the configured API timeout.
@@ -165,7 +164,7 @@ impl ApiServer {
             // Add logging
             .layer(middleware::logging_layer())
             // Add shared state
-            .with_state(self.state.clone())
+            .with_state(self.state.clone()))
     }
 
     /// Build Swagger UI routes.
@@ -205,7 +204,7 @@ impl ApiServer {
         state.start_executor().await?;
 
         // Build router
-        let app = self.build_router();
+        let app = self.build_router()?;
 
         // Create listener
         let addr = canonical_target(&self.config.host, self.config.port);
@@ -251,7 +250,7 @@ mod tests {
     async fn test_router_build() {
         let config = ApiConfig::default();
         let server = ApiServer::new(config).expect("test assertion should succeed");
-        let _router = server.build_router();
+        let _router = server.build_router().expect("router should build");
         // Just verify it builds without panicking
     }
 
@@ -268,7 +267,8 @@ mod tests {
 
         let app = ApiServer::new(config)
             .expect("server should build")
-            .build_router();
+            .build_router()
+            .expect("router should build");
         let response = app
             .oneshot(
                 Request::builder()
@@ -294,7 +294,8 @@ mod tests {
 
         let app = ApiServer::new(config)
             .expect("server should build")
-            .build_router();
+            .build_router()
+            .expect("router should build");
         let response = app
             .oneshot(
                 Request::builder()
