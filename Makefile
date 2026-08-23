@@ -1,4 +1,8 @@
-.PHONY: help build run shell test clean batch compare capture
+.PHONY: help build run shell stop test test-domain batch compare capture results captures analyze clean-results clean-captures clean clean-all rebuild logs ps quickstart examples
+
+COMPOSE := docker compose -f compose.lab.yml
+SERVICE := cipherrun-lab
+CIPHERRUN_VERSION ?= 0.3.1
 
 # Colors for output
 BLUE := \033[0;34m
@@ -8,7 +12,7 @@ RED := \033[0;31m
 NC := \033[0m # No Color
 
 help: ## Show this help message
-	@echo "$(BLUE)CipherRun Docker Testing Environment$(NC)"
+	@echo "$(BLUE)CipherRun Docker Lab Environment$(NC)"
 	@echo ""
 	@echo "$(GREEN)Available targets:$(NC)"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}'
@@ -16,27 +20,27 @@ help: ## Show this help message
 
 build: ## Build Docker image
 	@echo "$(BLUE)Building CipherRun Docker image...$(NC)"
-	docker-compose build
+	$(COMPOSE) build
 
 run: ## Start container in background
 	@echo "$(BLUE)Starting CipherRun container...$(NC)"
-	docker-compose up -d
+	$(COMPOSE) up -d
 	@echo "$(GREEN)Container started!$(NC)"
 	@echo "Run 'make shell' to enter the container"
 
 shell: ## Enter the container shell
 	@echo "$(BLUE)Entering CipherRun container...$(NC)"
-	docker-compose exec cipherrun bash
+	$(COMPOSE) exec $(SERVICE) bash
 
 stop: ## Stop the container
 	@echo "$(BLUE)Stopping container...$(NC)"
-	docker-compose down
+	$(COMPOSE) down
 	@echo "$(GREEN)Container stopped$(NC)"
 
 # Testing targets
 test: ## Run a quick test (google.com)
 	@echo "$(BLUE)Testing google.com...$(NC)"
-	docker-compose exec cipherrun cipherrun google.com
+	$(COMPOSE) exec $(SERVICE) cipherrun google.com
 
 test-domain: ## Test specific domain (usage: make test-domain DOMAIN=example.com)
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -45,11 +49,11 @@ test-domain: ## Test specific domain (usage: make test-domain DOMAIN=example.com
 		exit 1; \
 	fi
 	@echo "$(BLUE)Testing $(DOMAIN)...$(NC)"
-	docker-compose exec cipherrun cipherrun $(DOMAIN)
+	$(COMPOSE) exec $(SERVICE) cipherrun $(DOMAIN)
 
 batch: ## Run batch test on multiple domains
 	@echo "$(BLUE)Running batch test...$(NC)"
-	docker-compose exec cipherrun /scripts/batch-test.sh
+	$(COMPOSE) exec $(SERVICE) /scripts/batch-test.sh
 
 compare: ## Compare ClientHello (usage: make compare DOMAIN=example.com)
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -58,7 +62,7 @@ compare: ## Compare ClientHello (usage: make compare DOMAIN=example.com)
 		exit 1; \
 	fi
 	@echo "$(BLUE)Comparing ClientHello for $(DOMAIN)...$(NC)"
-	docker-compose exec cipherrun /scripts/compare-clienthello.sh $(DOMAIN)
+	$(COMPOSE) exec $(SERVICE) /scripts/compare-clienthello.sh $(DOMAIN)
 
 capture: ## Capture and test (usage: make capture DOMAIN=example.com)
 	@if [ -z "$(DOMAIN)" ]; then \
@@ -67,7 +71,7 @@ capture: ## Capture and test (usage: make capture DOMAIN=example.com)
 		exit 1; \
 	fi
 	@echo "$(BLUE)Capturing traffic for $(DOMAIN)...$(NC)"
-	docker-compose exec cipherrun /scripts/capture-and-test.sh $(DOMAIN)
+	$(COMPOSE) exec $(SERVICE) /scripts/capture-and-test.sh $(DOMAIN)
 
 # Analysis targets
 results: ## Show latest results
@@ -84,7 +88,7 @@ analyze: ## Analyze latest PCAP with tshark
 		echo "$(RED)No PCAP files found$(NC)"; \
 	else \
 		echo "$(BLUE)Analyzing $$LATEST$(NC)"; \
-		docker-compose exec cipherrun tshark -r $$LATEST; \
+		$(COMPOSE) exec $(SERVICE) tshark -r "/captures/$$(basename "$$LATEST")"; \
 	fi
 
 # Cleanup targets
@@ -103,20 +107,20 @@ clean: clean-results clean-captures ## Clean all generated files
 
 clean-all: clean ## Clean everything including Docker image
 	@echo "$(YELLOW)Removing Docker image...$(NC)"
-	docker-compose down -v
-	docker rmi cipherrun:latest 2>/dev/null || true
+	$(COMPOSE) down -v
+	docker rmi cipherrun-lab:$(CIPHERRUN_VERSION) 2>/dev/null || true
 	@echo "$(GREEN)Everything cleaned$(NC)"
 
 # Development targets
 rebuild: ## Rebuild Docker image from scratch
 	@echo "$(BLUE)Rebuilding Docker image...$(NC)"
-	docker-compose build --no-cache
+	$(COMPOSE) build --no-cache
 
 logs: ## Show container logs
-	docker-compose logs -f
+	$(COMPOSE) logs -f
 
 ps: ## Show container status
-	docker-compose ps
+	$(COMPOSE) ps
 
 # Quick start guide
 quickstart: build run ## Quick start: build and run
