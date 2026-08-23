@@ -19,8 +19,6 @@ pub struct AuthExtension {
     pub key_id: String,
     pub principal_id: String,
     pub tenant_id: Option<String>,
-    /// Whether the API key was provided via query parameter (less secure than header)
-    pub from_query_param: bool,
 }
 
 fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
@@ -46,9 +44,25 @@ fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
     Ok(api_key)
 }
 
-fn allows_query_api_key(path: &str) -> bool {
+fn is_stream_path(path: &str) -> bool {
     let segments: Vec<_> = path.trim_matches('/').split('/').collect();
     matches!(segments.as_slice(), ["api", "v1", "scan", scan_id, "stream"] if !scan_id.is_empty())
+}
+
+fn stream_ticket_from_query(query: &str) -> Result<Option<String>, ApiError> {
+    let mut ticket = None;
+    for param in query.split('&') {
+        let (key, value) = param.split_once('=').unwrap_or((param, ""));
+        if decode_query_component(key)? == "ticket" {
+            if ticket.is_some() || value.is_empty() {
+                return Err(ApiError::BadRequest(
+                    "ticket query parameter must appear once with a value".to_string(),
+                ));
+            }
+            ticket = Some(decode_query_component(value)?);
+        }
+    }
+    Ok(ticket)
 }
 
 fn decode_query_component(value: &str) -> Result<String, ApiError> {
@@ -103,33 +117,40 @@ pub async fn authenticate(
         .map(api_key_from_query)
         .transpose()?
         .flatten();
-    if query_api_key.is_some() && !allows_query_api_key(path) {
+    if query_api_key.is_some() {
         return Err(ApiError::BadRequest(
-            "api_key query authentication is only supported for WebSocket stream endpoints; use X-API-Key".to_string(),
+            "api_key query authentication is no longer supported; use X-API-Key or a one-use stream ticket"
+                .to_string(),
         ));
+    }
+    let stream_ticket = req
+        .uri()
+        .query()
+        .map(stream_ticket_from_query)
+        .transpose()?
+        .flatten();
+    if stream_ticket.is_some() {
+        if !is_stream_path(path) {
+            return Err(ApiError::BadRequest(
+                "stream tickets are only supported for WebSocket stream endpoints".to_string(),
+            ));
+        }
+        if query_api_key.is_some() || req.headers().contains_key("X-API-Key") {
+            return Err(ApiError::BadRequest(
+                "Use either a stream ticket or an API key, not both".to_string(),
+            ));
+        }
+        return Ok(next.run(req).await);
     }
 
     let header_api_key = api_key_from_headers(req.headers())?;
-    let (api_key, from_query_param) = if let Some(api_key) = header_api_key {
-        (api_key, false)
-    } else if let Some(api_key) = query_api_key {
-        (api_key, true)
+    let api_key = if let Some(api_key) = header_api_key {
+        api_key
     } else {
         return Err(ApiError::Unauthorized(
             "Missing API key (use X-API-Key header)".to_string(),
         ));
     };
-
-    // SECURITY AUDIT: Log when API key is provided via query parameter
-    // This is less secure than header-based auth and should be monitored
-    if from_query_param {
-        tracing::warn!(
-            "DEPRECATED: API key provided via WebSocket query parameter. \
-             Key may be logged in server logs, proxy logs, and browser history. \
-             Path: {}",
-            path
-        );
-    }
 
     // Validate API key
     let authenticated = config
@@ -141,7 +162,6 @@ pub async fn authenticate(
         key_id: authenticated.key_id,
         principal_id: authenticated.principal_id,
         tenant_id: authenticated.tenant_id,
-        from_query_param,
     };
     req.extensions_mut().insert(auth_ext);
 
@@ -216,7 +236,6 @@ mod tests {
             key_id: "key-id".to_string(),
             principal_id: "principal-id".to_string(),
             tenant_id: None,
-            from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
 
@@ -287,11 +306,11 @@ mod tests {
     }
 
     #[test]
-    fn test_query_api_key_is_only_allowed_for_exact_stream_route() {
-        assert!(allows_query_api_key("/api/v1/scan/scan-id/stream"));
-        assert!(!allows_query_api_key("/api/v1/stats"));
-        assert!(!allows_query_api_key("/api/v1/scan//stream"));
-        assert!(!allows_query_api_key("/api/v1/scan/scan-id/results/stream"));
+    fn test_stream_path_requires_exact_route() {
+        assert!(is_stream_path("/api/v1/scan/scan-id/stream"));
+        assert!(!is_stream_path("/api/v1/stats"));
+        assert!(!is_stream_path("/api/v1/scan//stream"));
+        assert!(!is_stream_path("/api/v1/scan/scan-id/results/stream"));
     }
 
     #[test]

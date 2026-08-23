@@ -6,7 +6,7 @@ use crate::api::{
         request::{PolicyRequest, ScanOptions, ScanRequest},
         response::{
             CertificateListResponse, HealthResponse, ScanResponse, ScanStatusResponse,
-            StatsResponse,
+            StatsResponse, StreamTicketResponse,
         },
     },
     routes,
@@ -25,6 +25,7 @@ use utoipa::{
         routes::scans::get_scan_results,
         routes::scans::cancel_scan,
         routes::scans::websocket_handler,
+        routes::scans::create_stream_ticket,
         routes::certificates::list_certificates,
         routes::certificates::get_certificate,
         routes::compliance::check_compliance,
@@ -48,6 +49,7 @@ use utoipa::{
             HealthResponse,
             StatsResponse,
             CertificateListResponse,
+            StreamTicketResponse,
 
             // Error model
             ApiErrorResponse,
@@ -95,9 +97,11 @@ API requests are rate limited to 100 requests per minute per API key.
 
 ## WebSocket Streaming
 
-Real-time scan progress is available via WebSocket at `/api/v1/scan/{id}/stream`.
+Request a 60-second, one-use ticket with `POST /api/v1/scan/{id}/stream-ticket`,
+then connect to the returned `websocket_url`. API credentials are never accepted
+in query parameters.
 
-Connect to the WebSocket endpoint to receive JSON progress messages:
+The WebSocket sends JSON progress messages:
 
 ```json
 {

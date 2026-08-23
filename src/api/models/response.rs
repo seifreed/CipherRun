@@ -4,6 +4,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StreamTicketResponse {
+    pub ticket: String,
+    pub expires_at: DateTime<Utc>,
+    pub websocket_url: String,
+}
+
 /// Scan response (returned when creating a scan)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScanResponse {

@@ -96,6 +96,10 @@ development-only in-memory backend.
 `job_retention_seconds` controls terminal job TTL (seven days by default);
 queued and running work is never removed by retention cleanup.
 
+Browser WebSocket clients obtain a 60-second, one-use URL from
+`POST /api/v1/scan/{id}/stream-ticket` using the `X-API-Key` header. Raw API
+credentials in query parameters are rejected.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash

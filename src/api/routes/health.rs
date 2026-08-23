@@ -199,6 +199,7 @@ mod tests {
             rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
             db_pool: None,
             policy_dir: None,
+            stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
         });
 
         let Json(response) = health_check(State(state)).await;

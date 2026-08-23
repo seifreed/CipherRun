@@ -1,6 +1,7 @@
 // WebSocket Module
 
 pub mod progress;
+pub mod tickets;
 
 pub use progress::handle_websocket;
 

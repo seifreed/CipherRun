@@ -62,18 +62,22 @@ async fn test_auth_missing_key_returns_401() {
 }
 
 #[tokio::test]
-async fn test_auth_query_key_is_rejected_outside_websocket_stream() {
+async fn test_auth_query_key_is_rejected_everywhere() {
     let app = common::api::test_api_router();
-    let (status, body) =
-        common::api::send_get_json(&app, "/api/v1/stats?api_key=test-user-key", None).await;
+    for path in [
+        "/api/v1/stats?api_key=test-user-key",
+        "/api/v1/scan/scan-id/stream?api_key=test-user-key",
+    ] {
+        let (status, body) = common::api::send_get_json(&app, path, None).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        body["message"]
-            .as_str()
-            .expect("error message should be a string")
-            .contains("only supported for WebSocket stream endpoints")
-    );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["message"]
+                .as_str()
+                .expect("error message should be a string")
+                .contains("no longer supported")
+        );
+    }
 }
 
 #[tokio::test]
@@ -137,6 +141,25 @@ async fn test_scan_owner_isolation_and_admin_access() {
     assert_eq!(owner_status, StatusCode::OK);
     assert_eq!(other_status, StatusCode::NOT_FOUND);
     assert_eq!(admin_status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_stream_ticket_respects_scan_ownership() {
+    let app = common::api::test_api_router();
+    let (status, created) =
+        common::api::create_scan(&app, Some("test-user-key"), scan_payload()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let scan_id = created["scan_id"].as_str().expect("scan id should exist");
+    let path = format!("/api/v1/scan/{scan_id}/stream-ticket");
+
+    let (owner_status, ticket) =
+        common::api::send_json(&app, "POST", &path, Some("test-user-key"), None).await;
+    let (other_status, _) =
+        common::api::send_json(&app, "POST", &path, Some("test-other-key"), None).await;
+
+    assert_eq!(owner_status, StatusCode::OK);
+    assert!(ticket["ticket"].is_string());
+    assert_eq!(other_status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

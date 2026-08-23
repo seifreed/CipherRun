@@ -26,6 +26,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Connected durable file job storage with restart recovery to the standalone API server.
 - Principal-scoped atomic scan idempotency via the `Idempotency-Key` request header.
 - Configurable terminal-job TTL with startup and periodic persisted-artifact cleanup.
+- Signed, scan-bound, single-use WebSocket tickets with 60-second expiry.
 
 ### Changed
 

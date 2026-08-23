@@ -79,6 +79,10 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
                 .layer(axum_middleware::from_fn(middleware::require_user)),
         )
         .route("/scan/{id}/results", get(routes::scans::get_scan_results))
+        .route(
+            "/scan/{id}/stream-ticket",
+            post(routes::scans::create_stream_ticket),
+        )
         .route("/health", get(routes::health::health_check))
         .route("/stats", get(routes::stats::get_stats));
 

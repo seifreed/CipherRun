@@ -8,7 +8,7 @@ use crate::api::{
     models::{
         error::{ApiError, ApiErrorResponse},
         request::ScanRequest,
-        response::{ScanResponse, ScanStatus, ScanStatusResponse},
+        response::{ScanResponse, ScanStatus, ScanStatusResponse, StreamTicketResponse},
     },
     presenters::scans::{present_queued_scan, present_scan_status},
     presenters::target_input::{scan_request_from_target, scan_request_from_target_and_options},
@@ -18,7 +18,7 @@ use crate::api::{
 use crate::security::webhook::validate_webhook_url;
 use axum::{
     Extension, Json,
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, RawQuery, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -290,6 +290,32 @@ pub async fn cancel_scan(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/scan/{id}/stream-ticket",
+    tag = "scans",
+    params(("id" = String, Path, description = "Scan ID")),
+    responses(
+        (status = 200, description = "One-use WebSocket ticket", body = StreamTicketResponse),
+        (status = 404, description = "Scan not found", body = ApiErrorResponse)
+    ),
+    security(("api_key" = []))
+)]
+pub async fn create_stream_ticket(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
+    Path(scan_id): Path<String>,
+) -> Result<Json<StreamTicketResponse>, ApiError> {
+    let job = scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await?;
+    authorize_scan(&job, &auth)?;
+    let (ticket, expires_at) = state.stream_tickets.issue(&scan_id, &auth).await?;
+    Ok(Json(StreamTicketResponse {
+        websocket_url: format!("/api/v1/scan/{scan_id}/stream?ticket={ticket}"),
+        ticket,
+        expires_at,
+    }))
+}
+
 /// WebSocket endpoint for scan progress
 ///
 /// Streams real-time progress updates for a specific scan
@@ -313,8 +339,27 @@ pub async fn websocket_handler(
     ws: WebSocketUpgrade,
     Path(scan_id): Path<String>,
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthExtension>,
+    auth: Option<Extension<AuthExtension>>,
+    RawQuery(query): RawQuery,
 ) -> Response {
+    let auth = match auth {
+        Some(Extension(auth)) => auth,
+        None => {
+            let ticket = query
+                .as_deref()
+                .and_then(|query| {
+                    url::form_urlencoded::parse(query.as_bytes()).find(|(key, _)| key == "ticket")
+                })
+                .map(|(_, value)| value.into_owned());
+            let Some(ticket) = ticket else {
+                return ApiError::Unauthorized("Missing stream ticket".to_string()).into_response();
+            };
+            match state.stream_tickets.consume(&ticket, &scan_id).await {
+                Ok(auth) => auth,
+                Err(error) => return error.into_response(),
+            }
+        }
+    };
     match scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await {
         Ok(job) if authorize_scan(&job, &auth).is_ok() => {
             let ws_state = Arc::new(crate::api::ws::progress::WsState {
@@ -338,7 +383,7 @@ mod tests {
     use crate::api::models::request::ScanOptions;
     use crate::api::state::ApiStats;
     use async_trait::async_trait;
-    use axum::{Router, http::StatusCode, routing::get};
+    use axum::{Router, http::StatusCode, middleware as axum_middleware, routing::get};
     use std::sync::Arc;
     use std::time::Instant;
     use tokio::net::TcpListener;
@@ -363,6 +408,7 @@ mod tests {
             rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
             db_pool: None,
             policy_dir: None,
+            stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
         })
     }
 
@@ -372,7 +418,6 @@ mod tests {
             key_id: "test-key".to_string(),
             principal_id: "test-principal".to_string(),
             tenant_id: None,
-            from_query_param: false,
         })
     }
 
@@ -688,6 +733,58 @@ mod tests {
         });
 
         (format!("ws://{}/api/v1/scan", addr), shutdown_tx)
+    }
+
+    async fn start_ticket_ws_test_server(state: Arc<AppState>) -> (String, oneshot::Sender<()>) {
+        let app = Router::new()
+            .route("/api/v1/scan/{id}/stream", get(websocket_handler))
+            .layer(axum_middleware::from_fn_with_state(
+                state.config.clone(),
+                crate::api::middleware::authenticate,
+            ))
+            .with_state(state);
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("address should resolve");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        });
+        tokio::spawn(async move {
+            let _ = server.await;
+        });
+
+        (format!("ws://{}/api/v1/scan", addr), shutdown_tx)
+    }
+
+    #[tokio::test]
+    async fn test_websocket_ticket_is_accepted_once() {
+        let state = build_state();
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        let scan_id = job.id.clone();
+        state.job_queue.enqueue(job).await.unwrap();
+        let (ticket, _) = state
+            .stream_tickets
+            .issue(&scan_id, &test_auth().0)
+            .await
+            .unwrap();
+        let (base_url, shutdown) = start_ticket_ws_test_server(state).await;
+        let url = format!("{base_url}/{scan_id}/stream?ticket={ticket}");
+
+        let (mut websocket, _) = connect_async(&url).await.expect("ticket should connect");
+        websocket.close(None).await.unwrap();
+        let replay = connect_async(&url)
+            .await
+            .expect_err("used ticket should be rejected");
+        match replay {
+            WsError::Http(response) => assert_eq!(response.status(), StatusCode::UNAUTHORIZED),
+            other => panic!("unexpected websocket error: {other}"),
+        }
+
+        let _ = shutdown.send(());
     }
 
     #[tokio::test]

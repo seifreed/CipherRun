@@ -6,6 +6,7 @@ use crate::api::{
     jobs::{FileJobStorage, InMemoryJobQueue, JobQueue, ScanExecutor},
     middleware::rate_limit::PerKeyRateLimiter,
     models::response::ProgressMessage,
+    ws::tickets::StreamTicketManager,
 };
 use crate::db::DatabasePool;
 use std::collections::VecDeque;
@@ -53,6 +54,9 @@ pub struct AppState {
 
     /// Policy directory (optional)
     pub policy_dir: Option<PathBuf>,
+
+    /// Signed, one-use WebSocket stream tickets.
+    pub stream_tickets: Arc<StreamTicketManager>,
 }
 
 /// API statistics
@@ -269,6 +273,7 @@ impl AppState {
             rate_limiter,
             db_pool: None,
             policy_dir,
+            stream_tickets: Arc::new(StreamTicketManager::new()?),
         })
     }
 

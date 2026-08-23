@@ -40,7 +40,6 @@ mod tests {
             key_id: "key-id".to_string(),
             principal_id: "principal-id".to_string(),
             tenant_id: None,
-            from_query_param: false,
         };
         req.extensions_mut().insert(auth.clone());
 

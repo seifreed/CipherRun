@@ -76,6 +76,10 @@ impl ApiServer {
             )
             .route("/scan/{id}/results", get(routes::scans::get_scan_results))
             .route("/scan/{id}/stream", get(routes::scans::websocket_handler))
+            .route(
+                "/scan/{id}/stream-ticket",
+                post(routes::scans::create_stream_ticket),
+            )
             // Certificate routes
             .route(
                 "/certificates",
