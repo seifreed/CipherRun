@@ -42,6 +42,7 @@ impl Reporter {
             ComplianceStatus::Warning => "WARNING".yellow().bold(),
         };
         output.push_str(&format!("Overall Status: {}\n", status_str));
+        output.push_str(&format!("Assessment Scope: {}\n", report.disclaimer));
 
         // Summary
         output.push_str(&format!("\n{}\n", "Summary:".cyan().bold()));
@@ -265,6 +266,10 @@ impl Reporter {
             "<p><strong>Overall Status:</strong> <span class=\"{}\">{}</span></p>\n",
             status_class, report.overall_status
         ));
+        html.push_str(&format!(
+            "<p><strong>Assessment Scope:</strong> {}</p>\n",
+            escape_html(&report.disclaimer)
+        ));
         html.push_str("</div>\n");
 
         // Summary
@@ -389,6 +394,7 @@ mod tests {
         let json = Reporter::to_json(&report, false).expect("test assertion should succeed");
         assert!(json.contains("test.com:443"));
         assert!(json.contains("Test Framework"));
+        assert!(json.contains("does not establish certification"));
     }
 
     #[test]
@@ -445,6 +451,19 @@ mod tests {
             "server-controlled target must be HTML-escaped, not emitted raw"
         );
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn test_human_reports_include_scope_disclaimer() {
+        let framework = test_framework();
+        let report = finalized_report(&framework);
+
+        assert!(Reporter::to_terminal(&report).contains(&report.disclaimer));
+        assert!(
+            Reporter::to_html(&report)
+                .expect("HTML report should render")
+                .contains(&report.disclaimer)
+        );
     }
 
     #[test]

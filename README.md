@@ -40,6 +40,8 @@
 | **CT Logs** | Real-time CT log streaming + Bloom deduplication |
 | **Database Support** | PostgreSQL/SQLite analytics and history |
 
+Compliance reports are TLS posture checks mapped to selected technical controls. Passing them does not establish certification or full regulatory compliance.
+
 ---
 
 ## Installation

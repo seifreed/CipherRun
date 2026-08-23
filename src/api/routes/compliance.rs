@@ -87,6 +87,9 @@ impl ComplianceResponseFormat {
 /// Compliance check response
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ComplianceCheckResponse {
+    /// Scope limitation for external TLS posture checks
+    pub disclaimer: String,
+
     /// Framework ID
     pub framework_id: String,
 

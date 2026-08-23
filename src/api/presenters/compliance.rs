@@ -11,6 +11,7 @@ pub fn present_compliance_report(
     detailed: bool,
 ) -> ComplianceCheckResponse {
     ComplianceCheckResponse {
+        disclaimer: report.disclaimer.clone(),
         framework_id: framework.id.clone(),
         framework_name: framework.name.clone(),
         framework_version: framework.version.clone(),
@@ -119,6 +120,10 @@ mod tests {
         let response = present_compliance_report(&framework, &report, false);
 
         assert!(response.requirements.is_none());
+        assert_eq!(
+            response.disclaimer,
+            crate::compliance::COMPLIANCE_DISCLAIMER
+        );
         assert_eq!(response.status, "pass");
         assert_eq!(response.summary.compliance_percentage, 0.0);
     }

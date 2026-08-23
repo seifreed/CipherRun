@@ -24,6 +24,12 @@ pub use reporter::Reporter;
 pub use rule::{Rule, RuleType};
 pub use source::BuiltinFrameworkSource;
 
+pub const COMPLIANCE_DISCLAIMER: &str = "TLS posture checks mapped to selected technical controls. Passing these checks does not establish certification or full regulatory compliance.";
+
+fn default_compliance_disclaimer() -> String {
+    COMPLIANCE_DISCLAIMER.to_string()
+}
+
 /// Overall compliance status for a scan
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -146,6 +152,9 @@ pub struct ComplianceSummary {
 /// Complete compliance report for a target
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceReport {
+    /// Scope limitation for external TLS posture assessments
+    #[serde(default = "default_compliance_disclaimer")]
+    pub disclaimer: String,
     /// Framework used for evaluation
     pub framework: ComplianceFramework,
     /// Target that was scanned (hostname:port)
@@ -164,6 +173,7 @@ impl ComplianceReport {
     /// Create a new compliance report
     pub fn new(framework: &ComplianceFramework, target: String) -> Self {
         Self {
+            disclaimer: default_compliance_disclaimer(),
             framework: framework.clone(),
             target,
             scan_timestamp: Utc::now(),

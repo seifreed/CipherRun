@@ -235,6 +235,7 @@ mod tests {
 
     fn compliance_report(status: ComplianceStatus) -> ComplianceReport {
         ComplianceReport {
+            disclaimer: crate::compliance::COMPLIANCE_DISCLAIMER.to_string(),
             framework: ComplianceFramework {
                 id: "test".to_string(),
                 name: "Test".to_string(),
