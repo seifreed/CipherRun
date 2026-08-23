@@ -256,10 +256,12 @@ impl Args {
             if self.output.csv.is_some()
                 || self.output.html.is_some()
                 || self.output.xml.is_some()
+                || self.output.sarif.is_some()
+                || self.output.junit.is_some()
                 || self.output.output_all.is_some()
             {
                 crate::tls_bail!(
-                    "--scan-all-ips supports JSON output only; CSV/HTML/XML and --output-all are not available"
+                    "--scan-all-ips supports JSON output only; CSV/HTML/XML/SARIF/JUnit and --output-all are not available"
                 );
             }
             if self.target.is_none() || self.input_file.is_some() || self.mx_domain.is_some() {
@@ -361,10 +363,12 @@ impl Args {
         if (self.input_file.is_some() || self.asn.is_some() || self.cidr.is_some())
             && (self.output.csv.is_some()
                 || self.output.html.is_some()
-                || self.output.xml.is_some())
+                || self.output.xml.is_some()
+                || self.output.sarif.is_some()
+                || self.output.junit.is_some())
         {
             crate::tls_bail!(
-                "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML are not available with --file/--asn/--cidr"
+                "Mass scan only supports JSON collection export (--json or --output-all); CSV/HTML/XML/SARIF/JUnit are not available with --file/--asn/--cidr"
             );
         }
 

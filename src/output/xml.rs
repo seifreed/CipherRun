@@ -342,7 +342,7 @@ fn write_vulnerabilities_block(
     xml.push_str("  </vulnerabilities>\n");
 }
 
-fn escape_xml(s: &str) -> String {
+pub(crate) fn escape_xml(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

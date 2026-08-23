@@ -51,6 +51,8 @@ impl MxTestCommand {
             || self.args.output.csv.is_some()
             || self.args.output.html.is_some()
             || self.args.output.xml.is_some()
+            || self.args.output.sarif.is_some()
+            || self.args.output.junit.is_some()
     }
 
     fn export_collection_json(

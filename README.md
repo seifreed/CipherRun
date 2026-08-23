@@ -124,6 +124,9 @@ cipherrun --json results.json example.com
 
 # HTML report
 cipherrun --html report.html example.com
+
+# CI artifacts
+cipherrun --sarif results.sarif --junit results.junit.xml example.com
 ```
 
 ### STARTTLS Examples
@@ -165,7 +168,7 @@ Criterion benchmarks live in `benches/`, and `cargo-fuzz` targets plus seed corp
 ## Output Formats
 
 ```
-Terminal, JSON, CSV, HTML, XML
+Terminal, JSON, CSV, HTML, XML, SARIF 2.1.0, JUnit XML
 ```
 
 ---

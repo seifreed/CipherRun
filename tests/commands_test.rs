@@ -416,6 +416,21 @@ fn test_validate_scan_with_database_storage() {
 }
 
 #[test]
+fn test_validate_single_scan_with_ci_artifacts() {
+    let args = Args::parse_with_sources_from([
+        "cipherrun",
+        "--sarif",
+        "results.sarif",
+        "--junit",
+        "results.junit.xml",
+        "example.com:443",
+    ])
+    .unwrap();
+    assert!(args.validate().is_ok());
+    validate_ok(args);
+}
+
+#[test]
 fn test_validate_mass_scan_with_parallel() {
     validate_ok(build_args(|args| {
         args.input_file = Some(PathBuf::from("targets.txt"));

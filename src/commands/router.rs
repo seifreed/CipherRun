@@ -55,6 +55,8 @@ impl CommandRouter {
             || args.output.csv.is_some()
             || args.output.html.is_some()
             || args.output.xml.is_some()
+            || args.output.sarif.is_some()
+            || args.output.junit.is_some()
             || args.output.output_all.is_some()
             || args.output.outprefix.is_some()
             || args.output.json_pretty
@@ -193,10 +195,12 @@ impl CommandRouter {
         if analytics_count == 1
             && (args.output.csv.is_some()
                 || args.output.html.is_some()
-                || args.output.xml.is_some())
+                || args.output.xml.is_some()
+                || args.output.sarif.is_some()
+                || args.output.junit.is_some())
         {
             return Err(TlsError::InvalidInput {
-                message: "Analytics output supports terminal or JSON only; CSV/HTML/XML exports are not available.".to_string(),
+                message: "Analytics output supports terminal or JSON only; CSV/HTML/XML/SARIF/JUnit exports are not available.".to_string(),
             });
         }
         if args.ct_logs.enable && args.ct_logs.beginning && !args.ct_logs.index.is_empty() {

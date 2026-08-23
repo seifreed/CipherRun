@@ -39,6 +39,14 @@ pub struct OutputArgs {
     #[arg(long = "xml", value_name = "FILE")]
     pub xml: Option<PathBuf>,
 
+    /// Output SARIF 2.1.0 for code scanning systems
+    #[arg(long = "sarif", value_name = "FILE")]
+    pub sarif: Option<PathBuf>,
+
+    /// Output JUnit XML for CI test reporting
+    #[arg(long = "junit", value_name = "FILE")]
+    pub junit: Option<PathBuf>,
+
     /// Output all supported formats with basename (like nmap -oA)
     #[arg(short = 'o', long = "output-all", value_name = "BASENAME")]
     pub output_all: Option<PathBuf>,
@@ -130,6 +138,8 @@ mod tests {
         assert!(args.csv.is_none());
         assert!(args.html.is_none());
         assert!(args.xml.is_none());
+        assert!(args.sarif.is_none());
+        assert!(args.junit.is_none());
         assert!(args.output_all.is_none());
         assert!(args.outprefix.is_none());
         assert!(!args.quiet);

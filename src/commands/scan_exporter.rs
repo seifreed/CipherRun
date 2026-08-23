@@ -13,6 +13,8 @@ pub(crate) enum ExportKind {
     Csv,
     Html,
     Xml,
+    Sarif,
+    Junit,
     RawHello,
 }
 
@@ -24,6 +26,8 @@ pub(super) struct ScanExportPlan<'a> {
     pub(super) csv_file: Option<std::path::PathBuf>,
     pub(super) html_file: Option<std::path::PathBuf>,
     pub(super) xml_file: Option<std::path::PathBuf>,
+    pub(super) sarif_file: Option<std::path::PathBuf>,
+    pub(super) junit_file: Option<std::path::PathBuf>,
 }
 
 impl ScanExportPlan<'_> {
@@ -33,6 +37,8 @@ impl ScanExportPlan<'_> {
             || self.csv_file.is_some()
             || self.html_file.is_some()
             || self.xml_file.is_some()
+            || self.sarif_file.is_some()
+            || self.junit_file.is_some()
     }
 
     pub(super) fn has_multi_ip_json_target(&self) -> bool {
@@ -77,12 +83,16 @@ impl<'a> ScanExporter<'a> {
         let mut csv_file = self.args.output.csv.clone();
         let mut html_file = self.args.output.html.clone();
         let mut xml_file = self.args.output.xml.clone();
+        let mut sarif_file = self.args.output.sarif.clone();
+        let mut junit_file = self.args.output.junit.clone();
 
         if let Some(base) = bundle_base {
             json_file.get_or_insert_with(|| self.bundle_output_path(base, "json"));
             csv_file.get_or_insert_with(|| self.bundle_output_path(base, "csv"));
             html_file.get_or_insert_with(|| self.bundle_output_path(base, "html"));
             xml_file.get_or_insert_with(|| self.bundle_output_path(base, "xml"));
+            sarif_file.get_or_insert_with(|| self.bundle_output_path(base, "sarif"));
+            junit_file.get_or_insert_with(|| self.bundle_output_path(base, "junit.xml"));
 
             if view.has_multi_ip_export_data() {
                 json_multi_ip.get_or_insert_with(|| self.bundle_output_path(base, "multi-ip.json"));
@@ -97,6 +107,8 @@ impl<'a> ScanExporter<'a> {
             csv_file: self.apply_outprefix_option(csv_file)?,
             html_file: self.apply_outprefix_option(html_file)?,
             xml_file: self.apply_outprefix_option(xml_file)?,
+            sarif_file: self.apply_outprefix_option(sarif_file)?,
+            junit_file: self.apply_outprefix_option(junit_file)?,
         })
     }
 
@@ -165,6 +177,20 @@ impl<'a> ScanExporter<'a> {
             let xml_content = xml::generate_xml_report(plan.results)?;
             self.write_artifact(&xml_file, &xml_content, ExportKind::Xml)?;
             println!("✓ Results exported to XML: {}", xml_file.display());
+            exported = true;
+        }
+
+        if let Some(sarif_file) = plan.sarif_file {
+            let sarif = crate::output::sarif::generate_sarif_report(plan.results)?;
+            self.write_artifact(&sarif_file, &sarif, ExportKind::Sarif)?;
+            println!("✓ Results exported to SARIF: {}", sarif_file.display());
+            exported = true;
+        }
+
+        if let Some(junit_file) = plan.junit_file {
+            let junit = crate::output::junit::generate_junit_report(plan.results);
+            self.write_artifact(&junit_file, &junit, ExportKind::Junit)?;
+            println!("✓ Results exported to JUnit: {}", junit_file.display());
             exported = true;
         }
 
@@ -239,6 +265,8 @@ impl<'a> ScanExporter<'a> {
                 | ExportKind::MultiIpJson
                 | ExportKind::Html
                 | ExportKind::Xml
+                | ExportKind::Sarif
+                | ExportKind::Junit
                 | ExportKind::RawHello => {
                     return Err(crate::TlsError::InvalidInput {
                         message: format!(
@@ -453,6 +481,30 @@ mod tests {
             .expect("json path should exist");
 
         assert_eq!(path, temp.path().join("pref-report.json"));
+    }
+
+    #[test]
+    fn test_output_all_includes_ci_artifacts() {
+        let args = Args {
+            output: crate::cli::OutputArgs {
+                output_all: Some(PathBuf::from("report")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let results = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        let view = crate::application::ScanExportView {
+            results: &results,
+            has_any_exportable_results: true,
+            should_export_multi_ip_json: false,
+        };
+        let plan = ScanExporter::new(&args).build_plan_from_view(view).unwrap();
+
+        assert_eq!(plan.sarif_file, Some(PathBuf::from("report.sarif")));
+        assert_eq!(plan.junit_file, Some(PathBuf::from("report.junit.xml")));
     }
 
     #[cfg(unix)]
