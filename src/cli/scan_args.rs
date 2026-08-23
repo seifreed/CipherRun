@@ -2,7 +2,14 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
-use clap::{ArgAction, Args};
+use clap::{ArgAction, Args, ValueEnum};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ScanProfile {
+    Safe,
+    Standard,
+    Aggressive,
+}
 
 /// Core TLS/SSL scanning options
 ///
@@ -11,6 +18,10 @@ use clap::{ArgAction, Args};
 /// and server configuration testing.
 #[derive(Args, Debug, Clone, Default)]
 pub struct ScanArgs {
+    /// Scan intensity preset
+    #[arg(long = "profile", value_name = "PROFILE", value_enum)]
+    pub profile: Option<ScanProfile>,
+
     /// Test all protocols
     #[arg(short = 'p', long = "protocols")]
     pub protocols: bool,
@@ -244,6 +255,7 @@ mod tests {
         let args = parsed.args;
 
         assert!(!args.protocols);
+        assert!(args.profile.is_none());
         assert!(!args.each_cipher);
         assert!(!args.cipher_per_proto);
         assert!(!args.categories);

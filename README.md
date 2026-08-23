@@ -139,6 +139,11 @@ cipherrun --baseline baseline.json example.com
 # Explicitly authorized internal-network scans (local CLI only)
 cipherrun --allow-private intranet.example.internal
 cipherrun --allow-cidr 10.20.0.0/16 host.internal
+
+# Scan intensity presets
+cipherrun --profile safe example.com
+cipherrun --profile standard example.com
+cipherrun --profile aggressive example.com
 ```
 
 ### STARTTLS Examples

@@ -39,7 +39,7 @@ pub use http_args::HttpArgs;
 pub use monitoring_args::MonitoringArgs;
 pub use network_args::{DEFAULT_MAX_PARALLEL, NetworkArgs};
 pub use output_args::{FailOnSeverity, OutputArgs};
-pub use scan_args::ScanArgs;
+pub use scan_args::{ScanArgs, ScanProfile};
 pub use starttls_args::StarttlsArgs;
 pub use subcommands::CipherRunSubcommand;
 pub use tls_config_args::TlsConfigArgs;
@@ -226,6 +226,33 @@ impl Args {
     pub fn validate(&self) -> crate::Result<()> {
         self.compliance.validate()?;
 
+        if self.scan.profile == Some(ScanProfile::Safe)
+            && (self.scan.full
+                || self.scan.vulnerabilities
+                || self.scan.heartbleed
+                || self.scan.ccs
+                || self.scan.ticketbleed
+                || self.scan.robot
+                || self.scan.renegotiation
+                || self.scan.crime
+                || self.scan.breach
+                || self.scan.poodle
+                || self.scan.fallback
+                || self.scan.sweet32
+                || self.scan.beast
+                || self.scan.lucky13
+                || self.scan.freak
+                || self.scan.logjam
+                || self.scan.drown
+                || self.scan.early_data
+                || self.compliance.framework.is_some()
+                || self.compliance.policy.is_some())
+        {
+            crate::tls_bail!(
+                "--profile safe cannot be combined with vulnerability probes, compliance/policy evaluation, or --full"
+            );
+        }
+
         if let Some(mx_domain) = &self.mx_domain {
             validate_hostname(mx_domain)
                 .map_err(|e| crate::error::TlsError::Other(e.to_string()))?;
@@ -407,13 +434,22 @@ impl Args {
     }
 
     pub fn to_scan_request(&self) -> crate::Result<crate::application::ScanRequest> {
+        let safe_profile = self.scan.profile == Some(ScanProfile::Safe);
+        let aggressive_profile = self.scan.profile == Some(ScanProfile::Aggressive);
+        let standard_profile = self.scan.profile == Some(ScanProfile::Standard);
         Ok(crate::application::ScanRequest {
             target: self.target.clone(),
             port: self.port,
             ip: self.ip.clone(),
             scan: crate::application::scan_request::ScanRequestScan {
                 scope: crate::application::scan_request::ScanRequestScope {
-                    all: self.scan.all,
+                    all: if safe_profile {
+                        false
+                    } else if standard_profile || aggressive_profile {
+                        true
+                    } else {
+                        self.scan.all
+                    },
                     // A compliance framework or policy is assessed against the
                     // scan results, and its rules consume protocol, cipher,
                     // certificate AND vulnerability data. Without a full scan the
@@ -422,11 +458,14 @@ impl Args {
                     // reporting a host with SWEET32/etc. as compliant. Force a
                     // full scan so compliance/policy verdicts cannot fail open.
                     full: self.scan.full
+                        || aggressive_profile
                         || self.compliance.framework.is_some()
                         || self.compliance.policy.is_some(),
                 },
                 proto: crate::application::scan_request::ScanRequestProto {
-                    enabled: self.scan.protocols || self.starttls.starttls_protocol().is_some(),
+                    enabled: self.scan.protocols
+                        || safe_profile
+                        || self.starttls.starttls_protocol().is_some(),
                     ssl2: self.scan.ssl2,
                     ssl3: self.scan.ssl3,
                     tls10: self.scan.tls10,
@@ -442,7 +481,7 @@ impl Args {
                     forward_secrecy: self.scan.forward_secrecy,
                     server_defaults: self.scan.server_defaults,
                     server_preference: self.scan.server_preference,
-                    no_ciphersuites: self.scan.no_ciphersuites,
+                    no_ciphersuites: self.scan.no_ciphersuites || safe_profile,
                     show_groups: self.scan.show_groups,
                     no_groups: self.scan.no_groups,
                     show_sigs: self.scan.show_sigs,
@@ -473,7 +512,7 @@ impl Args {
                     early_data: self.scan.early_data,
                 },
                 certs: crate::application::scan_request::ScanRequestCerts {
-                    analyze_certificates: self.scan.show_certificates,
+                    analyze_certificates: self.scan.show_certificates || safe_profile,
                     ocsp: self.scan.ocsp,
                     no_check_certificate: self.scan.no_check_certificate,
                 },
@@ -482,7 +521,7 @@ impl Args {
                     disable_rating: self.scan.disable_rating,
                     pre_handshake: self.scan.pre_handshake,
                     probe_status: self.scan.probe_status,
-                    headers: self.scan.headers,
+                    headers: self.scan.headers || safe_profile,
                 },
             },
             network: crate::application::scan_request::ScanRequestNetwork {

@@ -16,6 +16,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Semantic `cipherrun diff` for versioned scan-result files.
 - Single-target baseline drift detection with `--baseline`.
 - Explicit local CLI private-network policy with `--allow-private` and CIDR-scoped exceptions.
+- Safe, standard, and aggressive scan intensity profiles.
 
 ### Changed
 

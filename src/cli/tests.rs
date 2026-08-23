@@ -758,6 +758,51 @@ fn test_to_scan_request_rejects_invalid_allowed_cidr() {
 }
 
 #[test]
+fn test_scan_profiles_map_to_distinct_phase_sets() {
+    let parse = |profile| {
+        Args::parse_with_sources_from(["cipherrun", "--profile", profile, "example.com"])
+            .unwrap()
+            .to_scan_request()
+            .unwrap()
+    };
+
+    let safe = parse("safe");
+    assert!(safe.should_run_protocol_phase());
+    assert!(safe.should_run_certificate_phase());
+    assert!(safe.should_run_http_headers_phase());
+    assert!(!safe.should_run_cipher_phase());
+    assert!(!safe.should_run_vulnerability_phase());
+
+    let standard = parse("standard");
+    assert!(standard.baseline_scan_requested());
+    assert!(standard.should_run_cipher_phase());
+    assert!(!standard.should_run_vulnerability_phase());
+
+    let aggressive = parse("aggressive");
+    assert!(aggressive.baseline_scan_requested());
+    assert!(aggressive.should_run_vulnerability_phase());
+}
+
+#[test]
+fn test_safe_profile_rejects_active_vulnerability_probe() {
+    let args = Args::parse_with_sources_from([
+        "cipherrun",
+        "--profile",
+        "safe",
+        "--heartbleed",
+        "example.com",
+    ])
+    .unwrap();
+
+    assert!(
+        args.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be combined with vulnerability probes")
+    );
+}
+
+#[test]
 fn test_validate_rejects_append_and_overwrite() {
     let args = Args {
         output: OutputArgs {
