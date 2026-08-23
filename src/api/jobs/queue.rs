@@ -30,6 +30,14 @@ pub struct ScanJob {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
 
+    /// Client-supplied idempotency key, scoped to `principal_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+
+    /// Digest of the normalized request bound to the idempotency key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+
     /// Target to scan
     pub target: String,
 
@@ -78,6 +86,8 @@ impl ScanJob {
             principal_id: String::new(),
             created_by_key_id: String::new(),
             tenant_id: None,
+            idempotency_key: None,
+            request_fingerprint: None,
             target,
             options,
             status: ScanStatus::Queued,
@@ -370,6 +380,20 @@ impl JobQueue for InMemoryJobQueue {
         }
 
         let job_id = job.id.clone();
+        if let Some(idempotency_key) = job.idempotency_key.as_deref()
+            && let Some(existing) = jobs.values().find(|existing| {
+                existing.principal_id == job.principal_id
+                    && existing.idempotency_key.as_deref() == Some(idempotency_key)
+            })
+        {
+            if existing.request_fingerprint == job.request_fingerprint {
+                return Ok(existing.id.clone());
+            }
+            return Err(crate::TlsError::InvalidInput {
+                message: "Idempotency-Key was already used with a different scan request"
+                    .to_string(),
+            });
+        }
         if jobs.contains_key(&job_id) {
             tls_bail!("Job already exists: {}", job_id);
         }
@@ -742,5 +766,64 @@ mod tests {
         assert_eq!(recovered_job.status, ScanStatus::Queued);
         assert_eq!(recovered_job.principal_id, "principal-1");
         assert_eq!(recovered.queue_length().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_is_atomic_and_scoped_to_principal() {
+        let queue = InMemoryJobQueue::new(10);
+        let mut first = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            ScanOptions::default(),
+            None,
+            "principal-1".to_string(),
+            "key-1".to_string(),
+            None,
+        );
+        first.idempotency_key = Some("request-1".to_string());
+        first.request_fingerprint = Some("fingerprint-1".to_string());
+        let first_id = queue
+            .enqueue(first)
+            .await
+            .expect("first enqueue should work");
+
+        let mut replay = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            ScanOptions::default(),
+            None,
+            "principal-1".to_string(),
+            "key-1".to_string(),
+            None,
+        );
+        replay.idempotency_key = Some("request-1".to_string());
+        replay.request_fingerprint = Some("fingerprint-1".to_string());
+        assert_eq!(queue.enqueue(replay).await.unwrap(), first_id);
+        assert_eq!(queue.list_jobs().await.unwrap().len(), 1);
+
+        let mut conflict = ScanJob::new_owned(
+            "other.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+            "principal-1".to_string(),
+            "key-1".to_string(),
+            None,
+        );
+        conflict.idempotency_key = Some("request-1".to_string());
+        conflict.request_fingerprint = Some("fingerprint-2".to_string());
+        assert!(matches!(
+            queue.enqueue(conflict).await,
+            Err(crate::TlsError::InvalidInput { .. })
+        ));
+
+        let mut other_principal = ScanJob::new_owned(
+            "other.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+            "principal-2".to_string(),
+            "key-2".to_string(),
+            None,
+        );
+        other_principal.idempotency_key = Some("request-1".to_string());
+        other_principal.request_fingerprint = Some("fingerprint-2".to_string());
+        assert_ne!(queue.enqueue(other_principal).await.unwrap(), first_id);
     }
 }

@@ -3,6 +3,32 @@ use serde_json::Value;
 
 mod common;
 
+async fn create_scan_idempotently(
+    router: &axum::Router,
+    idempotency_key: &str,
+    payload: &serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    use axum::{body::Body, http::Request};
+
+    let response = common::api::send(
+        router,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/scan")
+            .header("X-API-Key", "test-user-key")
+            .header("Idempotency-Key", idempotency_key)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(payload).unwrap()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
 fn assert_bad_request_message(body: &Value, expected_message_fragment: &str) {
     assert_eq!(body["error"], "BAD_REQUEST");
     assert!(
@@ -247,4 +273,28 @@ async fn test_scan_create_and_get_status() {
     assert_eq!(body["scan_id"], scan_id);
     assert!(body.get("status").is_some());
     assert!(body.get("progress").is_some());
+}
+
+#[tokio::test]
+async fn test_scan_create_idempotency_replays_and_rejects_payload_change() {
+    let router = common::api::test_api_router();
+    let request = common::api::scan_request_payload(
+        "example.com:443",
+        serde_json::json!({ "test_protocols": true }),
+    );
+
+    let (first_status, first) = create_scan_idempotently(&router, "request-1", &request).await;
+    let (replay_status, replay) = create_scan_idempotently(&router, "request-1", &request).await;
+    assert_eq!(first_status, StatusCode::CREATED);
+    assert_eq!(replay_status, StatusCode::CREATED);
+    assert_eq!(first["scan_id"], replay["scan_id"]);
+
+    let changed = common::api::scan_request_payload(
+        "other.example:443",
+        serde_json::json!({ "test_protocols": true }),
+    );
+    let (conflict_status, conflict) =
+        create_scan_idempotently(&router, "request-1", &changed).await;
+    assert_eq!(conflict_status, StatusCode::CONFLICT);
+    assert_eq!(conflict["error"], "CONFLICT");
 }

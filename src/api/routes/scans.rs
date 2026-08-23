@@ -19,7 +19,7 @@ use crate::security::webhook::validate_webhook_url;
 use axum::{
     Extension, Json,
     extract::{Path, State, WebSocketUpgrade},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
@@ -31,6 +31,38 @@ fn authorize_scan(job: &ScanJob, auth: &AuthExtension) -> Result<(), ApiError> {
     } else {
         Err(ApiError::NotFound("Scan not found".to_string()))
     }
+}
+
+fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let mut values = headers.get_all("Idempotency-Key").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(ApiError::BadRequest(
+            "Duplicate Idempotency-Key header".to_string(),
+        ));
+    }
+    let value = value
+        .to_str()
+        .map_err(|_| ApiError::BadRequest("Invalid Idempotency-Key header".to_string()))?;
+    if value.is_empty() || value.len() > 128 {
+        return Err(ApiError::BadRequest(
+            "Idempotency-Key must contain 1 to 128 visible ASCII characters".to_string(),
+        ));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn scan_request_fingerprint(
+    target: &str,
+    options: &crate::api::models::request::ScanOptions,
+    webhook_url: Option<&str>,
+) -> Result<String, ApiError> {
+    let encoded = serde_json::to_vec(&(target, options, webhook_url))
+        .map_err(|error| ApiError::Internal(format!("Failed to hash scan request: {error}")))?;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &encoded);
+    Ok(hex::encode(digest.as_ref()))
 }
 
 fn normalize_scan_options(
@@ -65,6 +97,7 @@ fn normalize_scan_options(
 pub async fn create_scan(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthExtension>,
+    headers: HeaderMap,
     Json(request): Json<ScanRequest>,
 ) -> Result<(StatusCode, Json<ScanResponse>), ApiError> {
     info!("Creating new scan for target: {}", request.target);
@@ -93,7 +126,12 @@ pub async fn create_scan(
     info!("Validated target: {}", final_target);
 
     // Create scan job with validated target
-    let job = ScanJob::new_owned(
+    let idempotency_key = idempotency_key(&headers)?;
+    let request_fingerprint = idempotency_key
+        .as_ref()
+        .map(|_| scan_request_fingerprint(&final_target, &options, request.webhook_url.as_deref()))
+        .transpose()?;
+    let mut job = ScanJob::new_owned(
         final_target.clone(),
         options,
         request.webhook_url,
@@ -101,6 +139,8 @@ pub async fn create_scan(
         auth.key_id,
         auth.tenant_id,
     );
+    job.idempotency_key = idempotency_key;
+    job.request_fingerprint = request_fingerprint;
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
@@ -359,7 +399,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("", Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("empty target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -370,7 +410,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("a".repeat(256), Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("too long target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -384,9 +424,10 @@ mod tests {
             Some(ScanOptions::full()),
         );
 
-        let (_, Json(response)) = create_scan(State(state), test_auth(), Json(request))
-            .await
-            .expect("max hostname with port should succeed");
+        let (_, Json(response)) =
+            create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
+                .await
+                .expect("max hostname with port should succeed");
         assert!(response.target.ends_with(":443"));
     }
 
@@ -395,9 +436,10 @@ mod tests {
         let state = build_state();
         let request = scan_request("2001:4860:4860::8888", Some(ScanOptions::full()));
 
-        let (_, Json(response)) = create_scan(State(state), test_auth(), Json(request))
-            .await
-            .expect("public IPv6 target without port should succeed");
+        let (_, Json(response)) =
+            create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
+                .await
+                .expect("public IPv6 target without port should succeed");
 
         assert_eq!(response.target, "[2001:4860:4860::8888]:443");
     }
@@ -463,9 +505,14 @@ mod tests {
         let state = build_state();
         let request = scan_request("example.com", None);
 
-        let (_, Json(response)) = create_scan(State(state.clone()), test_auth(), Json(request))
-            .await
-            .expect("request should succeed");
+        let (_, Json(response)) = create_scan(
+            State(state.clone()),
+            test_auth(),
+            HeaderMap::new(),
+            Json(request),
+        )
+        .await
+        .expect("request should succeed");
         let job = state
             .job_queue
             .get_job(&response.scan_id)
@@ -482,7 +529,7 @@ mod tests {
         let state = build_state();
         let request = scan_request("example.com", Some(ScanOptions::default()));
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("empty options should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -501,7 +548,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("conflicting IP family options should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -519,7 +566,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("zero timeout should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -537,7 +584,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("private IP override should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -555,7 +602,7 @@ mod tests {
             }),
         );
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("malformed IP override should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
@@ -573,7 +620,7 @@ mod tests {
             webhook_url: Some("https://localhost/callback".to_string()),
         };
 
-        let err = create_scan(State(state), test_auth(), Json(request))
+        let err = create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
             .await
             .expect_err("private webhook target should fail");
         assert!(matches!(err, ApiError::BadRequest(_)));
