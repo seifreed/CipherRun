@@ -21,6 +21,8 @@ include = [
     "data/**/*.pem",
     "data/**/*.css",
     "migrations/**/*.sql",
+    "schemas/**/*",
+    "fixtures/**/*.json",
     "Cargo.toml",
     "CHANGELOG.md",
     "LICENSE",

@@ -1,0 +1,879 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Complete TLS/SSL security scan results from CipherRun",
+  "properties": {
+    "advanced": {
+      "description": "Optional advanced analysis data",
+      "properties": {
+        "alpn_result": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "cdn_detection": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "client_cas": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "client_simulations": {
+          "items": {
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "intolerance": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "key_exchange_groups": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "load_balancer_info": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "pqc_readiness": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "signature_algorithms": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "certificate_chain": {
+      "description": "Certificate chain information",
+      "properties": {
+        "chain": {
+          "properties": {
+            "certificates": {
+              "items": {
+                "properties": {
+                  "aia_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "certificate_transparency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "debian_weak_key": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "ev_oids": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "expiry_countdown": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "extended_key_usage": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "extended_validation": {
+                    "type": "boolean"
+                  },
+                  "fingerprint_sha256": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "is_ca": {
+                    "type": "boolean"
+                  },
+                  "issuer": {
+                    "type": "string"
+                  },
+                  "key_usage": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "not_after": {
+                    "type": "string"
+                  },
+                  "not_before": {
+                    "type": "string"
+                  },
+                  "pin_sha256": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "public_key_algorithm": {
+                    "type": "string"
+                  },
+                  "public_key_size": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "rsa_exponent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "san": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "serial_number": {
+                    "type": "string"
+                  },
+                  "signature_algorithm": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "chain_length": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chain_size_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "revocation": {
+          "properties": {
+            "details": {
+              "type": "string"
+            },
+            "method": {
+              "enum": [
+                "OCSP",
+                "CRL",
+                "OCSPStapling",
+                "None"
+              ],
+              "type": "string"
+            },
+            "must_staple": {
+              "type": "boolean"
+            },
+            "ocsp_stapling": {
+              "type": "boolean"
+            },
+            "ocsp_stapling_details": {
+              "properties": {
+                "details": {
+                  "type": "string"
+                },
+                "stapled_response_present": {
+                  "type": "boolean"
+                },
+                "stapled_response_valid": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "stapling_supported": {
+                  "type": "boolean"
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "status": {
+              "enum": [
+                "Good",
+                "Revoked",
+                "Unknown",
+                "Error",
+                "NotChecked"
+              ],
+              "type": "string"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "validation": {
+          "properties": {
+            "hostname_match": {
+              "type": "boolean"
+            },
+            "not_expired": {
+              "type": "boolean"
+            },
+            "platform_trust": {
+              "properties": {
+                "overall_trusted": {
+                  "type": "boolean"
+                },
+                "per_certificate": {
+                  "items": {
+                    "properties": {
+                      "in_trust_stores": {
+                        "type": "boolean"
+                      },
+                      "issuer": {
+                        "type": "string"
+                      },
+                      "platforms": {
+                        "items": {
+                          "enum": [
+                            "Mozilla",
+                            "Apple",
+                            "Android",
+                            "Java",
+                            "Windows"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "role": {
+                        "enum": [
+                          "Leaf",
+                          "Intermediate",
+                          "Root"
+                        ],
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "platform_status": {
+                  "patternProperties": {
+                    "^.*$": {
+                      "properties": {
+                        "details": {
+                          "properties": {
+                            "chain_verified": {
+                              "type": "boolean"
+                            },
+                            "root_in_store": {
+                              "type": "boolean"
+                            },
+                            "signatures_valid": {
+                              "type": "boolean"
+                            },
+                            "trust_anchor": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "platform": {
+                          "type": "string"
+                        },
+                        "trusted": {
+                          "type": "boolean"
+                        },
+                        "trusted_root": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "total_platforms": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "trusted_count": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "signature_valid": {
+              "type": "boolean"
+            },
+            "trust_chain_valid": {
+              "type": "boolean"
+            },
+            "trusted_ca": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "valid": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "ciphers": {
+      "description": "Cipher suites per protocol",
+      "patternProperties": {
+        "^.*$": {
+          "properties": {
+            "counts": {
+              "properties": {
+                "aead": {
+                  "type": "integer"
+                },
+                "export_ciphers": {
+                  "type": "integer"
+                },
+                "forward_secrecy": {
+                  "type": "integer"
+                },
+                "high_strength": {
+                  "type": "integer"
+                },
+                "low_strength": {
+                  "type": "integer"
+                },
+                "medium_strength": {
+                  "type": "integer"
+                },
+                "null_ciphers": {
+                  "type": "integer"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "supported_ciphers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "data_version": {
+      "description": "Bundled scanner data version",
+      "type": "string"
+    },
+    "fingerprints": {
+      "description": "TLS fingerprinting data",
+      "properties": {
+        "client_hello_raw": {
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "ja3_fingerprint": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "ja3_match": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "ja3s_fingerprint": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "ja3s_match": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "jarm_fingerprint": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "server_hello_raw": {
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "http": {
+      "description": "HTTP analysis",
+      "properties": {
+        "http_headers": {
+          "description": "HTTP security headers analysis",
+          "properties": {
+            "csp": {
+              "type": "object"
+            },
+            "hpkp": {
+              "type": "object"
+            },
+            "hsts": {
+              "type": "object"
+            },
+            "x_content_type_options": {
+              "type": "object"
+            },
+            "x_frame_options": {
+              "type": "object"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "protocols": {
+      "description": "Supported TLS/SSL protocols",
+      "items": {
+        "properties": {
+          "ciphers_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handshake_time_ms": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "heartbeat_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "inconclusive": {
+            "type": "boolean"
+          },
+          "preferred": {
+            "type": "boolean"
+          },
+          "protocol": {
+            "enum": [
+              "SSLv2",
+              "SSLv3",
+              "TLS10",
+              "TLS11",
+              "TLS12",
+              "TLS13",
+              "QUIC"
+            ],
+            "type": "string"
+          },
+          "secure_renegotiation": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "session_resumption_caching": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "session_resumption_tickets": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "protocol",
+          "supported",
+          "inconclusive",
+          "preferred",
+          "ciphers_count"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "rating": {
+      "description": "SSL Labs style rating",
+      "properties": {
+        "ssl_rating": {
+          "properties": {
+            "certificate_score": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cipher_strength_score": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "grade": {
+              "enum": [
+                "A+",
+                "A",
+                "A-",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "T",
+                "M",
+                "Unverified"
+              ],
+              "type": "string"
+            },
+            "key_exchange_score": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "protocol_score": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "score": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "ruleset_version": {
+      "description": "Bundled ruleset version",
+      "type": "string"
+    },
+    "scan_time_ms": {
+      "description": "Total scan time in milliseconds",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "scanner_version": {
+      "description": "CipherRun package version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "description": "CipherRun JSON schema version",
+      "type": "string"
+    },
+    "target": {
+      "description": "Target scanned",
+      "type": "string"
+    },
+    "vulnerabilities": {
+      "description": "Detected vulnerabilities",
+      "items": {
+        "properties": {
+          "confidence": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "type": "string"
+          },
+          "cve": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": "string"
+          },
+          "detection_method": {
+            "enum": [
+              "active_probe",
+              "protocol_negotiation",
+              "configuration_inference",
+              "timing_analysis",
+              "heuristic"
+            ],
+            "type": "string"
+          },
+          "evidence": {
+            "properties": {
+              "affected_ip": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "attempts": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "cipher_suite": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expected_result": {
+                "type": "string"
+              },
+              "limitations": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "observed": {
+                "type": "string"
+              },
+              "port": {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "potentially_intrusive": {
+                "type": "boolean"
+              },
+              "probe_version": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "protocol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "references": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "remediation": {
+                "type": "string"
+              },
+              "sni": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "affected_ip",
+              "port",
+              "sni",
+              "protocol",
+              "cipher_suite",
+              "observed",
+              "expected_result",
+              "attempts",
+              "probe_version",
+              "limitations",
+              "references",
+              "remediation",
+              "potentially_intrusive"
+            ],
+            "type": "object"
+          },
+          "finding_id": {
+            "pattern": "^CR-TLS-[A-Z0-9-]+-[0-9]{3}$",
+            "type": "string"
+          },
+          "inconclusive": {
+            "type": "boolean"
+          },
+          "severity": {
+            "enum": [
+              "Critical",
+              "High",
+              "Medium",
+              "Low",
+              "Info"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "confirmed_vulnerable",
+              "potential_exposure",
+              "not_vulnerable",
+              "inconclusive",
+              "not_applicable",
+              "not_executed"
+            ],
+            "type": "string"
+          },
+          "vuln_type": {
+            "type": "string"
+          },
+          "vulnerable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "finding_id",
+          "status",
+          "detection_method",
+          "confidence",
+          "evidence",
+          "vuln_type",
+          "vulnerable",
+          "inconclusive",
+          "details",
+          "severity"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "scanner_version",
+    "ruleset_version",
+    "data_version",
+    "target",
+    "scan_time_ms",
+    "protocols",
+    "ciphers",
+    "vulnerabilities"
+  ],
+  "title": "CipherRun Scan Results",
+  "type": "object"
+}

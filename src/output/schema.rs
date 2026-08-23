@@ -263,24 +263,7 @@ impl CipherRunSchema {
                 "vulnerabilities": {
                     "type": "array",
                     "description": "Detected vulnerabilities",
-                    "items": {
-                        "type": "object",
-                        "required": ["vuln_type", "vulnerable", "inconclusive", "details", "severity"],
-                        "properties": {
-                            "vuln_type": { "type": "string" },
-                            "vulnerable": { "type": "boolean" },
-                            "inconclusive": { "type": "boolean" },
-                            "details": { "type": "string" },
-                            "severity": {
-                                "type": "string",
-                                "enum": ["Critical", "High", "Medium", "Low", "Info"]
-                            },
-                            "description": { "type": "string" },
-                            "cve": { "type": ["string", "null"] },
-                            "cwe": { "type": ["string", "null"] },
-                            "cvss_score": { "type": "number", "minimum": 0.0, "maximum": 10.0 }
-                        }
-                    }
+                    "items": Self::get_vulnerability_schema()
                 },
                 "rating": {
                     "type": ["object", "null"],
@@ -354,8 +337,56 @@ impl CipherRunSchema {
     pub fn get_vulnerability_schema() -> Value {
         json!({
             "type": "object",
-            "required": ["vuln_type", "vulnerable", "inconclusive", "details", "severity"],
+            "required": [
+                "finding_id", "status", "detection_method", "confidence", "evidence",
+                "vuln_type", "vulnerable", "inconclusive", "details", "severity"
+            ],
             "properties": {
+                "finding_id": {
+                    "type": "string",
+                    "pattern": "^CR-TLS-[A-Z0-9-]+-[0-9]{3}$"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "confirmed_vulnerable", "potential_exposure", "not_vulnerable",
+                        "inconclusive", "not_applicable", "not_executed"
+                    ]
+                },
+                "detection_method": {
+                    "type": "string",
+                    "enum": [
+                        "active_probe", "protocol_negotiation", "configuration_inference",
+                        "timing_analysis", "heuristic"
+                    ]
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"]
+                },
+                "evidence": {
+                    "type": "object",
+                    "required": [
+                        "affected_ip", "port", "sni", "protocol", "cipher_suite", "observed",
+                        "expected_result", "attempts", "probe_version", "limitations",
+                        "references", "remediation", "potentially_intrusive"
+                    ],
+                    "properties": {
+                        "affected_ip": { "type": ["string", "null"] },
+                        "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+                        "sni": { "type": ["string", "null"] },
+                        "protocol": { "type": ["string", "null"] },
+                        "cipher_suite": { "type": ["string", "null"] },
+                        "observed": { "type": "string" },
+                        "expected_result": { "type": "string" },
+                        "attempts": { "type": ["integer", "null"], "minimum": 1 },
+                        "probe_version": { "type": "string", "minLength": 1 },
+                        "limitations": { "type": "array", "items": { "type": "string" } },
+                        "references": { "type": "array", "items": { "type": "string" } },
+                        "remediation": { "type": "string" },
+                        "potentially_intrusive": { "type": "boolean" }
+                    }
+                },
                 "vuln_type": { "type": "string" },
                 "vulnerable": { "type": "boolean" },
                 "inconclusive": { "type": "boolean" },
@@ -364,10 +395,8 @@ impl CipherRunSchema {
                     "type": "string",
                     "enum": ["Critical", "High", "Medium", "Low", "Info"]
                 },
-                "description": { "type": "string" },
                 "cve": { "type": ["string", "null"] },
-                "cwe": { "type": ["string", "null"] },
-                "cvss_score": { "type": "number", "minimum": 0.0, "maximum": 10.0 }
+                "cwe": { "type": ["string", "null"] }
             }
         })
     }
@@ -437,7 +466,15 @@ mod tests {
         let mut data = valid_scan_json();
         data["schema_version"] = json!("2.0");
 
-        assert_validation_error(data, "schema_version must be 1.0");
+        assert_validation_error(data, "unsupported schema_version 2.0");
+    }
+
+    #[test]
+    fn test_validation_rejects_non_string_schema_version() {
+        let mut data = valid_scan_json();
+        data["schema_version"] = json!(11);
+
+        assert_validation_error(data, "schema_version must be a string");
     }
 
     #[test]
@@ -481,6 +518,11 @@ mod tests {
         assert!(required_values.contains(&"inconclusive"));
         assert!(required_values.contains(&"details"));
         assert!(required_values.contains(&"severity"));
+        assert!(required_values.contains(&"finding_id"));
+        assert!(required_values.contains(&"status"));
+        assert!(required_values.contains(&"detection_method"));
+        assert!(required_values.contains(&"confidence"));
+        assert!(required_values.contains(&"evidence"));
     }
 
     #[test]
@@ -701,6 +743,61 @@ mod tests {
         let data = serde_json::to_value(results).expect("scan results should serialize");
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn test_validation_accepts_legacy_1_0_findings() {
+        let mut data = valid_scan_json();
+        data["schema_version"] = json!("1.0");
+        data["vulnerabilities"] = json!([{
+            "vuln_type": "Heartbleed",
+            "vulnerable": false,
+            "inconclusive": false,
+            "details": "No memory leak observed",
+            "cve": "CVE-2014-0160",
+            "cwe": "CWE-200",
+            "severity": "Info"
+        }]);
+
+        assert!(CipherRunSchema::validate(&data).is_ok());
+    }
+
+    #[test]
+    fn test_validation_requires_enriched_findings_in_1_1() {
+        let mut data = valid_scan_json();
+        data["vulnerabilities"] = json!([{
+            "vuln_type": "Heartbleed",
+            "vulnerable": false,
+            "inconclusive": false,
+            "details": "No memory leak observed",
+            "severity": "Info"
+        }]);
+
+        assert_validation_error(data, "missing required fields");
+    }
+
+    #[test]
+    fn test_versioned_fixture_validates_and_deserializes() {
+        let fixture = include_str!("../../fixtures/scan-results/1.1-potential-exposure.json");
+        let data: Value = serde_json::from_str(fixture).expect("fixture should be valid JSON");
+        CipherRunSchema::validate(&data).expect("fixture should satisfy schema 1.1");
+
+        let results: ScanResults =
+            serde_json::from_value(data).expect("fixture should deserialize as scan results");
+        assert_eq!(results.scan_metadata.schema_version, "1.1");
+        assert_eq!(
+            results.vulnerabilities[0].status(),
+            crate::vulnerabilities::FindingStatus::PotentialExposure
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_finding_status_that_conflicts_with_legacy_flags() {
+        let fixture = include_str!("../../fixtures/scan-results/1.1-potential-exposure.json");
+        let mut data: Value = serde_json::from_str(fixture).expect("fixture should be valid JSON");
+        data["vulnerabilities"][0]["status"] = json!("not_vulnerable");
+
+        assert_validation_error(data, "status conflicts with legacy flags");
     }
 
     #[test]

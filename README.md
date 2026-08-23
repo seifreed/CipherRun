@@ -136,6 +136,10 @@ cipherrun -t smtp mail.example.com:587
 cipherrun -t imap mail.example.com:143
 ```
 
+### JSON Contract
+
+JSON output is versioned independently from the CLI. The canonical schema, compatibility policy, changelog, and fixtures are published in [`schemas/`](schemas/README.md).
+
 ---
 
 ## QA

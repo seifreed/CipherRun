@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 
-pub const OUTPUT_SCHEMA_VERSION: &str = "1.0";
+pub const OUTPUT_SCHEMA_VERSION: &str = "1.1";
+pub const SUPPORTED_OUTPUT_SCHEMA_VERSIONS: &[&str] = &["1.0", OUTPUT_SCHEMA_VERSION];
 
 fn default_schema_version() -> String {
     OUTPUT_SCHEMA_VERSION.to_string()
