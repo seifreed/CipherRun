@@ -134,6 +134,7 @@ cipherrun --policy policy.yaml --fail-on-policy example.com
 
 # Compare versioned scan results (exit 4 on drift)
 cipherrun diff baseline.json current.json
+cipherrun --baseline baseline.json example.com
 ```
 
 ### STARTTLS Examples

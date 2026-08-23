@@ -431,6 +431,33 @@ fn test_validate_single_scan_with_ci_artifacts() {
 }
 
 #[test]
+fn test_baseline_is_limited_to_single_target_scans() {
+    let single = Args::parse_with_sources_from([
+        "cipherrun",
+        "--baseline",
+        "baseline.json",
+        "example.com:443",
+    ])
+    .unwrap();
+    assert!(single.validate().is_ok());
+
+    let mass = Args::parse_with_sources_from([
+        "cipherrun",
+        "--baseline",
+        "baseline.json",
+        "--file",
+        "targets.txt",
+    ])
+    .unwrap();
+    assert!(
+        mass.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("only supported for a single-target scan")
+    );
+}
+
+#[test]
 fn test_validate_mass_scan_with_parallel() {
     validate_ok(build_args(|args| {
         args.input_file = Some(PathBuf::from("targets.txt"));

@@ -76,6 +76,10 @@ pub struct OutputArgs {
     #[arg(long = "fail-on", value_name = "SEVERITY", value_enum)]
     pub fail_on: Option<FailOnSeverity>,
 
+    /// Compare this scan with a previous versioned scan-result JSON
+    #[arg(long = "baseline", value_name = "FILE")]
+    pub baseline: Option<PathBuf>,
+
     /// Output all supported formats with basename (like nmap -oA)
     #[arg(short = 'o', long = "output-all", value_name = "BASENAME")]
     pub output_all: Option<PathBuf>,
@@ -170,6 +174,7 @@ mod tests {
         assert!(args.sarif.is_none());
         assert!(args.junit.is_none());
         assert!(args.fail_on.is_none());
+        assert!(args.baseline.is_none());
         assert!(args.output_all.is_none());
         assert!(args.outprefix.is_none());
         assert!(!args.quiet);

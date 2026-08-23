@@ -64,6 +64,7 @@ impl CommandRouter {
             || args.output.append
             || args.output.overwrite
             || args.output.fail_on.is_some()
+            || args.output.baseline.is_some()
     }
 
     /// Route CLI arguments to the appropriate Command

@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use super::scan_diff::ScanDiffCommand;
 use super::scan_presenter::ScanPresenter;
 use super::{Command, CommandExit};
 use crate::application::use_cases::{ScanWorkflow, ScanWorkflowInput, ScanWorkflowServices};
@@ -39,6 +40,22 @@ impl ScanCommand {
     fn finalize_outcome(&self, exit: CommandExit) -> ScanCommandOutcome {
         ScanCommandOutcome { exit }
     }
+
+    fn baseline_exit(&self, current: &crate::scanner::ScanResults) -> Result<CommandExit> {
+        let Some(path) = self.args.output.baseline.as_deref() else {
+            return Ok(CommandExit::success());
+        };
+        let baseline = ScanDiffCommand::read_scan(path)?;
+        let diff = crate::scanner::diff::ScanDiff::compare(&baseline, current)?;
+        if !self.args.output.quiet {
+            println!("{}", diff.to_terminal());
+        }
+        if diff.has_changes() {
+            Ok(CommandExit::drift_failure())
+        } else {
+            Ok(CommandExit::success())
+        }
+    }
 }
 
 #[async_trait]
@@ -62,6 +79,7 @@ impl Command for ScanCommand {
         let workflow_result = ScanWorkflow::execute(input, &services).await?;
         let presenter = ScanPresenter::new(&self.args);
         let mut exit = presenter.present(&workflow_result)?;
+        let baseline_exit = self.baseline_exit(workflow_result.results())?;
         if exit.is_success()
             && self
                 .args
@@ -70,6 +88,9 @@ impl Command for ScanCommand {
                 .is_some_and(|threshold| threshold.is_met_by(workflow_result.results()))
         {
             exit = CommandExit::findings_failure();
+        }
+        if exit.is_success() && !baseline_exit.is_success() {
+            exit = baseline_exit;
         }
 
         Ok(self.finalize_outcome(exit).exit)
@@ -90,5 +111,44 @@ mod tests {
         let args = Args::default();
         let cmd = ScanCommand::new(args);
         assert_eq!(cmd.name(), "ScanCommand");
+    }
+
+    #[test]
+    fn baseline_exit_reports_drift() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("baseline.json");
+        let baseline = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        std::fs::write(&path, baseline.to_json(false).unwrap()).unwrap();
+        let command = ScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                baseline: Some(path),
+                quiet: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut current = baseline;
+        current
+            .protocols
+            .push(crate::protocols::ProtocolTestResult {
+                protocol: crate::protocols::Protocol::TLS13,
+                supported: true,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            });
+
+        assert_eq!(
+            command.baseline_exit(&current).unwrap().code(),
+            CommandExit::DRIFT_FAILURE
+        );
     }
 }
