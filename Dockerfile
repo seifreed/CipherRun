@@ -1,4 +1,4 @@
-FROM rust:1.85-bookworm
+FROM rust:1.88-bookworm
 
 LABEL maintainer="Marc Rivero @seifreed"
 LABEL description="CipherRun Testing Environment with Network Analysis Tools"

@@ -2,6 +2,7 @@
 name = "cipherrun"
 version = "0.3.1"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Marc Rivero <@seifreed>"]
 description = "A fast, modular, and scalable TLS/SSL security scanner written in Rust"
 license = "GPL-3.0-or-later"

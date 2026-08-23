@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square" alt="Rust Version">
+  <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="Rust Version">
   <a href="https://crates.io/crates/cipherrun"><img src="https://img.shields.io/crates/v/cipherrun?style=flat-square&logo=rust&logoColor=white" alt="Crates.io Version"></a>
   <a href="https://github.com/seifreed/cipherrun/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/cipherrun/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <a href="https://github.com/seifreed/cipherrun"><img src="https://img.shields.io/github/stars/seifreed/cipherrun?style=flat-square" alt="GitHub Stars"></a>
@@ -45,6 +45,8 @@
 ## Installation
 
 ### From Source
+
+Requires Rust 1.88 or newer.
 
 ```bash
 git clone https://github.com/seifreed/cipherrun.git

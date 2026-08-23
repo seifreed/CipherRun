@@ -7,6 +7,34 @@ on:
     branches: ["**"]
 
 jobs:
+  rust-channels:
+    name: Rust ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      matrix:
+        include:
+          - toolchain: "1.88"
+            experimental: false
+          - toolchain: beta
+            experimental: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.toolchain }}
+
+      - name: Check all targets
+        run: cargo check --all-targets --locked
+
   build-test:
     name: build-test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
