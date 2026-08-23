@@ -2,7 +2,7 @@
 
 COMPOSE := docker compose -f compose.lab.yml
 SERVICE := cipherrun-lab
-CIPHERRUN_VERSION ?= 0.3.1
+CIPHERRUN_VERSION ?= 0.3.2
 
 # Colors for output
 BLUE := \033[0;34m

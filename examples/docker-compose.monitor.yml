@@ -22,7 +22,7 @@ services:
 
   # CipherRun monitoring daemon
   monitor:
-    image: cipherrun:0.3.1
+    image: cipherrun:0.3.2
     container_name: cipherrun-monitor
     build:
       context: ..

@@ -6,6 +6,8 @@ All notable changes to CipherRun are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-23
+
 ### Added
 
 - Rust 1.88 minimum-version and beta checks in CI.
@@ -40,6 +42,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Clarified release artifact documentation.
 - Automated crates.io and multiplatform binary releases.
 
-[Unreleased]: https://github.com/seifreed/CipherRun/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/seifreed/CipherRun/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/seifreed/CipherRun/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/seifreed/CipherRun/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/seifreed/CipherRun/releases/tag/v0.3.0

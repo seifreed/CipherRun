@@ -1,10 +1,12 @@
 # SECURITY WARNING: grants packet-capture capabilities. Use only for authorized testing.
 services:
   cipherrun-lab:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.1}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
     build:
       context: .
       dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
     init: true
     stdin_open: true
     tty: true
