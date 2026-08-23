@@ -12,6 +12,9 @@ All notable changes to CipherRun are documented here. The format follows
 - Version metadata for the scan result JSON contract.
 - Explicit CORS origin allowlists.
 - Security and coordinated disclosure policy.
+- Shared CI and release quality gates for formatting, linting, tests, documentation,
+  dependency policy, packaging, installation, and the production container.
+- Separate hardened production and packet-capture laboratory container images.
 
 ### Changed
 
@@ -21,6 +24,8 @@ All notable changes to CipherRun are documented here. The format follows
 - Swagger UI is disabled by default and only advertised when served.
 - BREACH prerequisites are reported as potential exposure, not confirmed exploitation.
 - Compliance reports state that they assess mapped TLS controls, not certification or full regulatory compliance.
+- Updated `h2` to 0.4.16 to address RUSTSEC-2026-0258.
+- The production container now uses a non-root distroless runtime with no shell or Linux capabilities.
 
 ## [0.3.1] - 2026-08-13
 

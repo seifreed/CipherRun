@@ -1,0 +1,29 @@
+services:
+  cipherrun:
+    image: cipherrun:${CIPHERRUN_VERSION:-0.3.1}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.1}
+    command:
+      - --serve
+      - --api-config
+      - /run/secrets/api.toml
+      - --api-host
+      - 0.0.0.0
+    ports:
+      - 127.0.0.1:${CIPHERRUN_PORT:-8080}:8080
+    volumes:
+      - type: bind
+        source: ${CIPHERRUN_API_CONFIG:?set CIPHERRUN_API_CONFIG to an API config file}
+        target: /run/secrets/api.toml
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_IMAGE=rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0
+ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+
+FROM ${RUST_IMAGE} AS app-builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY data ./data
+COPY migrations ./migrations
+COPY benches ./benches
+RUN cargo build --release --locked && strip target/release/cipherrun
+
+FROM ${RUST_IMAGE} AS tools-builder
+ARG SSLSCAN_COMMIT=4f2f9fa3d3d2e520cd8f1ffda6aab3b7bc0bbcaa
+ARG SSLSCAN_SHA256=d932207fbe5a1de58f61f4e3b44044bc3768ff7a8970653a9fadd2b0005d4b21
+ARG TESTSSL_COMMIT=97763a411c525720a5f9bd9d2cded416b10f210a
+ARG TESTSSL_SHA256=6c33f1386f8d8a1cf2f6332a18e183fda8209974775d574e41dab01682cf04eb
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl libssl-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --fail --location --silent --show-error \
+        "https://github.com/rbsec/sslscan/archive/${SSLSCAN_COMMIT}.tar.gz" \
+        --output /tmp/sslscan.tar.gz \
+    && echo "${SSLSCAN_SHA256}  /tmp/sslscan.tar.gz" | sha256sum --check --strict \
+    && mkdir /tmp/sslscan \
+    && tar --extract --gzip --file /tmp/sslscan.tar.gz --strip-components=1 --directory /tmp/sslscan \
+    && make --directory /tmp/sslscan --jobs="$(nproc)"
+
+RUN curl --fail --location --silent --show-error \
+        "https://github.com/testssl/testssl.sh/archive/${TESTSSL_COMMIT}.tar.gz" \
+        --output /tmp/testssl.tar.gz \
+    && echo "${TESTSSL_SHA256}  /tmp/testssl.tar.gz" | sha256sum --check --strict \
+    && mkdir /tmp/testssl \
+    && tar --extract --gzip --file /tmp/testssl.tar.gz --strip-components=1 --directory /tmp/testssl
+
+FROM ${RUNTIME_IMAGE}
+LABEL org.opencontainers.image.title="CipherRun Lab" \
+      org.opencontainers.image.description="Network-analysis laboratory; not a production image" \
+      org.opencontainers.image.source="https://github.com/seifreed/cipherrun" \
+      org.opencontainers.image.version="0.3.1" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        bash bsdextrautils ca-certificates coreutils curl dnsutils file gawk grep iputils-ping \
+        libcap2-bin libssl3 nmap net-tools openssl procps sed socat tcpdump tshark \
+        wget zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=app-builder /build/target/release/cipherrun /usr/local/bin/cipherrun
+COPY --from=tools-builder /tmp/sslscan/sslscan /usr/local/bin/sslscan
+COPY --from=tools-builder /tmp/testssl /opt/testssl.sh
+COPY docker/scripts/ /scripts/
+
+RUN useradd --create-home --shell /bin/bash tester \
+    && mkdir --parents /captures /results \
+    && chmod +x /opt/testssl.sh/testssl.sh /scripts/*.sh \
+    && ln -s /opt/testssl.sh/testssl.sh /usr/local/bin/testssl.sh \
+    && setcap cap_net_admin,cap_net_raw=eip /usr/bin/tcpdump \
+    && setcap cap_net_admin,cap_net_raw=eip /usr/bin/dumpcap \
+    && chown --recursive tester:tester /captures /results
+
+ENV RUST_LOG=info \
+    PCAP_DIR=/captures \
+    RESULTS_DIR=/results
+USER tester
+WORKDIR /home/tester
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD ["/usr/local/bin/cipherrun", "--version"]
+CMD ["/bin/bash"]

@@ -67,6 +67,30 @@ cargo install cipherrun
 
 Pushing a tag matching the package version, such as `v0.3.0`, runs the release workflow. It publishes `cipherrun` to crates.io and attaches platform packages for Linux, Windows, and macOS on x64 and ARM64, together with SHA-256 checksums. The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN`.
 
+### Docker
+
+The default image is the production build: a distroless, non-root runtime containing only CipherRun and the CA bundle.
+
+```bash
+docker build -t cipherrun:0.3.1 .
+docker run --rm cipherrun:0.3.1 example.com
+```
+
+To run the API, generate credentials first. The production Compose binds the API to localhost, mounts the configuration read-only, drops every capability, and uses a read-only root filesystem.
+
+```bash
+cipherrun --api-config-example ./api.toml
+export CIPHERRUN_API_CONFIG="$PWD/api.toml"
+docker compose -f compose.production.yml up --build
+```
+
+`Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
+
+```bash
+mkdir -p captures results
+docker compose -f compose.lab.yml run --rm cipherrun-lab
+```
+
 ---
 
 ## Quick Start

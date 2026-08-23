@@ -1,0 +1,31 @@
+# SECURITY WARNING: grants packet-capture capabilities. Use only for authorized testing.
+services:
+  cipherrun-lab:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.1}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+    init: true
+    stdin_open: true
+    tty: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./captures:/captures
+      - ./results:/results
+    environment:
+      RUST_LOG: info
+      PCAP_DIR: /captures
+      RESULTS_DIR: /results
+    networks:
+      - lab
+
+networks:
+  lab:
+    driver: bridge

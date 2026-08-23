@@ -1,73 +1,31 @@
-FROM rust:1.88-bookworm
+# syntax=docker/dockerfile:1.7
 
-LABEL maintainer="Marc Rivero @seifreed"
-LABEL description="CipherRun Testing Environment with Network Analysis Tools"
+ARG RUST_IMAGE=rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+ARG CIPHERRUN_VERSION=0.3.1
 
-# Install system dependencies and network analysis tools
-RUN apt-get update && apt-get install -y \
-    # Network analysis tools
-    tcpdump \
-    tshark \
-    wireshark-common \
-    nmap \
-    # SSL/TLS tools
-    openssl \
-    libssl-dev \
-    pkg-config \
-    # Build tools
-    git \
-    cmake \
-    build-essential \
-    # Utilities
-    vim \
-    curl \
-    wget \
-    net-tools \
-    iputils-ping \
-    dnsutils \
-    && rm -rf /var/lib/apt/lists/*
+FROM ${RUST_IMAGE} AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY data ./data
+COPY migrations ./migrations
+COPY benches ./benches
+RUN cargo build --release --locked && strip target/release/cipherrun
 
-# Install sslscan from source (for latest version)
-WORKDIR /tmp
-RUN git clone https://github.com/rbsec/sslscan.git && \
-    cd sslscan && \
-    make static && \
-    make install && \
-    cd .. && \
-    rm -rf sslscan
+FROM ${RUNTIME_IMAGE}
+ARG CIPHERRUN_VERSION
+LABEL org.opencontainers.image.title="CipherRun" \
+      org.opencontainers.image.description="Production CipherRun TLS scanner" \
+      org.opencontainers.image.source="https://github.com/seifreed/cipherrun" \
+      org.opencontainers.image.version="${CIPHERRUN_VERSION}" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
 
-# Install testssl.sh
-RUN git clone https://github.com/drwetter/testssl.sh.git /opt/testssl.sh && \
-    chmod +x /opt/testssl.sh/testssl.sh && \
-    ln -s /opt/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
+COPY --from=builder --chown=65532:65532 /build/target/release/cipherrun /usr/local/bin/cipherrun
 
-# Create working directory
-WORKDIR /cipherrun
-
-# Copy CipherRun source code
-COPY . .
-
-# Build CipherRun in release mode
-RUN cargo build --release
-
-# Create directories for captures and results
-RUN mkdir -p /captures /results /scripts
-
-# Copy helper scripts
-COPY docker/scripts/* /scripts/
-RUN chmod +x /scripts/*.sh
-
-# Set environment variables
-ENV PATH="/cipherrun/target/release:${PATH}"
-ENV RUST_LOG=info
-ENV PCAP_DIR=/captures
-ENV RESULTS_DIR=/results
-
-# Create a non-root user for running captures (optional)
-RUN useradd -m -s /bin/bash tester && \
-    chown -R tester:tester /cipherrun /captures /results /scripts
-
-# Expose no ports (client-side tool)
-
-# Default command
-CMD ["/bin/bash"]
+USER 65532:65532
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD ["/usr/local/bin/cipherrun", "--version"]
+ENTRYPOINT ["/usr/local/bin/cipherrun"]
+CMD ["--help"]

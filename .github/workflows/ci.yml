@@ -33,6 +33,11 @@ jobs:
       - name: Run quality gates
         run: bash scripts/quality-gates.sh
 
+      - name: Build and smoke-test production image
+        run: |
+          docker build --tag cipherrun:ci .
+          docker run --rm cipherrun:ci --version
+
   rust-channels:
     name: Rust ${{ matrix.toolchain }}
     runs-on: ubuntu-latest

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL database for scan history
   postgres:
@@ -24,16 +22,16 @@ services:
 
   # CipherRun monitoring daemon
   monitor:
-    image: cipherrun:latest
+    image: cipherrun:0.3.1
     container_name: cipherrun-monitor
     build:
       context: ..
       dockerfile: Dockerfile
     command:
-      - "monitor"
-      - "--config"
+      - "--monitor"
+      - "--monitor-config"
       - "/etc/cipherrun/monitor.toml"
-      - "--domains"
+      - "--monitor-domains"
       - "/etc/cipherrun/domains.txt"
     volumes:
       - ./monitor.toml:/etc/cipherrun/monitor.toml:ro
@@ -49,7 +47,7 @@ services:
     networks:
       - cipherrun
     healthcheck:
-      test: ["CMD", "/usr/local/bin/cipherrun", "monitor", "--status"]
+      test: ["CMD", "/usr/local/bin/cipherrun", "--version"]
       interval: 30s
       timeout: 10s
       retries: 3

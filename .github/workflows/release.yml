@@ -55,6 +55,11 @@ jobs:
       - name: Run quality gates
         run: bash scripts/quality-gates.sh
 
+      - name: Build and smoke-test production image
+        run: |
+          docker build --tag cipherrun:release .
+          docker run --rm cipherrun:release --version
+
   build:
     name: Build ${{ matrix.target }}
     needs: validate
