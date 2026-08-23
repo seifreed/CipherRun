@@ -18,6 +18,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Explicit local CLI private-network policy with `--allow-private` and CIDR-scoped exceptions.
 - Safe, standard, and aggressive scan intensity profiles.
 - Independently versioned compliance rule packs with primary sources and content hashes.
+- Per-IP finding evidence now records the affected address, port, and SNI in multi-IP JSON.
 
 ### Changed
 

@@ -19,7 +19,53 @@ pub fn generate_json(results: &ScanResults, pretty: bool) -> Result<String> {
 
 /// Generate JSON output from multi-IP scan report
 pub fn generate_multi_ip_json(report: &MultiIpScanReport, pretty: bool) -> Result<String> {
-    serialize_json(report, pretty)
+    let mut value = serde_json::to_value(report)?;
+    if let Some(per_ip_results) = value
+        .get_mut("per_ip_results")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for (ip, result) in &report.per_ip_results {
+            let Some(scan_result) = per_ip_results
+                .get_mut(&ip.to_string())
+                .and_then(|result| result.get_mut("scan_result"))
+            else {
+                continue;
+            };
+            let sni = result
+                .scan_result
+                .scan_metadata
+                .sni_used
+                .as_deref()
+                .unwrap_or(&report.target.hostname);
+            enrich_finding_endpoints(scan_result, *ip, report.target.port, sni);
+        }
+    }
+    serialize_json(&value, pretty)
+}
+
+fn enrich_finding_endpoints(
+    scan_result: &mut serde_json::Value,
+    ip: std::net::IpAddr,
+    port: u16,
+    sni: &str,
+) {
+    let Some(findings) = scan_result
+        .get_mut("vulnerabilities")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for finding in findings {
+        let Some(evidence) = finding
+            .get_mut("evidence")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        evidence.insert("affected_ip".to_string(), ip.to_string().into());
+        evidence.insert("port".to_string(), port.into());
+        evidence.insert("sni".to_string(), sni.into());
+    }
 }
 
 /// Write JSON to file
@@ -175,6 +221,44 @@ mod tests {
             .expect("test assertion should succeed");
         let contents = std::fs::read_to_string(path).expect("test assertion should succeed");
         assert!(contents.contains("example.com"));
+    }
+
+    #[test]
+    fn multi_ip_json_contextualizes_finding_evidence() {
+        let target = single_ip_target();
+        let ip = target.ip_addresses[0];
+        let mut scan = ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        scan.vulnerabilities
+            .push(crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Critical,
+            });
+        let report = MultiIpScanReport {
+            target,
+            per_ip_results: HashMap::from([(ip, successful_ip_scan(ip, scan, 10))]),
+            total_ips: 1,
+            successful_scans: 1,
+            failed_scans: 0,
+            total_duration_ms: 10,
+            inconsistencies: Vec::new(),
+            aggregated: empty_aggregated_result(),
+        };
+
+        let value: serde_json::Value =
+            serde_json::from_str(&generate_multi_ip_json(&report, false).unwrap()).unwrap();
+        let evidence = &value["per_ip_results"][ip.to_string()]["scan_result"]["vulnerabilities"]
+            [0]["evidence"];
+        assert_eq!(evidence["affected_ip"], ip.to_string());
+        assert_eq!(evidence["port"], 443);
+        assert_eq!(evidence["sni"], "example.com");
     }
 
     #[test]
