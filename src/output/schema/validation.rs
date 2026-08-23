@@ -11,6 +11,10 @@ pub(super) fn validate(data: &Value) -> Result<(), Vec<String>> {
     };
 
     for field in [
+        "schema_version",
+        "scanner_version",
+        "ruleset_version",
+        "data_version",
         "target",
         "scan_time_ms",
         "protocols",
@@ -19,6 +23,23 @@ pub(super) fn validate(data: &Value) -> Result<(), Vec<String>> {
     ] {
         if !obj.contains_key(field) {
             errors.push(format!("Missing required field: {}", field));
+        }
+    }
+
+    if let Some(schema_version) = obj.get("schema_version")
+        && schema_version.as_str() != Some(crate::scanner::results::OUTPUT_SCHEMA_VERSION)
+    {
+        errors.push(format!(
+            "schema_version must be {}",
+            crate::scanner::results::OUTPUT_SCHEMA_VERSION
+        ));
+    }
+
+    for field in ["scanner_version", "ruleset_version", "data_version"] {
+        if let Some(value) = obj.get(field)
+            && !value.as_str().is_some_and(|value| !value.is_empty())
+        {
+            errors.push(format!("{} must be a non-empty string", field));
         }
     }
 

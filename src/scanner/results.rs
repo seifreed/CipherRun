@@ -13,6 +13,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 
+pub const OUTPUT_SCHEMA_VERSION: &str = "1.0";
+
+fn default_schema_version() -> String {
+    OUTPUT_SCHEMA_VERSION.to_string()
+}
+
+fn default_package_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 pub(crate) fn serialize_sorted_map<S, K, V>(
     map: &HashMap<K, V>,
     serializer: S,
@@ -91,8 +101,16 @@ pub struct AdvancedResults {
 /// Scan metadata - Multi-IP scan information and connection metadata
 ///
 /// Groups multi-IP scan metadata, SNI info, and probe status for ISP compliance.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanMetadata {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: String,
+    #[serde(default = "default_package_version")]
+    pub scanner_version: String,
+    #[serde(default = "default_package_version")]
+    pub ruleset_version: String,
+    #[serde(default = "default_package_version")]
+    pub data_version: String,
     pub pre_handshake_used: bool,
     pub scanned_ips: Vec<crate::utils::anycast::IpScanResult>,
     pub sni_used: Option<String>,
@@ -106,6 +124,25 @@ pub struct ScanMetadata {
     /// This is used by the command layer for JSON export of per-IP results.
     #[serde(skip)]
     pub multi_ip_report: Option<crate::scanner::multi_ip::MultiIpScanReport>,
+}
+
+impl Default for ScanMetadata {
+    fn default() -> Self {
+        Self {
+            schema_version: default_schema_version(),
+            scanner_version: default_package_version(),
+            ruleset_version: default_package_version(),
+            data_version: default_package_version(),
+            pre_handshake_used: false,
+            scanned_ips: Vec::new(),
+            sni_used: None,
+            sni_generation_method: None,
+            probe_status: Default::default(),
+            inconsistencies: None,
+            human_warnings: Vec::new(),
+            multi_ip_report: None,
+        }
+    }
 }
 
 /// Scan results - Main struct with ISP-compliant composition
@@ -350,6 +387,10 @@ mod tests {
         assert!(json.get("pre_handshake_used").is_some());
         assert!(json.get("probe_status").is_some());
         assert!(json.get("scanned_ips").is_some());
+        assert_eq!(json["schema_version"], OUTPUT_SCHEMA_VERSION);
+        assert_eq!(json["scanner_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["ruleset_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["data_version"], env!("CARGO_PKG_VERSION"));
         // There should be no "scan_metadata" wrapper key
         assert!(json.get("scan_metadata").is_none());
     }

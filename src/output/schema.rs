@@ -19,8 +19,25 @@ impl CipherRunSchema {
             "title": "CipherRun Scan Results",
             "description": "Complete TLS/SSL security scan results from CipherRun",
             "type": "object",
-            "required": ["target", "scan_time_ms", "protocols", "ciphers", "vulnerabilities"],
+            "required": ["schema_version", "scanner_version", "ruleset_version", "data_version", "target", "scan_time_ms", "protocols", "ciphers", "vulnerabilities"],
             "properties": {
+                "schema_version": {
+                    "type": "string",
+                    "const": crate::scanner::results::OUTPUT_SCHEMA_VERSION,
+                    "description": "CipherRun JSON schema version"
+                },
+                "scanner_version": {
+                    "type": "string",
+                    "description": "CipherRun package version"
+                },
+                "ruleset_version": {
+                    "type": "string",
+                    "description": "Bundled ruleset version"
+                },
+                "data_version": {
+                    "type": "string",
+                    "description": "Bundled scanner data version"
+                },
                 "target": {
                     "type": "string",
                     "description": "Target scanned"
@@ -387,6 +404,10 @@ mod tests {
 
     fn valid_scan_json() -> Value {
         json!({
+            "schema_version": crate::scanner::results::OUTPUT_SCHEMA_VERSION,
+            "scanner_version": env!("CARGO_PKG_VERSION"),
+            "ruleset_version": env!("CARGO_PKG_VERSION"),
+            "data_version": env!("CARGO_PKG_VERSION"),
             "target": "example.com:443",
             "scan_time_ms": 100,
             "protocols": [],
@@ -409,6 +430,14 @@ mod tests {
 
         let result = CipherRunSchema::validate(&data);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validation_rejects_unknown_schema_version() {
+        let mut data = valid_scan_json();
+        data["schema_version"] = json!("2.0");
+
+        assert_validation_error(data, "schema_version must be 1.0");
     }
 
     #[test]
