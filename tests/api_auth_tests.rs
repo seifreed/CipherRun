@@ -62,6 +62,21 @@ async fn test_auth_missing_key_returns_401() {
 }
 
 #[tokio::test]
+async fn test_auth_query_key_is_rejected_outside_websocket_stream() {
+    let app = common::api::test_api_router();
+    let (status, body) =
+        common::api::send_get_json(&app, "/api/v1/stats?api_key=test-user-key", None).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("only supported for WebSocket stream endpoints")
+    );
+}
+
+#[tokio::test]
 async fn test_auth_health_endpoint_bypasses_auth() {
     let app = common::api::test_api_router();
     assert_healthy_response(&app, "/health", None).await;

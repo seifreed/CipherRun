@@ -44,6 +44,11 @@ fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
     Ok(api_key)
 }
 
+fn allows_query_api_key(path: &str) -> bool {
+    let segments: Vec<_> = path.trim_matches('/').split('/').collect();
+    matches!(segments.as_slice(), ["api", "v1", "scan", scan_id, "stream"] if !scan_id.is_empty())
+}
+
 fn decode_query_component(value: &str) -> Result<String, ApiError> {
     let value = value.replace('+', " ");
     urlencoding::decode(&value)
@@ -90,24 +95,26 @@ pub async fn authenticate(
         return Ok(next.run(req).await);
     }
 
-    // Extract API key from X-API-Key header or query parameter
-    // Query parameter support is needed for WebSocket connections from browsers
-    // which cannot set custom headers during the WebSocket handshake
-    // SECURITY NOTE: Query parameters are logged in server logs, proxy logs,
-    // and browser history. Use X-API-Key header when possible.
+    let query_api_key = req
+        .uri()
+        .query()
+        .map(api_key_from_query)
+        .transpose()?
+        .flatten();
+    if query_api_key.is_some() && !allows_query_api_key(path) {
+        return Err(ApiError::BadRequest(
+            "api_key query authentication is only supported for WebSocket stream endpoints; use X-API-Key".to_string(),
+        ));
+    }
+
     let header_api_key = api_key_from_headers(req.headers())?;
     let (api_key, from_query_param) = if let Some(api_key) = header_api_key {
         (api_key, false)
-    } else if let Some(query) = req.uri().query() {
-        let api_key = api_key_from_query(query)?.ok_or_else(|| {
-            ApiError::Unauthorized(
-                "Missing API key (use X-API-Key header or api_key query parameter)".to_string(),
-            )
-        })?;
+    } else if let Some(api_key) = query_api_key {
         (api_key, true)
     } else {
         return Err(ApiError::Unauthorized(
-            "Missing API key (use X-API-Key header or api_key query parameter)".to_string(),
+            "Missing API key (use X-API-Key header)".to_string(),
         ));
     };
 
@@ -115,7 +122,7 @@ pub async fn authenticate(
     // This is less secure than header-based auth and should be monitored
     if from_query_param {
         tracing::warn!(
-            "SECURITY: API key provided via query parameter (less secure). \
+            "DEPRECATED: API key provided via WebSocket query parameter. \
              Key may be logged in server logs, proxy logs, and browser history. \
              Path: {}",
             path
@@ -272,6 +279,14 @@ mod tests {
         let err = api_key_from_query("api_key").expect_err("malformed api_key should fail");
 
         assert!(err.to_string().contains("must include a value"));
+    }
+
+    #[test]
+    fn test_query_api_key_is_only_allowed_for_exact_stream_route() {
+        assert!(allows_query_api_key("/api/v1/scan/scan-id/stream"));
+        assert!(!allows_query_api_key("/api/v1/stats"));
+        assert!(!allows_query_api_key("/api/v1/scan//stream"));
+        assert!(!allows_query_api_key("/api/v1/scan/scan-id/results/stream"));
     }
 
     #[test]
