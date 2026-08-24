@@ -72,7 +72,16 @@ cargo install cipherrun
 Pushing a tag matching the package version, such as `v0.4.0`, runs the release workflow. It publishes `cipherrun` to crates.io and attaches platform packages for Linux, Windows, and macOS on x64 and ARM64, together with SHA-256 checksums. The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN`.
 The same release job generates `cipherrun.rb` and `cipherrun.json` assets from
 those checksums for Homebrew and Scoop consumption; no package manifest is
-generated from placeholder hashes.
+generated from placeholder hashes. It also publishes the versioned production
+image to GHCR and signs it keylessly with Sigstore. The local signing helper is
+`scripts/sign-container.sh`.
+
+The OpenAPI contract can be exported and used to regenerate the Python client:
+
+```bash
+cargo run --bin cipherrun-openapi > /tmp/cipherrun-openapi.json
+scripts/generate-python-sdk.sh sdk/python
+```
 
 ### Docker
 
