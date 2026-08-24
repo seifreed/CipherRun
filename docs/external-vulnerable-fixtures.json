@@ -40,6 +40,26 @@
       "false_positive_notes": "A patched-version control proves only the configured listener posture, not every deployment using that library.",
       "false_negative_notes": "Only protocol negotiation is tested; CBC padding behavior is not exercised.",
       "safety": "active-safe-modern-negotiation"
+    },
+    {
+      "name": "openssl-1-0-1c-padding",
+      "image": "docker.io/vulhub/openssl@sha256:3cf76769b6e33f45479e8bacd70d7c5c2bd8b8c4d5428ae3f613b1145a4a1c47",
+      "version": "OpenSSL 1.0.1c",
+      "expected": "CBC negotiation succeeds; CR-TLS-PADDING-ORACLE-2016-001=inconclusive",
+      "transcript": "results/external-fixture/openssl-1-0-1c-padding.cipherrun.txt",
+      "false_positive_notes": "An inconclusive timing result is not evidence that the pinned library is vulnerable; it only proves the scanner saw CBC support but no reliable oracle signal.",
+      "false_negative_notes": "The probe cannot model AES-NI state, a man-in-the-middle position, or a stable remote timing distribution.",
+      "safety": "active-safe-timing"
+    },
+    {
+      "name": "openssl-1-1-1m-padding-control",
+      "image": "docker.io/vulhub/openssl@sha256:dffde83f29dc4a70e183ca7bf374f6a153839eda3a406fd5e2d41e953f72b978",
+      "version": "OpenSSL 1.1.1m",
+      "expected": "GCM-only TLS 1.2 control; CR-TLS-PADDING-ORACLE-2016-001=not_vulnerable",
+      "transcript": "results/external-fixture/openssl-1-1-1m-padding-control.cipherrun.txt",
+      "false_positive_notes": "A GCM-only control proves this listener does not expose CBC to the scanner; it does not prove every cipher policy of the implementation.",
+      "false_negative_notes": "No timing behavior is measured when CBC is unavailable.",
+      "safety": "active-safe-modern-negotiation"
     }
   ]
 }

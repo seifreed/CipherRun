@@ -18,11 +18,13 @@ command -v jq >/dev/null || {
     exit 1
 }
 jq -e --arg image "$image" --arg patched_image "$patched_image" \
-    '.version == 1 and (.fixtures | length == 4) and
+    '.version == 1 and (.fixtures | length == 6) and
      .fixtures[0].name == "openssl-1-0-1c" and .fixtures[0].image == $image and
      .fixtures[1].name == "openssl-1-1-1m-patched" and .fixtures[1].image == $patched_image and
      .fixtures[2].name == "openssl-1-0-1c-ssl3-poodle" and .fixtures[2].image == $image and
      .fixtures[3].name == "openssl-1-1-1m-poodle-control" and .fixtures[3].image == $patched_image and
+     .fixtures[4].name == "openssl-1-0-1c-padding" and .fixtures[4].image == $image and
+     .fixtures[5].name == "openssl-1-1-1m-padding-control" and .fixtures[5].image == $patched_image and
      all(.fixtures[]; (.expected | length > 0) and (.transcript | length > 0) and
        (.false_positive_notes | length > 0) and (.false_negative_notes | length > 0) and
        (.safety | length > 0))' "$manifest" >/dev/null
@@ -56,6 +58,7 @@ docker run -d --name "$patched_name" --platform linux/amd64 \
         openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=patched.local \
             -keyout /tmp/cipherrun-tls/key.pem -out /tmp/cipherrun-tls/cert.pem >/dev/null 2>&1
         exec openssl s_server -quiet -www -accept 443 -tls1_2 \
+            -cipher ECDHE-RSA-AES256-GCM-SHA384 \
             -cert /tmp/cipherrun-tls/cert.pem -key /tmp/cipherrun-tls/key.pem
     ' >/dev/null
 docker run -d --name "$poodle_name" --platform linux/amd64 \
@@ -120,6 +123,18 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-OPENSSL-ZERO-LENGTH-00
     "${output_dir}/openssl-1-0-1c-ssl3.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-OPENSSL-ZERO-LENGTH-001" and .status == "not_vulnerable")' \
     "${output_dir}/openssl-1-1-1m-poodle-control.cipherrun.json" >/dev/null
+"$scanner_bin" --allow-private --vulnerable --overwrite \
+    --json "${output_dir}/openssl-1-0-1c-padding.cipherrun.json" \
+    "127.0.0.1:${poodle_port}" \
+    >"${output_dir}/openssl-1-0-1c-padding.cipherrun.txt" 2>&1
+"$scanner_bin" --allow-private --vulnerable --overwrite \
+    --json "${output_dir}/openssl-1-1-1m-padding-control.cipherrun.json" \
+    "127.0.0.1:${patched_port}" \
+    >"${output_dir}/openssl-1-1-1m-padding-control.cipherrun.txt" 2>&1
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-PADDING-ORACLE-2016-001" and .status == "inconclusive")' \
+    "${output_dir}/openssl-1-0-1c-padding.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-PADDING-ORACLE-2016-001" and .status == "not_vulnerable")' \
+    "${output_dir}/openssl-1-1-1m-padding-control.cipherrun.json" >/dev/null
 
 printf 'external vulnerable fixture: %s (%s)\n' "$version" "$image"
 printf 'external patched control: %s (%s)\n' "$patched_version" "$patched_image"
