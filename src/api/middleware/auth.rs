@@ -178,6 +178,11 @@ pub async fn require_user(req: Request, next: Next) -> Result<Response, ApiError
     require_permission_level(Permission::User, req, next).await
 }
 
+/// Route-level middleware for global administrator-owned resources.
+pub async fn require_admin(req: Request, next: Next) -> Result<Response, ApiError> {
+    require_permission_level(Permission::Admin, req, next).await
+}
+
 async fn require_permission_level(
     required: Permission,
     req: Request,

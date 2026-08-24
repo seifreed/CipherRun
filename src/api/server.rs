@@ -210,11 +210,13 @@ impl ApiServer {
             // Certificate routes
             .route(
                 "/certificates",
-                get(routes::certificates::list_certificates),
+                get(routes::certificates::list_certificates)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
             )
             .route(
                 "/certificates/{fingerprint}",
-                get(routes::certificates::get_certificate),
+                get(routes::certificates::get_certificate)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
             )
             // Compliance routes
             .route(

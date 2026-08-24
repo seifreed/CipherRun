@@ -40,6 +40,8 @@ All notable changes to CipherRun are documented here. The format follows
 - Scheduled Kani formal verification for the existing proof harnesses.
 - Native HTTPS responses now include a one-year HSTS policy.
 - Forwarded client addresses are trusted only from configured proxy CIDRs.
+- Certificate inventory routes are restricted to administrator credentials until
+  persisted certificate records carry tenant ownership.
 
 ### Changed
 
