@@ -63,6 +63,12 @@ impl ScanExecutor {
         self.webhook_signing_secret.is_some()
     }
 
+    pub(crate) fn webhook_signing_secret(&self) -> Option<Vec<u8>> {
+        self.webhook_signing_secret
+            .as_deref()
+            .map(ToOwned::to_owned)
+    }
+
     /// Get progress broadcaster
     pub fn progress_broadcaster(&self) -> broadcast::Sender<ProgressMessage> {
         self.progress_tx.clone()

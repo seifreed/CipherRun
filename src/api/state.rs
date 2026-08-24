@@ -307,6 +307,17 @@ impl AppState {
         })
     }
 
+    pub fn replace_job_queue(&mut self, job_queue: Arc<dyn JobQueue>) {
+        let executor = Arc::new(
+            ScanExecutor::new(job_queue.clone(), self.config.max_concurrent_scans)
+                .with_webhook_signing_secret(self.executor.webhook_signing_secret())
+                .with_stats(self.stats.clone()),
+        );
+        self.progress_tx = executor.progress_broadcaster();
+        self.job_queue = job_queue;
+        self.executor = executor;
+    }
+
     /// Start the executor
     pub async fn start_executor(self: Arc<Self>) -> Result<()> {
         let executor = self.executor.clone();

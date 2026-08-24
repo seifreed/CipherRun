@@ -33,6 +33,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Request quotas are shared by credentials within the same configured tenant.
 - Optional native HTTPS listener with paired certificate and private-key files.
 - Optional client-certificate verification through a configured TLS CA bundle.
+- SQLite/PostgreSQL job backend with conditional claims and lease recovery.
 
 ### Changed
 

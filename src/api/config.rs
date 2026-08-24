@@ -56,6 +56,10 @@ pub struct ApiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_storage_dir: Option<PathBuf>,
 
+    /// Job backend. `database` uses the API's configured SQLite/PostgreSQL pool.
+    #[serde(default)]
+    pub job_backend: JobBackend,
+
     /// Retention time for completed, failed, and cancelled jobs.
     #[serde(default = "default_job_retention_seconds")]
     pub job_retention_seconds: u64,
@@ -96,6 +100,15 @@ pub enum Permission {
 
     /// Read-only access - can only read existing data
     ReadOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JobBackend {
+    #[default]
+    Memory,
+    File,
+    Database,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,6 +206,7 @@ impl Default for ApiConfig {
             ws_ping_interval_seconds: 30,
             job_queue_capacity: 1000,
             job_storage_dir: None,
+            job_backend: JobBackend::Memory,
             job_retention_seconds: default_job_retention_seconds(),
             webhook_signing_secret_file: None,
             tls_cert_file: None,

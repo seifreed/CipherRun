@@ -1,7 +1,14 @@
 // API Server Implementation
 
 use crate::Result;
-use crate::api::{config::ApiConfig, middleware, models::error::ApiError, routes, state::AppState};
+use crate::api::{
+    config::{ApiConfig, JobBackend},
+    jobs::DatabaseJobQueue,
+    middleware,
+    models::error::ApiError,
+    routes,
+    state::AppState,
+};
 use crate::utils::network::canonical_target;
 use axum::{
     Router,
@@ -136,6 +143,24 @@ impl ApiServer {
     ) -> Result<Self> {
         let mut state = AppState::new(config.clone())?;
         state.db_pool = db_pool;
+        if config.job_backend == JobBackend::Database {
+            let pool =
+                state
+                    .db_pool
+                    .clone()
+                    .ok_or_else(|| crate::error::TlsError::ConfigError {
+                        message: "database job backend requires a configured database pool"
+                            .to_string(),
+                    })?;
+            let retention = i64::try_from(config.job_retention_seconds)
+                .ok()
+                .map(chrono::Duration::seconds);
+            state.replace_job_queue(DatabaseJobQueue::new(
+                pool,
+                config.job_queue_capacity,
+                retention,
+            ));
+        }
 
         Ok(Self {
             config,
@@ -349,7 +374,9 @@ impl ApiServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::config::Permission;
+    use crate::api::config::{JobBackend, Permission};
+    use crate::api::jobs::ScanJob;
+    use crate::db::{DatabaseConfig, DatabasePool};
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -361,6 +388,47 @@ mod tests {
         let config = ApiConfig::default();
         let server = ApiServer::new(config);
         assert!(server.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_database_job_backend_uses_attached_pool() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+            .await
+            .unwrap();
+        let config = ApiConfig {
+            job_backend: JobBackend::Database,
+            ..Default::default()
+        };
+        let server = ApiServer::with_db_pool(config, Some(Arc::new(pool))).unwrap();
+        let job = ScanJob::new("example.com:443".to_string(), Default::default(), None);
+        let id = server.state().job_queue.enqueue(job).await.unwrap();
+        assert!(
+            server
+                .state()
+                .job_queue
+                .get_job(&id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_database_job_backend_requires_pool() {
+        let config = ApiConfig {
+            job_backend: JobBackend::Database,
+            ..Default::default()
+        };
+        let error = match ApiServer::new(config) {
+            Ok(_) => panic!("database backend needs a pool"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("requires a configured database pool")
+        );
     }
 
     #[tokio::test]

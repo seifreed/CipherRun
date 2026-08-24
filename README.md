@@ -93,6 +93,10 @@ Set `job_storage_dir` in `api.toml` for durable standalone job state. Queued,
 running, completed, failed, and cancelled jobs survive restarts; interrupted
 running jobs are safely returned to the queue. Omitting it selects the
 development-only in-memory backend.
+Set `job_backend = "database"` when the API is started with a configured
+SQLite or PostgreSQL pool to use the transactional SQL job table instead of
+file storage. Database jobs use conditional claims and recover expired running
+leases on startup.
 `job_retention_seconds` controls terminal job TTL (seven days by default);
 queued and running work is never removed by retention cleanup.
 
