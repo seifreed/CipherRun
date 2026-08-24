@@ -82,6 +82,9 @@ without pulling in the scanner networking runtime.
 The `cipherrun-cli` crate provides stable process exit-code contracts for
 integrations without pulling in the command router.
 
+The `cipherrun-server` crate provides stable permission and job-backend
+contracts without pulling in Axum, SQLx, or the scan executor.
+
 ### Using Cargo
 
 ```bash

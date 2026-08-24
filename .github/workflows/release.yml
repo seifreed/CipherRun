@@ -175,7 +175,7 @@ jobs:
             exit 1
           fi
 
-          for crate in cipherrun-protocol cipherrun-policy cipherrun-data cipherrun-probes cipherrun-cli cipherrun-core; do
+          for crate in cipherrun-protocol cipherrun-policy cipherrun-data cipherrun-probes cipherrun-server cipherrun-cli cipherrun-core; do
             if curl --fail --silent --show-error "https://crates.io/api/v1/crates/${crate}/${VERSION}" > /dev/null; then
               echo "${crate} ${VERSION} is already published; continuing"
             else

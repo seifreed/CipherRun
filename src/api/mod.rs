@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod config;
+pub mod contract;
 pub mod jobs;
 pub mod middleware;
 pub mod models;

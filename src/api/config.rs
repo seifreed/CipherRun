@@ -1,5 +1,6 @@
 // API Configuration
 
+pub use super::contract::{JobBackend, Permission};
 use crate::Result;
 use crate::error::TlsError;
 use serde::{Deserialize, Serialize};
@@ -102,28 +103,6 @@ pub struct ApiConfig {
     /// management endpoints (`/policies`) report 503 Service Unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_dir: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "PascalCase")]
-pub enum Permission {
-    /// Full access - can create, read, update, delete
-    Admin,
-
-    /// Standard user - can create and read scans
-    User,
-
-    /// Read-only access - can only read existing data
-    ReadOnly,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum JobBackend {
-    #[default]
-    Memory,
-    File,
-    Database,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
