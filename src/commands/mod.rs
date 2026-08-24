@@ -3,6 +3,7 @@
 // Licensed under GPL-3.0
 
 mod command;
+pub mod contract;
 mod router;
 
 // Individual command implementations
@@ -26,8 +27,9 @@ mod scan_results_presenter;
 mod schema;
 mod worker;
 
+pub use command::Command;
 pub(crate) use command::exit_for_result_list;
-pub use command::{Command, CommandExit};
+pub use contract::CommandExit;
 pub use router::CommandRouter;
 
 // Re-export individual commands for testing purposes

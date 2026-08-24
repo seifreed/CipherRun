@@ -518,6 +518,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cipherrun-cli"
+version = "0.4.0"
+
+[[package]]
 name = "cipherrun-core"
 version = "0.4.0"
 dependencies = [

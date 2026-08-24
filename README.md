@@ -79,6 +79,9 @@ contracts without pulling in the compliance loader or scanner runtime.
 The `cipherrun-probes` crate provides dependency-light probe status contracts
 without pulling in the scanner networking runtime.
 
+The `cipherrun-cli` crate provides stable process exit-code contracts for
+integrations without pulling in the command router.
+
 ### Using Cargo
 
 ```bash
