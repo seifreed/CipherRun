@@ -346,6 +346,16 @@ fn evaluate_beast_with_tls10_cbc_ciphers() {
 }
 
 #[test]
+fn evaluate_beast_reads_cbc_from_cipher_names() {
+    let mut cipher = make_cipher("AES(128)", 128, false);
+    cipher.openssl_name = "AES128-SHA".to_string();
+    cipher.iana_name = "TLS_RSA_WITH_AES_128_CBC_SHA".to_string();
+    let summary = summary_with_ciphers(Protocol::TLS10, vec![cipher], CipherCounts::default());
+    let result = super::super::cipher_checks::evaluate_beast(Some(&summary), None);
+    assert!(result.vulnerable);
+}
+
+#[test]
 fn evaluate_beast_with_ssl3_cbc_ciphers() {
     let ciphers = vec![make_cipher("AES128-CBC", 128, false)];
     let summary = summary_with_ciphers(Protocol::SSLv3, ciphers, CipherCounts::default());

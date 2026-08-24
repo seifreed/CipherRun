@@ -17,7 +17,8 @@ false-positive/false-negative notes, and safety classification for every fixture
 | TLS 1.1 legacy negotiation | Configuration inference | `legacy11-tls` | `modern-tls` | All four | Protocol posture only; no exploit claim |
 | TLS 1.2 CBC / Lucky13 prerequisites | Configuration inference | `weak-tls` | `modern-tls` | All four | Prerequisites only; no exploit claim |
 | TLS 1.3 availability | Protocol negotiation | `modern-tls` | `weak-tls` | All four | Negotiation coverage only |
-| BEAST, CRIME, SWEET32, FREAK, LOGJAM, RC4, NULL | Protocol negotiation | Not yet isolated | `modern-tls` | Not yet complete | Requires one controlled weak configuration per check |
+| BEAST | Active/configuration probe | `legacy-tls-beast` | `modern-tls-beast` | CipherRun | TLS 1.0 CBC posture signal; no browser exploit claim |
+| CRIME, SWEET32, FREAK, LOGJAM, RC4, NULL | Protocol negotiation | Not yet isolated | `modern-tls` | Not yet complete | Requires one controlled weak configuration per check |
 | Heartbleed, CCS Injection, Ticketbleed, ROBOT, POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
 | Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | Partial | `modern-tls` | Not yet complete | Needs dedicated handshake fixtures |

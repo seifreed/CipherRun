@@ -33,6 +33,12 @@ fn severity_if_vulnerable(vulnerable: bool, severity: Severity) -> Severity {
     if vulnerable { severity } else { Severity::Info }
 }
 
+fn cipher_uses_cbc(cipher: &crate::ciphers::CipherSuite) -> bool {
+    [&cipher.encryption, &cipher.openssl_name, &cipher.iana_name]
+        .iter()
+        .any(|name| name.to_ascii_uppercase().contains("CBC"))
+}
+
 /// Protocol versions probed for weak stream/NULL cipher support. These suites
 /// are offered from SSL 3.0 through TLS 1.2 (TLS 1.3 dropped them entirely).
 pub(crate) const WEAK_CIPHER_PROBE_PROTOCOLS: &[Protocol] =
@@ -182,7 +188,7 @@ pub(crate) fn evaluate_beast(
         let cbc_count = summary
             .supported_ciphers
             .iter()
-            .filter(|c| c.encryption.contains("CBC"))
+            .filter(|c| cipher_uses_cbc(c))
             .count();
         if cbc_count > 0 {
             vulnerable_protocols.push(format!("TLS 1.0 ({} CBC ciphers)", cbc_count));
@@ -194,7 +200,7 @@ pub(crate) fn evaluate_beast(
         let cbc_count = summary
             .supported_ciphers
             .iter()
-            .filter(|c| c.encryption.contains("CBC"))
+            .filter(|c| cipher_uses_cbc(c))
             .count();
         if cbc_count > 0 {
             vulnerable_protocols.push(format!("SSL 3.0 ({} CBC ciphers)", cbc_count));

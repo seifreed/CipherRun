@@ -54,6 +54,24 @@
       "false_positive_notes": "A clean modern fixture does not prove every application route is safe.",
       "false_negative_notes": "Only GET / is tested and no real application secrets are accessed.",
       "safety": "active-safe-synthetic"
+    },
+    {
+      "name": "legacy-tls-beast",
+      "positive": "TLS 1.0 CBC configuration detected by BEAST probe",
+      "negative": "modern-tls TLS 1.3 configuration",
+      "expected": "CR-TLS-BEAST-001=confirmed_vulnerable",
+      "false_positive_notes": "The result confirms the published TLS 1.0 CBC posture signal, not a browser exploit against an application.",
+      "false_negative_notes": "Provider cipher policy and client crypto support can prevent the TLS 1.0 probe from completing.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "modern-tls-beast",
+      "positive": "No TLS 1.0 or SSL 3.0 CBC posture",
+      "negative": "legacy-tls TLS 1.0 CBC configuration",
+      "expected": "CR-TLS-BEAST-001=not_vulnerable",
+      "false_positive_notes": "A clean endpoint does not prove every backend in a load-balanced fleet is clean.",
+      "false_negative_notes": "Only the configured endpoint and resolved address are tested.",
+      "safety": "active-safe-negotiation"
     }
   ]
 }
