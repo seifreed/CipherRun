@@ -57,6 +57,10 @@ cargo build --release
 ./target/release/cipherrun --help
 ```
 
+Export the versioned scan-result contract with `cipherrun schema --output
+scan-results.schema.json`; the repository copy is maintained at
+`docs/scan-results.schema.json`.
+
 ### Using Cargo
 
 ```bash

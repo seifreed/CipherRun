@@ -16,6 +16,13 @@ pub enum CipherRunSubcommand {
         json: bool,
     },
 
+    /// Export the versioned JSON schema for scan results
+    Schema {
+        /// Write the schema to a file instead of stdout
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+
     /// Scan SSH/VPN config files and source code for quantum-vulnerable algorithms
     Pqc {
         /// Path to sshd_config or SSH config file to audit

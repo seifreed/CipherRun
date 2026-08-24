@@ -22,6 +22,7 @@ mod scan_notice_presenter;
 mod scan_post_presenter;
 mod scan_presenter;
 mod scan_results_presenter;
+mod schema;
 
 pub(crate) use command::exit_for_result_list;
 pub use command::{Command, CommandExit};
@@ -39,6 +40,7 @@ pub use mx_test::MxTestCommand;
 pub use pqc_scan::PqcScanCommand;
 pub use scan::ScanCommand;
 pub use scan_diff::ScanDiffCommand;
+pub use schema::SchemaCommand;
 
 #[cfg(test)]
 mod tests {
@@ -54,5 +56,6 @@ mod tests {
         assert_eq!(CtLogsCommand::new(args.clone()).name(), "CtLogsCommand");
         assert_eq!(DatabaseCommand::new(args.clone()).name(), "DatabaseCommand");
         assert_eq!(ScanCommand::new(args).name(), "ScanCommand");
+        assert_eq!(SchemaCommand::new(None).name(), "SchemaCommand");
     }
 }
