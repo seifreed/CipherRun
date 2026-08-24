@@ -129,6 +129,8 @@ Set `trusted_proxy_cidrs` before deploying behind a reverse proxy. `X-Forwarded-
 is ignored unless the immediate TCP peer belongs to one of these CIDRs.
 Certificate inventory is administrator-owned because the current analytics schema
 does not yet carry tenant ownership; non-admin credentials cannot query it.
+The same restriction applies to global scan history and statistics until those
+analytics records carry tenant ownership.
 
 Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;

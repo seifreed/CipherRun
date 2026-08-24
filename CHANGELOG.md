@@ -42,6 +42,8 @@ All notable changes to CipherRun are documented here. The format follows
 - Forwarded client addresses are trusted only from configured proxy CIDRs.
 - Certificate inventory routes are restricted to administrator credentials until
   persisted certificate records carry tenant ownership.
+- Global history and statistics routes are restricted to administrator credentials
+  until persisted analytics records carry tenant ownership.
 
 ### Changed
 

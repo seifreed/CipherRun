@@ -236,9 +236,17 @@ impl ApiServer {
                     .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             // History routes
-            .route("/history/{domain}", get(routes::history::get_history))
+            .route(
+                "/history/{domain}",
+                get(routes::history::get_history)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+            )
             // Stats routes
-            .route("/stats", get(routes::stats::get_stats))
+            .route(
+                "/stats",
+                get(routes::stats::get_stats)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+            )
             .route("/metrics", get(routes::prometheus::metrics))
             // Health check
             .route("/health", get(routes::health::health_check));
