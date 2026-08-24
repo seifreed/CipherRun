@@ -1,0 +1,41 @@
+{
+  "version": "1",
+  "fixtures": [
+    {
+      "name": "legacy-tls",
+      "positive": "TLS 1.0 negotiation",
+      "negative": "TLS 1.2 and TLS 1.3 negotiation",
+      "expected": "TLS10=true;TLS12=false;TLS13=false",
+      "false_positive_notes": "A negotiated legacy protocol proves configuration posture, not a historical exploit.",
+      "false_negative_notes": "A failed handshake may be inconclusive when the client or provider disables TLS 1.0.",
+      "safety": "passive-negotiation"
+    },
+    {
+      "name": "legacy11-tls",
+      "positive": "TLS 1.1 negotiation",
+      "negative": "TLS 1.2 and TLS 1.3 negotiation",
+      "expected": "TLS11=true;TLS12=false;TLS13=false",
+      "false_positive_notes": "A negotiated legacy protocol proves configuration posture, not a historical exploit.",
+      "false_negative_notes": "A failed handshake may be inconclusive when the client or provider disables TLS 1.1.",
+      "safety": "passive-negotiation"
+    },
+    {
+      "name": "weak-tls",
+      "positive": "TLS 1.2 CBC negotiation",
+      "negative": "TLS 1.3 negotiation",
+      "expected": "TLS12=true;TLS13=false",
+      "false_positive_notes": "CBC support is a prerequisite signal and does not confirm Lucky13 exploitation.",
+      "false_negative_notes": "Provider policy can suppress a CBC result even when another client would negotiate it.",
+      "safety": "passive-negotiation"
+    },
+    {
+      "name": "modern-tls",
+      "positive": "TLS 1.3 negotiation",
+      "negative": "TLS 1.2 negotiation",
+      "expected": "TLS13=true;TLS12=false",
+      "false_positive_notes": "TLS 1.3 support is a protocol posture observation only.",
+      "false_negative_notes": "A TLS 1.3 failure may reflect client crypto-provider constraints.",
+      "safety": "passive-negotiation"
+    }
+  ]
+}

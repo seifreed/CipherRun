@@ -3,6 +3,9 @@ set -euo pipefail
 
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
+cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
+jq -e '.version == "1" and (.fixtures | length == 4)' \
+    "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
     local target=$1

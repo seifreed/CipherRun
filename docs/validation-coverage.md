@@ -8,6 +8,8 @@ a historical implementation CVE.
 Run `make lab-validate` to scan isolated `legacy-tls`, `legacy11-tls`, `weak-tls`, and `modern-tls` endpoints with
 CipherRun, sslscan, testssl.sh, and OpenSSL. Raw output is written below
 `results/differential/`; no fixture exposes a host port or reaches the public Internet.
+Each run also publishes `fixture-metadata.json`, which records expected results,
+false-positive/false-negative notes, and safety classification for every fixture.
 
 | Check family | Method | Positive fixture | Negative fixture | Differential tools | Current limitation |
 |---|---|---|---|---|---|
