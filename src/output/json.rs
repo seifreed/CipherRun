@@ -14,7 +14,26 @@ fn serialize_json<T: serde::Serialize + ?Sized>(value: &T, pretty: bool) -> Resu
 
 /// Generate JSON output from scan results
 pub fn generate_json(results: &ScanResults, pretty: bool) -> Result<String> {
-    serialize_json(results, pretty)
+    let mut value = serde_json::to_value(results)?;
+    if let Some((ip, port, sni)) = single_ip_context(results) {
+        enrich_finding_endpoints(&mut value, ip, port, &sni);
+    }
+    serialize_json(&value, pretty)
+}
+
+fn single_ip_context(results: &ScanResults) -> Option<(std::net::IpAddr, u16, String)> {
+    let (host, embedded_port) = crate::utils::network::split_target_host_port(&results.target)
+        .ok()
+        .unwrap_or_else(|| (results.target.clone(), None));
+    let ip = results
+        .scan_metadata
+        .scanned_ips
+        .first()
+        .map(|entry| entry.ip)
+        .or_else(|| host.parse().ok())?;
+    let port = embedded_port.unwrap_or(443);
+    let sni = results.scan_metadata.sni_used.clone().unwrap_or(host);
+    Some((ip, port, sni))
 }
 
 /// Generate JSON output from multi-IP scan report
@@ -259,6 +278,32 @@ mod tests {
         assert_eq!(evidence["affected_ip"], ip.to_string());
         assert_eq!(evidence["port"], 443);
         assert_eq!(evidence["sni"], "example.com");
+    }
+
+    #[test]
+    fn single_ip_json_contextualizes_finding_evidence() {
+        let mut results = ScanResults {
+            target: "127.0.0.1:8443".to_string(),
+            ..Default::default()
+        };
+        results
+            .vulnerabilities
+            .push(crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Critical,
+            });
+
+        let value: serde_json::Value =
+            serde_json::from_str(&generate_json(&results, false).unwrap()).unwrap();
+        let evidence = &value["vulnerabilities"][0]["evidence"];
+        assert_eq!(evidence["affected_ip"], "127.0.0.1");
+        assert_eq!(evidence["port"], 8443);
+        assert_eq!(evidence["sni"], "127.0.0.1");
     }
 
     #[test]
