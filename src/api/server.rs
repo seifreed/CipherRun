@@ -157,7 +157,15 @@ impl ApiServer {
         config: ApiConfig,
         db_pool: Option<Arc<crate::db::DatabasePool>>,
     ) -> Result<Self> {
-        let mut state = AppState::new(config.clone())?;
+        Self::with_db_pool_and_config_path(config, db_pool, None)
+    }
+
+    pub fn with_db_pool_and_config_path(
+        config: ApiConfig,
+        db_pool: Option<Arc<crate::db::DatabasePool>>,
+        config_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let mut state = AppState::new_with_config_path(config.clone(), config_path)?;
         state.db_pool = db_pool;
         if let Some(pool) = &state.db_pool {
             state.replace_results_store(Arc::new(pool.as_ref().clone()));

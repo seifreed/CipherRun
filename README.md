@@ -110,7 +110,8 @@ Administrators can rotate or revoke credentials without restarting the API:
 `POST /api/v1/credentials/{key_id}/rotate`, and
 `POST /api/v1/credentials/{key_id}/revoke`. Create and rotate responses contain
 the new plaintext secret once; list and revoke responses contain metadata only.
-The last active administrator credential cannot be revoked.
+Changes are synchronously persisted to the owner-only API TOML file, and the
+last active administrator credential cannot be revoked.
 
 ### CT Discovery Monitoring
 

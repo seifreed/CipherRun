@@ -106,7 +106,11 @@ impl Command for ApiServerCommand {
         let db_pool = self.load_db_pool().await?;
 
         // Create and run server
-        let server = ApiServer::with_db_pool(config, db_pool)?;
+        let server = ApiServer::with_db_pool_and_config_path(
+            config,
+            db_pool,
+            self.args.api_server.config.clone(),
+        )?;
         server.run().await?;
 
         Ok(CommandExit::success())

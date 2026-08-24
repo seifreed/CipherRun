@@ -154,12 +154,18 @@ pub struct ApiCredential {
 /// process restart.
 pub struct ApiCredentialStore {
     config: RwLock<ApiConfig>,
+    persist_path: Option<PathBuf>,
 }
 
 impl ApiCredentialStore {
     pub fn new(config: &ApiConfig) -> Arc<Self> {
+        Self::new_with_persist_path(config, None)
+    }
+
+    pub fn new_with_persist_path(config: &ApiConfig, persist_path: Option<PathBuf>) -> Arc<Self> {
         Arc::new(Self {
             config: RwLock::new(config.clone()),
+            persist_path,
         })
     }
 
@@ -183,7 +189,14 @@ impl ApiCredentialStore {
             });
         }
         config.credentials.push(credential);
-        config.validate()?;
+        if let Err(error) = config.validate() {
+            config.credentials.pop();
+            return Err(error);
+        }
+        if let Err(error) = persist_runtime_config(&config, self.persist_path.as_deref()) {
+            config.credentials.pop();
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -194,13 +207,15 @@ impl ApiCredentialStore {
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<ApiCredential> {
         let mut config = self.config.write().await;
-        let credential = config
+        let index = config
             .credentials
             .iter_mut()
-            .find(|item| item.key_id == key_id)
+            .position(|item| item.key_id == key_id)
             .ok_or_else(|| TlsError::InvalidInput {
                 message: format!("unknown credential key_id: {key_id}"),
             })?;
+        let previous = config.credentials[index].clone();
+        let credential = &mut config.credentials[index];
         credential.secret_hash = hash_secret(secret);
         credential.created_at = chrono::Utc::now();
         credential.expires_at = expires_at;
@@ -209,11 +224,17 @@ impl ApiCredentialStore {
             .expires_at
             .is_some_and(|expires_at| expires_at <= credential.created_at)
         {
+            config.credentials[index] = previous;
             return Err(TlsError::InvalidInput {
                 message: "expires_at must be after the rotation time".to_string(),
             });
         }
-        Ok(credential.clone())
+        let rotated = credential.clone();
+        if let Err(error) = persist_runtime_config(&config, self.persist_path.as_deref()) {
+            config.credentials[index] = previous;
+            return Err(error);
+        }
+        Ok(rotated)
     }
 
     pub async fn revoke(&self, key_id: &str) -> Result<ApiCredential> {
@@ -223,21 +244,59 @@ impl ApiCredentialStore {
             .iter()
             .filter(|item| item.active && item.permission == Permission::Admin)
             .count();
-        let credential = config
+        let index = config
             .credentials
             .iter_mut()
-            .find(|item| item.key_id == key_id)
+            .position(|item| item.key_id == key_id)
             .ok_or_else(|| TlsError::InvalidInput {
                 message: format!("unknown credential key_id: {key_id}"),
             })?;
+        let previous = config.credentials[index].clone();
+        let credential = &mut config.credentials[index];
         if credential.permission == Permission::Admin && credential.active && active_admins <= 1 {
             return Err(TlsError::ConfigError {
                 message: "cannot revoke the last active administrator credential".to_string(),
             });
         }
         credential.active = false;
-        Ok(credential.clone())
+        let revoked = credential.clone();
+        if let Err(error) = persist_runtime_config(&config, self.persist_path.as_deref()) {
+            config.credentials[index] = previous;
+            return Err(error);
+        }
+        Ok(revoked)
     }
+}
+
+fn persist_runtime_config(config: &ApiConfig, path: Option<&Path>) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let serialized = toml::to_string_pretty(config).map_err(|error| TlsError::ConfigError {
+        message: format!("failed to serialize runtime API config: {error}"),
+    })?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).truncate(true).create(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|source| TlsError::FileSystemError {
+            path: path.display().to_string(),
+            source,
+        })?;
+    file.write_all(serialized.as_bytes())
+        .map_err(|source| TlsError::FileSystemError {
+            path: path.display().to_string(),
+            source,
+        })?;
+    file.sync_all().map_err(|source| TlsError::FileSystemError {
+        path: path.display().to_string(),
+        source,
+    })
 }
 
 const fn default_true() -> bool {
@@ -954,5 +1013,39 @@ enable_swagger = true
             .await
             .expect("revoke should succeed");
         assert!(store.authenticate_key("new-secret").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn runtime_store_persists_rotation_and_revocation() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("api.toml");
+        ApiConfig::create_example(&path).expect("example config should be created");
+        let config = ApiConfig::from_file(&path).expect("config should load");
+        let store = ApiCredentialStore::new_with_persist_path(&config, Some(path.clone()));
+        store
+            .insert(ApiCredential::from_secret(
+                "runtime-key".to_string(),
+                "old-secret",
+                "runtime-principal".to_string(),
+                Some("tenant".to_string()),
+                Permission::User,
+            ))
+            .await
+            .expect("insert should persist");
+        store
+            .rotate("runtime-key", "new-secret", None)
+            .await
+            .expect("rotate should persist");
+
+        let reloaded = ApiConfig::from_file(&path).expect("persisted config should reload");
+        assert_eq!(reloaded.validate_key("new-secret"), Some(Permission::User));
+        assert_eq!(reloaded.validate_key("old-secret"), None);
+
+        store
+            .revoke("runtime-key")
+            .await
+            .expect("revoke should persist");
+        let reloaded = ApiConfig::from_file(&path).expect("revoked config should reload");
+        assert_eq!(reloaded.validate_key("new-secret"), None);
     }
 }

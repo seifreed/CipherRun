@@ -370,6 +370,10 @@ impl ApiStats {
 impl AppState {
     /// Create new application state
     pub fn new(config: ApiConfig) -> Result<Self> {
+        Self::new_with_config_path(config, None)
+    }
+
+    pub fn new_with_config_path(config: ApiConfig, config_path: Option<PathBuf>) -> Result<Self> {
         config.validate()?;
 
         let webhook_signing_secret = config
@@ -378,7 +382,8 @@ impl AppState {
             .map(load_webhook_signing_secret)
             .transpose()?;
 
-        let credential_store = crate::api::config::ApiCredentialStore::new(&config);
+        let credential_store =
+            crate::api::config::ApiCredentialStore::new_with_persist_path(&config, config_path);
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
