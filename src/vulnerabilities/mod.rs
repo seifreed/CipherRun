@@ -47,57 +47,11 @@ impl VulnerabilityResult {
     }
 
     pub const fn finding_id(&self) -> &'static str {
-        match self.vuln_type {
-            VulnerabilityType::Heartbleed => "CR-TLS-HEARTBLEED-001",
-            VulnerabilityType::CCSInjection => "CR-TLS-CCS-INJECTION-001",
-            VulnerabilityType::Ticketbleed => "CR-TLS-TICKETBLEED-001",
-            VulnerabilityType::ROBOT => "CR-TLS-ROBOT-001",
-            VulnerabilityType::POODLE => "CR-TLS-POODLE-001",
-            VulnerabilityType::POODLEtls => "CR-TLS-POODLE-TLS-001",
-            VulnerabilityType::BEAST => "CR-TLS-BEAST-001",
-            VulnerabilityType::CRIME => "CR-TLS-CRIME-001",
-            VulnerabilityType::BREACH => "CR-TLS-BREACH-001",
-            VulnerabilityType::SWEET32 => "CR-TLS-SWEET32-001",
-            VulnerabilityType::FREAK => "CR-TLS-FREAK-001",
-            VulnerabilityType::LOGJAM => "CR-TLS-LOGJAM-001",
-            VulnerabilityType::DROWN => "CR-TLS-DROWN-001",
-            VulnerabilityType::LUCKY13 => "CR-TLS-LUCKY13-001",
-            VulnerabilityType::Renegotiation => "CR-TLS-RENEGOTIATION-001",
-            VulnerabilityType::TLSFallback => "CR-TLS-FALLBACK-SCSV-001",
-            VulnerabilityType::RC4 => "CR-TLS-RC4-001",
-            VulnerabilityType::NullCipher => "CR-TLS-NULL-CIPHER-001",
-            VulnerabilityType::Winshock => "CR-TLS-WINSHOCK-001",
-            VulnerabilityType::StarttlsInjection => "CR-TLS-STARTTLS-INJECTION-001",
-            VulnerabilityType::Opossum => "CR-TLS-OPOSSUM-001",
-            VulnerabilityType::EarlyDataReplay => "CR-TLS-EARLY-DATA-REPLAY-001",
-            VulnerabilityType::PaddingOracle2016 => "CR-TLS-PADDING-ORACLE-2016-001",
-            VulnerabilityType::ZombiePoodle => "CR-TLS-ZOMBIE-POODLE-001",
-            VulnerabilityType::GoldenDoodle => "CR-TLS-GOLDEN-DOODLE-001",
-            VulnerabilityType::SleepingPoodle => "CR-TLS-SLEEPING-POODLE-001",
-            VulnerabilityType::OpenSsl0Length => "CR-TLS-OPENSSL-ZERO-LENGTH-001",
-            VulnerabilityType::GREASE => "CR-TLS-GREASE-INTOLERANCE-001",
-        }
+        self.vuln_type.finding_id()
     }
 
     pub const fn detection_method(&self) -> DetectionMethod {
-        match self.vuln_type {
-            VulnerabilityType::LUCKY13 | VulnerabilityType::SleepingPoodle => {
-                DetectionMethod::TimingAnalysis
-            }
-            VulnerabilityType::BREACH => DetectionMethod::Heuristic,
-            VulnerabilityType::BEAST
-            | VulnerabilityType::CRIME
-            | VulnerabilityType::SWEET32
-            | VulnerabilityType::FREAK
-            | VulnerabilityType::LOGJAM
-            | VulnerabilityType::Renegotiation
-            | VulnerabilityType::TLSFallback
-            | VulnerabilityType::RC4
-            | VulnerabilityType::NullCipher
-            | VulnerabilityType::GREASE => DetectionMethod::ProtocolNegotiation,
-            VulnerabilityType::EarlyDataReplay => DetectionMethod::ConfigurationInference,
-            _ => DetectionMethod::ActiveProbe,
-        }
+        self.vuln_type.detection_method()
     }
 
     pub const fn confidence(&self) -> FindingConfidence {

@@ -191,3 +191,49 @@ pub struct FindingEvidence {
     pub remediation: String,
     pub potentially_intrusive: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::VulnerabilityType;
+    use std::collections::HashSet;
+
+    #[test]
+    fn finding_ids_are_stable_and_unique() {
+        let types = [
+            VulnerabilityType::Heartbleed,
+            VulnerabilityType::CCSInjection,
+            VulnerabilityType::Ticketbleed,
+            VulnerabilityType::ROBOT,
+            VulnerabilityType::POODLE,
+            VulnerabilityType::POODLEtls,
+            VulnerabilityType::BEAST,
+            VulnerabilityType::CRIME,
+            VulnerabilityType::BREACH,
+            VulnerabilityType::SWEET32,
+            VulnerabilityType::FREAK,
+            VulnerabilityType::LOGJAM,
+            VulnerabilityType::DROWN,
+            VulnerabilityType::LUCKY13,
+            VulnerabilityType::Renegotiation,
+            VulnerabilityType::TLSFallback,
+            VulnerabilityType::RC4,
+            VulnerabilityType::NullCipher,
+            VulnerabilityType::Winshock,
+            VulnerabilityType::StarttlsInjection,
+            VulnerabilityType::Opossum,
+            VulnerabilityType::EarlyDataReplay,
+            VulnerabilityType::PaddingOracle2016,
+            VulnerabilityType::ZombiePoodle,
+            VulnerabilityType::GoldenDoodle,
+            VulnerabilityType::SleepingPoodle,
+            VulnerabilityType::OpenSsl0Length,
+            VulnerabilityType::GREASE,
+        ];
+        let ids: HashSet<_> = types
+            .into_iter()
+            .map(VulnerabilityType::finding_id)
+            .collect();
+        assert_eq!(ids.len(), types.len());
+        assert!(ids.iter().all(|id| id.starts_with("CR-TLS-")));
+    }
+}
