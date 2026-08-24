@@ -63,7 +63,7 @@ hickory-resolver = "0.26"
 ipnetwork = { version = "0.21", features = ["serde"] }
 
 # HTTP client
-reqwest = { version = "0.13", features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13", features = ["blocking", "json", "rustls", "http3"] }
 
 # Cryptography
 ring = "0.17"

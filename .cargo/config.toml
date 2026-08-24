@@ -1,3 +1,8 @@
 # [env]
 # SQLX_OFFLINE = "true"
 # Note: Set DATABASE_URL environment variable or run `cargo sqlx prepare` to use offline mode
+
+[build]
+# reqwest's HTTP/3 support is opt-in because its public API is still marked
+# experimental. Keep the opt-in reproducible for local, CI, and release builds.
+rustflags = ["--cfg", "reqwest_unstable"]

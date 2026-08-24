@@ -230,7 +230,7 @@ cipherrun -U example.com
 # Protocol testing
 cipherrun -p example.com
 
-# Explicit QUIC/UDP version-negotiation probe
+# Explicit QUIC/UDP and HTTP/3 probe
 cipherrun --quic example.com:443
 
 # Cipher enumeration

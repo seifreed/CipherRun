@@ -70,10 +70,6 @@ impl AlpnTester {
         crate::utils::target_addrs::socket_addrs_for_probe(&self.target, self.test_all_ips)
     }
 
-    fn http3_validation_note() -> &'static str {
-        "HTTP/3 requires QUIC/UDP validation and is not determined by this TLS ALPN probe"
-    }
-
     /// Test ALPN support with various protocols
     pub async fn test_alpn(&self) -> Result<AlpnResult> {
         let mut result = AlpnResult {
@@ -86,8 +82,8 @@ impl AlpnTester {
         };
         let mut saw_inconclusive_probe = false;
 
-        // List of common ALPN protocols to test over TLS/TCP.
-        // HTTP/3 is intentionally excluded because it requires QUIC/UDP.
+        // List of common protocols tested over TLS/TCP. HTTP/3 is probed
+        // separately with a real QUIC request below.
         let _protocols_to_test = [
             vec![b"h2".to_vec()],                       // HTTP/2
             vec![b"http/1.1".to_vec()],                 // HTTP/1.1
@@ -117,9 +113,26 @@ impl AlpnTester {
             AlpnProbeOutcome::Negotiated(_) | AlpnProbeOutcome::NotNegotiated => {}
         }
 
-        result
-            .details
-            .push(Self::http3_validation_note().to_string());
+        match self.test_http3().await? {
+            AlpnProbeOutcome::Negotiated(protocol) if protocol == "h3" => {
+                result.http3_supported = true;
+                result.supported_protocols.push(protocol);
+                result
+                    .details
+                    .push("✓ HTTP/3 (h3) completed a QUIC request".to_string());
+            }
+            AlpnProbeOutcome::Inconclusive => {
+                saw_inconclusive_probe = true;
+                result
+                    .details
+                    .push("HTTP/3 probe inconclusive - QUIC request did not complete".to_string());
+            }
+            AlpnProbeOutcome::Negotiated(_) | AlpnProbeOutcome::NotNegotiated => {
+                result
+                    .details
+                    .push("HTTP/3 (h3) was not negotiated".to_string());
+            }
+        }
 
         // Test with both protocols to see preference
         match self
@@ -147,6 +160,41 @@ impl AlpnTester {
         }
 
         Ok(result)
+    }
+
+    /// Probe HTTP/3 with a real QUIC request. Unlike a TCP ALPN probe, this
+    /// validates the UDP transport and HTTP/3 application handshake.
+    async fn test_http3(&self) -> Result<AlpnProbeOutcome> {
+        if self.starttls.is_some() {
+            return Ok(AlpnProbeOutcome::NotNegotiated);
+        }
+
+        let addrs = self.probe_addrs()?;
+        let host = self.target.hostname.clone();
+        let url = format!("https://{}:{}/", host, self.target.port);
+
+        for addr in addrs {
+            let client = reqwest::Client::builder()
+                .http3_prior_knowledge()
+                .danger_accept_invalid_certs(true)
+                .no_proxy()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10))
+                .resolve(&host, addr)
+                .build()
+                .map_err(|error| {
+                    crate::TlsError::Other(format!("HTTP/3 client setup failed: {error}"))
+                })?;
+
+            match client.get(&url).send().await {
+                Ok(_) => return Ok(AlpnProbeOutcome::Negotiated("h3".to_string())),
+                Err(error) => {
+                    tracing::debug!(%error, %addr, "HTTP/3 request did not complete");
+                }
+            }
+        }
+
+        Ok(AlpnProbeOutcome::Inconclusive)
     }
 
     /// Test a specific ALPN protocol
@@ -511,11 +559,21 @@ mod tests {
         assert!(report.alpn_result.supported_protocols.is_empty());
     }
 
-    #[test]
-    fn test_http3_validation_note_mentions_quic() {
-        let note = AlpnTester::http3_validation_note();
-        assert!(note.contains("QUIC/UDP"));
-        assert!(note.contains("not determined"));
+    #[tokio::test]
+    async fn test_http3_is_not_applicable_to_starttls() {
+        let target = Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec![IpAddr::from([127, 0, 0, 1])],
+        )
+        .unwrap();
+        let tester = AlpnTester::new(target)
+            .with_starttls(Some(crate::starttls::StarttlsProtocol::SMTP), None);
+
+        assert_eq!(
+            tester.test_http3().await.unwrap(),
+            AlpnProbeOutcome::NotNegotiated
+        );
     }
 
     #[tokio::test]
