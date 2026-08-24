@@ -1,7 +1,7 @@
 // Scan Executor - Background job processor
 
 use crate::Result;
-use crate::api::jobs::{JobQueue, ScanJob};
+use crate::api::jobs::{JobQueue, RetryDisposition, ScanJob};
 use crate::api::models::request::ScanOptions;
 use crate::api::models::response::{ProgressMessage, ScanStatus};
 use crate::api::presenters::target_input::scan_request_from_target_and_options;
@@ -17,6 +17,8 @@ use tracing::{error, info, warn};
 
 const WEBHOOK_MAX_ATTEMPTS: u8 = 3;
 const WEBHOOK_RETRY_DELAY: Duration = Duration::from_millis(250);
+const MAX_SCAN_ATTEMPTS: u32 = 3;
+const JOB_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Scan executor for processing background jobs
 pub struct ScanExecutor {
@@ -186,6 +188,7 @@ impl ScanExecutor {
         let mut scan_task = tokio::spawn(async move {
             Self::run_scan(&job_for_scan, &queue_for_scan, &progress_tx).await
         });
+        let mut heartbeat = tokio::time::interval(JOB_HEARTBEAT_INTERVAL);
 
         let scan_result = loop {
             tokio::select! {
@@ -264,6 +267,13 @@ impl ScanExecutor {
                         return;
                     }
                 }
+                _ = heartbeat.tick() => {
+                    match queue.renew_lease(&job.id).await {
+                        Ok(true) => {}
+                        Ok(false) => warn!("Lease renewal skipped for job {}", job.id),
+                        Err(error) => warn!("Failed to renew lease for job {}: {}", job.id, error),
+                    }
+                }
             }
         };
 
@@ -325,12 +335,56 @@ impl ScanExecutor {
                             job.id
                         );
                     } else {
-                        job.mark_failed(error_msg);
-                        failed = true;
+                        match queue
+                            .retry_or_dead_letter(&job, &error_msg, MAX_SCAN_ATTEMPTS)
+                            .await
+                        {
+                            Ok(RetryDisposition::Requeued) => {
+                                info!(
+                                    "Requeued scan job {} after failed attempt {}/{}",
+                                    job.id, job.attempts, MAX_SCAN_ATTEMPTS
+                                );
+                                let mut message = ProgressMessage::new(&job.id, 0, "retrying");
+                                message.details = Some(error_msg);
+                                let _ = self.progress_tx.send(message);
+                                return;
+                            }
+                            Ok(RetryDisposition::DeadLettered) => {
+                                job.mark_dead_letter(error_msg);
+                                failed = true;
+                            }
+                            Err(retry_error) => {
+                                error!("Failed to requeue scan job {}: {}", job.id, retry_error);
+                                job.mark_failed(error_msg);
+                                failed = true;
+                            }
+                        }
                     }
                 } else {
-                    job.mark_failed(error_msg);
-                    failed = true;
+                    match queue
+                        .retry_or_dead_letter(&job, &error_msg, MAX_SCAN_ATTEMPTS)
+                        .await
+                    {
+                        Ok(RetryDisposition::Requeued) => {
+                            info!(
+                                "Requeued scan job {} after failed attempt {}/{}",
+                                job.id, job.attempts, MAX_SCAN_ATTEMPTS
+                            );
+                            let mut message = ProgressMessage::new(&job.id, 0, "retrying");
+                            message.details = Some(error_msg);
+                            let _ = self.progress_tx.send(message);
+                            return;
+                        }
+                        Ok(RetryDisposition::DeadLettered) => {
+                            job.mark_dead_letter(error_msg);
+                            failed = true;
+                        }
+                        Err(retry_error) => {
+                            error!("Failed to requeue scan job {}: {}", job.id, retry_error);
+                            job.mark_failed(error_msg);
+                            failed = true;
+                        }
+                    }
                 }
                 let msg = if cancelled {
                     ProgressMessage::cancelled(&job.id, job.progress)

@@ -7,7 +7,7 @@ pub mod storage;
 
 pub use database::DatabaseJobQueue;
 pub use executor::ScanExecutor;
-pub use queue::{InMemoryJobQueue, JobQueue, ScanJob};
+pub use queue::{InMemoryJobQueue, JobQueue, RetryDisposition, ScanJob};
 pub use storage::{FileJobStorage, JobStorage};
 
 #[cfg(test)]

@@ -76,6 +76,14 @@ pub struct ScanJob {
 
     /// ETA in seconds
     pub eta_seconds: Option<u64>,
+
+    /// Number of execution attempts, including the currently running attempt.
+    #[serde(default)]
+    pub attempts: u32,
+
+    /// True when retries were exhausted and the job was moved to the dead-letter queue.
+    #[serde(default)]
+    pub dead_letter: bool,
 }
 
 impl ScanJob {
@@ -101,6 +109,8 @@ impl ScanJob {
             webhook_url,
             estimated_completion: None,
             eta_seconds: None,
+            attempts: 0,
+            dead_letter: false,
         }
     }
 
@@ -184,6 +194,7 @@ impl ScanJob {
         self.status = ScanStatus::Running;
         self.started_at = Some(Utc::now());
         self.progress = 0;
+        self.attempts = self.attempts.saturating_add(1);
     }
 
     /// Reset to queued, e.g. when a claimed job is returned to the queue
@@ -210,6 +221,11 @@ impl ScanJob {
         self.current_stage = Some("failed".to_string());
         self.error = Some(error.into());
         self.eta_seconds = None;
+    }
+
+    pub fn mark_dead_letter(&mut self, error: impl Into<String>) {
+        self.mark_failed(error);
+        self.dead_letter = true;
     }
 
     /// Mark as cancelled
@@ -254,10 +270,32 @@ pub trait JobQueue: Send + Sync {
     /// Get active jobs count
     async fn active_jobs_count(&self) -> Result<usize>;
 
+    /// Extend the lease for a running job. Backends without leases report false.
+    async fn renew_lease(&self, _id: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Requeue a failed attempt or move it to the backend's dead-letter state.
+    async fn retry_or_dead_letter(
+        &self,
+        job: &ScanJob,
+        error: &str,
+        max_attempts: u32,
+    ) -> Result<RetryDisposition> {
+        let _ = (job, error, max_attempts);
+        Ok(RetryDisposition::DeadLettered)
+    }
+
     /// Remove terminal jobs whose configured retention period has elapsed.
     async fn prune_expired(&self) -> Result<usize> {
         Ok(0)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryDisposition {
+    Requeued,
+    DeadLettered,
 }
 
 /// In-memory job queue implementation
@@ -562,6 +600,33 @@ impl JobQueue for InMemoryJobQueue {
         Ok(count)
     }
 
+    async fn retry_or_dead_letter(
+        &self,
+        job: &ScanJob,
+        error: &str,
+        max_attempts: u32,
+    ) -> Result<RetryDisposition> {
+        let mut queue = self.queue.write().await;
+        let mut jobs = self.jobs.write().await;
+        let Some(current) = jobs.get(&job.id).cloned() else {
+            return Ok(RetryDisposition::DeadLettered);
+        };
+        let mut next = current;
+        if next.attempts < max_attempts {
+            next.error = Some(error.to_string());
+            next.mark_queued();
+            self.persist(&next)?;
+            queue.push_back(next.clone());
+            jobs.insert(next.id.clone(), next);
+            Ok(RetryDisposition::Requeued)
+        } else {
+            next.mark_dead_letter(error);
+            self.persist(&next)?;
+            jobs.insert(next.id.clone(), next);
+            Ok(RetryDisposition::DeadLettered)
+        }
+    }
+
     async fn prune_expired(&self) -> Result<usize> {
         let mut jobs = self.jobs.write().await;
         let before = jobs.len();
@@ -594,6 +659,48 @@ mod tests {
         assert_eq!(dequeued.id, job.id);
         // dequeue claims the job, so it is reported as Running, not Queued.
         assert_eq!(dequeued.status, ScanStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn retry_requeues_until_dead_letter() {
+        let queue = InMemoryJobQueue::new(10);
+        let job = ScanJob::new(
+            "retry.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        let id = queue.enqueue(job).await.unwrap();
+
+        let first = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(first.attempts, 1);
+        assert_eq!(
+            queue
+                .retry_or_dead_letter(&first, "temporary", 3)
+                .await
+                .unwrap(),
+            RetryDisposition::Requeued
+        );
+        let second = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(second.attempts, 2);
+        assert_eq!(
+            queue
+                .retry_or_dead_letter(&second, "temporary", 3)
+                .await
+                .unwrap(),
+            RetryDisposition::Requeued
+        );
+        let third = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(third.attempts, 3);
+        assert_eq!(
+            queue
+                .retry_or_dead_letter(&third, "permanent", 3)
+                .await
+                .unwrap(),
+            RetryDisposition::DeadLettered
+        );
+        let stored = queue.get_job(&id).await.unwrap().unwrap();
+        assert!(stored.dead_letter);
+        assert_eq!(stored.status, ScanStatus::Failed);
     }
 
     #[tokio::test]

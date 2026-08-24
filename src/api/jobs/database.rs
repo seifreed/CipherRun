@@ -197,19 +197,25 @@ impl DatabaseJobQueue {
 
     async fn update_row(&self, job: &ScanJob, lease_until: Option<DateTime<Utc>>) -> Result<()> {
         let json = serde_json::to_string(job)?;
-        let status = status_name(job.status);
+        let status = if job.dead_letter {
+            "dead_letter"
+        } else {
+            status_name(job.status)
+        };
         let query = format!(
-            "UPDATE {TABLE} SET status = {}, job_json = {}, lease_until = {} WHERE id = {}",
+            "UPDATE {TABLE} SET status = {}, job_json = {}, lease_until = {}, attempts = {} WHERE id = {}",
             placeholder(self.pool.as_ref(), 1),
             placeholder(self.pool.as_ref(), 2),
             placeholder(self.pool.as_ref(), 3),
-            placeholder(self.pool.as_ref(), 4)
+            placeholder(self.pool.as_ref(), 4),
+            placeholder(self.pool.as_ref(), 5)
         );
         match self.pool.as_ref() {
             DatabasePool::Sqlite(pool) => sqlx::query(&query)
                 .bind(status)
                 .bind(json)
                 .bind(lease_until)
+                .bind(i64::from(job.attempts))
                 .bind(&job.id)
                 .execute(pool)
                 .await
@@ -218,6 +224,7 @@ impl DatabaseJobQueue {
                 .bind(status)
                 .bind(json)
                 .bind(lease_until)
+                .bind(i64::from(job.attempts))
                 .bind(&job.id)
                 .execute(pool)
                 .await
@@ -398,12 +405,13 @@ impl JobQueue for DatabaseJobQueue {
         self.ensure_schema().await?;
         let json = serde_json::to_string(job)?;
         let query = format!(
-            "UPDATE {TABLE} SET status = {}, job_json = {}, lease_until = {} \
+            "UPDATE {TABLE} SET status = {}, job_json = {}, lease_until = {}, attempts = {} \
              WHERE id = {} AND status <> 'cancelled'",
             placeholder(self.pool.as_ref(), 1),
             placeholder(self.pool.as_ref(), 2),
             placeholder(self.pool.as_ref(), 3),
-            placeholder(self.pool.as_ref(), 4)
+            placeholder(self.pool.as_ref(), 4),
+            placeholder(self.pool.as_ref(), 5)
         );
         let lease = if matches!(job.status, ScanStatus::Running) {
             Some(Utc::now() + Duration::seconds(LEASE_SECONDS))
@@ -415,6 +423,7 @@ impl JobQueue for DatabaseJobQueue {
                 .bind(status_name(job.status))
                 .bind(json)
                 .bind(lease)
+                .bind(i64::from(job.attempts))
                 .bind(&job.id)
                 .execute(pool)
                 .await
@@ -423,6 +432,7 @@ impl JobQueue for DatabaseJobQueue {
                 .bind(status_name(job.status))
                 .bind(json)
                 .bind(lease)
+                .bind(i64::from(job.attempts))
                 .bind(&job.id)
                 .execute(pool)
                 .await
@@ -430,6 +440,71 @@ impl JobQueue for DatabaseJobQueue {
         }
         .map_err(db_error)?;
         Ok(updated == 1)
+    }
+
+    async fn renew_lease(&self, id: &str) -> Result<bool> {
+        self.ensure_schema().await?;
+        let query = format!(
+            "UPDATE {TABLE} SET lease_until = {} WHERE id = {} AND status = 'running'",
+            placeholder(self.pool.as_ref(), 1),
+            placeholder(self.pool.as_ref(), 2)
+        );
+        let lease = Utc::now() + Duration::seconds(LEASE_SECONDS);
+        let affected = match self.pool.as_ref() {
+            DatabasePool::Sqlite(pool) => sqlx::query(&query)
+                .bind(lease)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|result| result.rows_affected()),
+            DatabasePool::Postgres(pool) => sqlx::query(&query)
+                .bind(lease)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|result| result.rows_affected()),
+        }
+        .map_err(db_error)?;
+        Ok(affected == 1)
+    }
+
+    async fn retry_or_dead_letter(
+        &self,
+        job: &ScanJob,
+        error: &str,
+        max_attempts: u32,
+    ) -> Result<super::RetryDisposition> {
+        self.ensure_schema().await?;
+        let mut next = self.load(&job.id).await?.ok_or_else(|| {
+            crate::TlsError::DatabaseError(format!("Retry job disappeared: {}", job.id))
+        })?;
+        if next.attempts < max_attempts {
+            next.error = Some(error.to_string());
+            next.mark_queued();
+            self.update_row(&next, None).await?;
+            Ok(super::RetryDisposition::Requeued)
+        } else {
+            next.mark_dead_letter(error);
+            self.update_row(&next, None).await?;
+            let query = format!(
+                "UPDATE {TABLE} SET status = 'dead_letter' WHERE id = {}",
+                placeholder(self.pool.as_ref(), 1)
+            );
+            match self.pool.as_ref() {
+                DatabasePool::Sqlite(pool) => sqlx::query(&query)
+                    .bind(&next.id)
+                    .execute(pool)
+                    .await
+                    .map(|_| ()),
+                DatabasePool::Postgres(pool) => sqlx::query(&query)
+                    .bind(&next.id)
+                    .execute(pool)
+                    .await
+                    .map(|_| ()),
+            }
+            .map_err(db_error)?;
+            Ok(super::RetryDisposition::DeadLettered)
+        }
     }
 
     async fn cancel_job(&self, id: &str) -> Result<bool> {
@@ -587,6 +662,8 @@ mod tests {
         let claimed = queue.dequeue().await.unwrap().unwrap();
         assert_eq!(claimed.id, id);
         assert_eq!(claimed.status, ScanStatus::Running);
+        assert_eq!(claimed.attempts, 1);
+        assert!(queue.renew_lease(&id).await.unwrap());
         assert_eq!(queue.active_jobs_count().await.unwrap(), 1);
 
         if let DatabasePool::Sqlite(pool) = queue.pool.as_ref() {
