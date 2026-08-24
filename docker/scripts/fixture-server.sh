@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -319,6 +319,43 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 connection.sendall(response(client_data))
             except (OSError, TimeoutError):
                 pass
+PY
+        ;;
+    starttls-injection|starttls-injection-patched)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+import threading
+
+patched = sys.argv[1] == "starttls-injection-patched"
+
+def serve(port, greeting, capability, vulnerable, clean):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", port))
+        server.listen()
+        while True:
+            connection, _ = server.accept()
+            with connection:
+                connection.settimeout(3)
+                try:
+                    connection.sendall(greeting)
+                    connection.recv(4096)
+                    connection.sendall(capability)
+                    connection.recv(4096)
+                    connection.sendall(clean if patched else vulnerable)
+                except (OSError, TimeoutError):
+                    pass
+
+threads = [
+    (25252, b"220 fixture ESMTP\r\n", b"250-fixture\r\n250 STARTTLS\r\n", b"220 Ready\r\n250 OK\r\n", b"220 Ready\r\n"),
+    (21432, b"* OK IMAP4rev1 fixture\r\n", b"* CAPABILITY IMAP4rev1 STARTTLS\r\na001 OK\r\n", b"a002 OK Begin TLS\r\na003 OK LOGIN\r\n", b"a002 OK Begin TLS\r\n"),
+    (21110, b"+OK POP3 fixture\r\n", b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK STLS\r\n+OK USER\r\n", b"+OK Begin TLS\r\n-ERR command rejected\r\n"),
+]
+
+for args in threads:
+    threading.Thread(target=serve, args=args, daemon=True).start()
+threading.Event().wait()
 PY
         ;;
     weak-ciphers)

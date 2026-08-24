@@ -99,8 +99,8 @@ impl StarttlsInjectionTester {
         let mut result = result_analysis::empty_result();
         let mut tested_standard_port = false;
 
-        // Test SMTP injection (port 25, 587)
-        if self.target.port == 25 || self.target.port == 587 {
+        // Test SMTP injection (standard ports plus the dedicated lab port).
+        if matches!(self.target.port, 25 | 587 | 25252) {
             tested_standard_port = true;
             match self.test_smtp_injection_status().await {
                 Ok(status) => result_analysis::record_probe_status(
@@ -116,8 +116,8 @@ impl StarttlsInjectionTester {
             }
         }
 
-        // Test IMAP injection (port 143)
-        if self.target.port == 143 {
+        // Test IMAP injection (standard port plus the dedicated lab port).
+        if matches!(self.target.port, 143 | 21432) {
             tested_standard_port = true;
             match self.test_imap_injection_status().await {
                 Ok(status) => result_analysis::record_probe_status(
@@ -133,8 +133,8 @@ impl StarttlsInjectionTester {
             }
         }
 
-        // Test POP3 injection (port 110)
-        if self.target.port == 110 {
+        // Test POP3 injection (standard port plus the dedicated lab port).
+        if matches!(self.target.port, 110 | 21110) {
             tested_standard_port = true;
             match self.test_pop3_injection_status().await {
                 Ok(status) => result_analysis::record_probe_status(
@@ -150,7 +150,7 @@ impl StarttlsInjectionTester {
             }
         }
 
-        // If not a standard STARTTLS port, mark as not applicable
+        // If not a recognized STARTTLS port, mark as not applicable.
         if !tested_standard_port {
             result_analysis::record_nonstandard_port(&mut result, self.target.port);
         }

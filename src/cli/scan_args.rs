@@ -94,6 +94,10 @@ pub struct ScanArgs {
     #[arg(short = 'Z', long = "tls-fallback")]
     pub fallback: bool,
 
+    /// Test for STARTTLS command injection
+    #[arg(long = "starttls-injection")]
+    pub starttls_injection: bool,
+
     /// Test for SWEET32
     #[arg(short = 'W', long = "sweet32")]
     pub sweet32: bool,

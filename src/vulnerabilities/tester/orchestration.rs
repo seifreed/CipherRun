@@ -487,6 +487,17 @@ impl VulnerabilityScanner {
                 "TLS Fallback",
             );
         }
+        if self
+            .selected_checks
+            .is_enabled(&VulnerabilityType::StarttlsInjection)
+        {
+            collect_result(
+                &mut results,
+                self.test_starttls_injection().await,
+                VulnerabilityType::StarttlsInjection,
+                "STARTTLS injection",
+            );
+        }
         if self.selected_checks.is_enabled(&VulnerabilityType::CRIME) {
             collect_optional_result(
                 &mut results,

@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 42)' \
+jq -e '.version == "1" and (.fixtures | length == 48)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -127,6 +127,26 @@ scan_vulnerability_fixture fallback-patched-tls fallback-patched --tls-fallback
 scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
 
+scan_starttls_injection_fixture() {
+    local target=$1
+    local port=$2
+    local artifact=$3
+    local json="$results/$artifact.cipherrun.json"
+    local exit_code=0
+    cipherrun --allow-private --starttls-injection --overwrite --json "$json" \
+        "$target:$port" >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
+    if (( exit_code > 1 )); then
+        echo "CipherRun STARTTLS injection probe failed for $target:$port with exit code $exit_code" >&2
+        return "$exit_code"
+    fi
+}
+
+for fixture in "smtp 25252" "imap 21432" "pop3 21110"; do
+    read -r protocol port <<<"$fixture"
+    scan_starttls_injection_fixture starttls-injection-tls "$port" "${protocol}-injection"
+    scan_starttls_injection_fixture starttls-injection-patched-tls "$port" "${protocol}-injection-patched"
+done
+
 jq -e '.protocols[] | select(.protocol == "TLS10" and .supported == true)' \
     "$results/legacy-tls.cipherrun.json" >/dev/null
 jq -e 'all(.protocols[]; .protocol != "TLS12" or .supported == false)' \
@@ -208,6 +228,12 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and
     "$results/fallback.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and .status == "not_vulnerable")' \
     "$results/fallback-patched.cipherrun.json" >/dev/null
+for fixture in smtp imap pop3; do
+    jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-STARTTLS-INJECTION-001" and .status == "confirmed_vulnerable")' \
+        "$results/${fixture}-injection.cipherrun.json" >/dev/null
+    jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-STARTTLS-INJECTION-001" and .status == "not_vulnerable")' \
+        "$results/${fixture}-injection-patched.cipherrun.json" >/dev/null
+done
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RC4-001" and .status == "confirmed_vulnerable")' \
     "$results/weak-ciphers.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-NULL-CIPHER-001" and .status == "confirmed_vulnerable")' \

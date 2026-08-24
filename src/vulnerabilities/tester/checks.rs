@@ -38,6 +38,27 @@ impl VulnerabilityScanner {
         })
     }
 
+    pub async fn test_starttls_injection(&self) -> Result<VulnerabilityResult> {
+        use crate::vulnerabilities::starttls_injection::StarttlsInjectionTester;
+
+        let result = StarttlsInjectionTester::new(self.target.clone())
+            .test_all()
+            .await?;
+        Ok(VulnerabilityResult {
+            vuln_type: VulnerabilityType::StarttlsInjection,
+            vulnerable: result.vulnerable,
+            inconclusive: result.inconclusive,
+            details: result.details.join("; "),
+            cve: Some("CVE-2011-0411".to_string()),
+            cwe: Some("CWE-294".to_string()),
+            severity: if result.vulnerable {
+                Severity::Medium
+            } else {
+                Severity::Info
+            },
+        })
+    }
+
     pub async fn test_rc4(&self) -> Result<VulnerabilityResult> {
         let (supported, inconclusive) =
             crate::vulnerabilities::cipher_probe::probe_supported_suites(

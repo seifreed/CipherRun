@@ -378,6 +378,60 @@
       "false_positive_notes": "A negative control only proves the client rejects a failed extended operation.",
       "false_negative_notes": "It does not model directory policy or proxy behavior.",
       "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "smtp-injection",
+      "positive": "Synthetic SMTP server returns a pipelined command response after STARTTLS",
+      "negative": "Synthetic SMTP server stops responses at the TLS upgrade boundary",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates the SMTP command-pipelining heuristic only; it does not execute authentication or message delivery.",
+      "false_negative_notes": "Only the controlled EHLO/STARTTLS/MAIL FROM transcript is exercised.",
+      "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "smtp-injection-patched",
+      "positive": "Synthetic SMTP server stops at the TLS upgrade response",
+      "negative": "Synthetic SMTP server returns a pipelined command response",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=not_vulnerable",
+      "false_positive_notes": "A clean transcript does not prove a proxy cannot alter another SMTP route.",
+      "false_negative_notes": "Only the controlled SMTP command sequence is exercised.",
+      "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "imap-injection",
+      "positive": "Synthetic IMAP server returns a pipelined LOGIN response after STARTTLS",
+      "negative": "Synthetic IMAP server stops responses at the TLS upgrade boundary",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates the IMAP command-pipelining heuristic only; it does not authenticate.",
+      "false_negative_notes": "Only the controlled CAPABILITY/STARTTLS/LOGIN transcript is exercised.",
+      "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "imap-injection-patched",
+      "positive": "Synthetic IMAP server stops at the TLS upgrade response",
+      "negative": "Synthetic IMAP server returns a pipelined LOGIN response",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=not_vulnerable",
+      "false_positive_notes": "A clean transcript does not prove a proxy cannot alter another IMAP route.",
+      "false_negative_notes": "Only the controlled IMAP command sequence is exercised.",
+      "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "pop3-injection",
+      "positive": "Synthetic POP3 server returns multiple positive responses after STLS",
+      "negative": "Synthetic POP3 server stops responses at the TLS upgrade boundary",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates the POP3 command-pipelining heuristic only; it does not authenticate.",
+      "false_negative_notes": "Only the controlled CAPA/STLS/USER transcript is exercised.",
+      "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "pop3-injection-patched",
+      "positive": "Synthetic POP3 server stops at the TLS upgrade response",
+      "negative": "Synthetic POP3 server returns multiple positive responses",
+      "expected": "CR-TLS-STARTTLS-INJECTION-001=not_vulnerable",
+      "false_positive_notes": "A clean transcript does not prove a proxy cannot alter another POP3 route.",
+      "false_negative_notes": "Only the controlled POP3 command sequence is exercised.",
+      "safety": "active-synthetic-starttls"
     }
   ]
 }

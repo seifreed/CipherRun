@@ -49,6 +49,9 @@ impl SelectedVulnerabilityChecks {
         if args.scan.vulns.fallback {
             enabled.insert(VulnerabilityType::TLSFallback);
         }
+        if args.scan.vulns.starttls_injection {
+            enabled.insert(VulnerabilityType::StarttlsInjection);
+        }
         if args.scan.vulns.sweet32 {
             enabled.insert(VulnerabilityType::SWEET32);
         }

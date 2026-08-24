@@ -14,6 +14,7 @@ pub struct ScanRequestVulns {
     pub poodle: bool,
     pub fallback: bool,
     pub no_fallback: bool,
+    pub starttls_injection: bool,
     pub sweet32: bool,
     pub beast: bool,
     pub lucky13: bool,

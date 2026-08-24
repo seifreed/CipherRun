@@ -506,6 +506,7 @@ impl Args {
                     poodle: self.scan.poodle,
                     fallback: self.scan.fallback,
                     no_fallback: self.scan.no_fallback,
+                    starttls_injection: self.scan.starttls_injection,
                     sweet32: self.scan.sweet32,
                     beast: self.scan.beast,
                     lucky13: self.scan.lucky13,

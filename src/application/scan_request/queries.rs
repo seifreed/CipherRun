@@ -187,6 +187,7 @@ impl ScanRequest {
             || self.scan.vulns.breach
             || self.scan.vulns.poodle
             || self.scan.vulns.fallback
+            || self.scan.vulns.starttls_injection
             || self.scan.vulns.sweet32
             || self.scan.vulns.beast
             || self.scan.vulns.lucky13
