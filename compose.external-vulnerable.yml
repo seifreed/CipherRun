@@ -16,3 +16,27 @@ services:
       interval: 2s
       timeout: 5s
       retries: 20
+
+  openssl-1-1-1m-patched:
+    image: docker.io/vulhub/openssl@sha256:dffde83f29dc4a70e183ca7bf374f6a153839eda3a406fd5e2d41e953f72b978
+    platform: linux/amd64
+    command:
+      - bash
+      - -ceu
+      - |
+        mkdir -p /tmp/cipherrun-tls
+        openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=patched.local \
+          -keyout /tmp/cipherrun-tls/key.pem -out /tmp/cipherrun-tls/cert.pem
+        exec openssl s_server -quiet -www -accept 443 -tls1_2 \
+          -cert /tmp/cipherrun-tls/cert.pem -key /tmp/cipherrun-tls/key.pem
+    ports:
+      - "127.0.0.1:${OPENSSL_PATCHED_PORT:-14451}:443"
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "echo | openssl s_client -connect 127.0.0.1:443 -tls1_2 >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
