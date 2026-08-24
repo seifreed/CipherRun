@@ -30,6 +30,9 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
 
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@cargo-semver-checks
+
       - name: Run quality gates
         run: bash scripts/quality-gates.sh
 

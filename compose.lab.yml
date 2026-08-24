@@ -28,10 +28,33 @@ services:
     networks:
       - lab
     depends_on:
+      legacy-tls:
+        condition: service_healthy
       weak-tls:
         condition: service_healthy
       modern-tls:
         condition: service_healthy
+
+  legacy-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+    command: ["/scripts/fixture-server.sh", "legacy"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "echo | openssl s_client -connect 127.0.0.1:443 -tls1 -cipher AES128-SHA:@SECLEVEL=0 >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
   weak-tls:
     image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}

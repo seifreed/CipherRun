@@ -10,6 +10,11 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 2 -sha256 \
     -keyout "$workdir/key.pem" -out "$workdir/cert.pem" >/dev/null 2>&1
 
 case "$profile" in
+    legacy)
+        exec openssl s_server -quiet -www -accept 443 \
+            -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
+            -tls1 -cipher 'AES128-SHA:@SECLEVEL=0'
+        ;;
     weak)
         exec openssl s_server -quiet -www -accept 443 \
             -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
