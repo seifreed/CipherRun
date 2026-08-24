@@ -21,3 +21,14 @@ docker run --rm \
     -o "/local/${output_dir}" \
     --package-name cipherrun_client \
     --additional-properties=packageVersion=0.4.0,projectName=cipherrun-client
+
+# OpenAPI Generator escapes Markdown entities inside setup.py's long string;
+# raw-string syntax keeps generated clients warning-free under modern Python.
+python3 - "$root/$output_dir/setup.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+path.write_text(text.replace('long_description="""\\', 'long_description=r"""\\', 1))
+PY
