@@ -1,4 +1,4 @@
-.PHONY: help build run shell stop test test-domain lab-validate external-fixture batch compare capture results captures analyze clean-results clean-captures clean clean-all rebuild logs ps quickstart examples
+.PHONY: help build run shell stop test test-domain lab-validate external-fixture opossum-fixture batch compare capture results captures analyze clean-results clean-captures clean clean-all rebuild logs ps quickstart examples
 
 COMPOSE := docker compose -f compose.lab.yml
 SERVICE := cipherrun-lab
@@ -58,6 +58,9 @@ lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with fou
 external-fixture: ## Validate pinned vulnerable and patched OpenSSL implementations
 	cargo build --locked --bin cipherrun
 	CIPHERRUN_BIN=target/debug/cipherrun scripts/validate-external-vulnerable-fixture.sh
+
+opossum-fixture: ## Validate the isolated OpenSSL certificate-parser fixture
+	scripts/validate-opossum-fixture.sh
 
 batch: ## Run batch test on multiple domains
 	@echo "$(BLUE)Running batch test...$(NC)"

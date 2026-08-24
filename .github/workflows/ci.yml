@@ -79,6 +79,17 @@ jobs:
       - name: Run controlled differential fixtures
         run: make lab-validate
 
+      - name: Run isolated Opossum parser fixture
+        run: make opossum-fixture
+
+      - name: Upload Opossum parser transcripts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opossum-parser-fixture
+          path: results/opossum-fixture/
+          if-no-files-found: error
+
       - name: Upload scanner transcripts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

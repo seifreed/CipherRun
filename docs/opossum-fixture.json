@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "opossum-local-parser",
+  "certificate": "fixtures/opossum/crafted.crt.b64",
+  "certificate_sha256": "ba2b227b073dbd61c2d9547e81955d310520d9b5891f4b3feb136e9674c8551f",
+  "source_url": "https://github.com/jkakavas/CVE-2022-0778-POC/blob/main/crafted.crt",
+  "vulnerable_image": "docker.io/vulhub/openssl@sha256:dffde83f29dc4a70e183ca7bf374f6a153839eda3a406fd5e2d41e953f72b978",
+  "patched_image": "cipherrun-lab:0.4.0",
+  "expected": "The vulnerable OpenSSL parser times out while the patched parser returns.",
+  "false_positive_notes": "A parser timeout is only evidence for the isolated OpenSSL implementation and certificate input; it is not a remote CipherRun finding.",
+  "false_negative_notes": "The control image and timeout threshold do not cover every OpenSSL build or every certificate parser call path.",
+  "safety": "isolated-local-parser-timeout"
+}
