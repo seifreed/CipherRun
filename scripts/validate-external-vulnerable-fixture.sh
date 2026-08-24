@@ -64,7 +64,7 @@ docker run -d --name "$poodle_name" --platform linux/amd64 \
         mkdir -p /tmp/cipherrun-tls
         openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=ssl3.local \
             -keyout /tmp/cipherrun-tls/key.pem -out /tmp/cipherrun-tls/cert.pem >/dev/null 2>&1
-        exec openssl s_server -quiet -www -accept 443 -ssl3 -cipher AES128-SHA \
+        exec openssl s_server -quiet -www -accept 443 -cipher AES128-SHA \
             -cert /tmp/cipherrun-tls/cert.pem -key /tmp/cipherrun-tls/key.pem
     ' >/dev/null
 
@@ -115,6 +115,10 @@ test -x "$scanner_bin"
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .status == "confirmed_vulnerable")' \
     "${output_dir}/openssl-1-0-1c-ssl3.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .status == "not_vulnerable")' \
+    "${output_dir}/openssl-1-1-1m-poodle-control.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-OPENSSL-ZERO-LENGTH-001" and .status == "inconclusive")' \
+    "${output_dir}/openssl-1-0-1c-ssl3.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-OPENSSL-ZERO-LENGTH-001" and .status == "not_vulnerable")' \
     "${output_dir}/openssl-1-1-1m-poodle-control.cipherrun.json" >/dev/null
 
 printf 'external vulnerable fixture: %s (%s)\n' "$version" "$image"

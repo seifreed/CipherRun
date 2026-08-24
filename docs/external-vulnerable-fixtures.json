@@ -25,9 +25,9 @@
       "name": "openssl-1-0-1c-ssl3-poodle",
       "image": "docker.io/vulhub/openssl@sha256:3cf76769b6e33f45479e8bacd70d7c5c2bd8b8c4d5428ae3f613b1145a4a1c47",
       "version": "OpenSSL 1.0.1c",
-      "expected": "SSLv3 handshake succeeds with AES128-SHA; CR-TLS-POODLE-001=confirmed_vulnerable",
+      "expected": "SSLv3 and TLS 1.0 negotiation with AES128-SHA; CR-TLS-POODLE-001=confirmed_vulnerable; CR-TLS-OPENSSL-ZERO-LENGTH-001=inconclusive",
       "transcript": "results/external-fixture/openssl-1-0-1c-ssl3.txt",
-      "false_positive_notes": "The result confirms SSLv3 negotiation and the configured POODLE downgrade prerequisite; it does not demonstrate a CBC padding-oracle exploit or any POODLE variant.",
+      "false_positive_notes": "The result confirms SSLv3 negotiation and the configured POODLE downgrade prerequisite; the 0-Length result remains inconclusive because no memory disclosure is observed.",
       "false_negative_notes": "The fixture does not exercise application traffic, browser behavior, or timing/oracle classification.",
       "safety": "active-safe-legacy-negotiation"
     },
