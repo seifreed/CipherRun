@@ -28,6 +28,7 @@ pub struct ScanExecutor {
     progress_tx: broadcast::Sender<ProgressMessage>,
     stats: Option<Arc<RwLock<ApiStats>>>,
     webhook_signing_secret: Option<Arc<Vec<u8>>>,
+    worker_allowed_cidrs: Arc<Vec<ipnetwork::IpNetwork>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
@@ -46,6 +47,7 @@ impl ScanExecutor {
             progress_tx,
             stats: None,
             webhook_signing_secret: None,
+            worker_allowed_cidrs: Arc::new(Vec::new()),
             shutdown_tx,
             shutdown_rx,
         }
@@ -58,6 +60,11 @@ impl ScanExecutor {
 
     pub fn with_webhook_signing_secret(mut self, secret: Option<Vec<u8>>) -> Self {
         self.webhook_signing_secret = secret.map(Arc::new);
+        self
+    }
+
+    pub fn with_worker_allowed_cidrs(mut self, cidrs: Vec<ipnetwork::IpNetwork>) -> Self {
+        self.worker_allowed_cidrs = Arc::new(cidrs);
         self
     }
 
@@ -185,8 +192,15 @@ impl ScanExecutor {
         let progress_tx = self.progress_tx.clone();
         let queue_for_scan = queue.clone();
         let job_for_scan = job.clone();
+        let worker_allowed_cidrs = self.worker_allowed_cidrs.clone();
         let mut scan_task = tokio::spawn(async move {
-            Self::run_scan(&job_for_scan, &queue_for_scan, &progress_tx).await
+            Self::run_scan(
+                &job_for_scan,
+                &queue_for_scan,
+                &progress_tx,
+                &worker_allowed_cidrs,
+            )
+            .await
         });
         let mut heartbeat = tokio::time::interval(JOB_HEARTBEAT_INTERVAL);
 
@@ -434,8 +448,13 @@ impl ScanExecutor {
         job: &ScanJob,
         queue: &Arc<dyn JobQueue>,
         progress_tx: &broadcast::Sender<ProgressMessage>,
+        worker_allowed_cidrs: &[ipnetwork::IpNetwork],
     ) -> Result<ScanResults> {
-        let request = Self::options_to_request(&job.target, &job.options)?;
+        let request = Self::options_to_request_with_worker_scope(
+            &job.target,
+            &job.options,
+            worker_allowed_cidrs,
+        )?;
 
         Self::report_running_progress(job, queue, progress_tx, 5, "Initializing scanner").await;
 
@@ -485,8 +504,18 @@ impl ScanExecutor {
     }
 
     fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
-        scan_request_from_target_and_options(target, options)
-            .map_err(|error| TlsError::Other(error.to_string()))
+        Self::options_to_request_with_worker_scope(target, options, &[])
+    }
+
+    fn options_to_request_with_worker_scope(
+        target: &str,
+        options: &ScanOptions,
+        worker_allowed_cidrs: &[ipnetwork::IpNetwork],
+    ) -> Result<ScanRequest> {
+        let mut request = scan_request_from_target_and_options(target, options)
+            .map_err(|error| TlsError::Other(error.to_string()))?;
+        request.network.allow_cidrs = worker_allowed_cidrs.to_vec();
+        Ok(request)
     }
 
     /// Broadcast a progress update and persist it.
@@ -657,6 +686,7 @@ impl Clone for ScanExecutor {
             shutdown_tx: self.shutdown_tx.clone(),
             shutdown_rx: self.shutdown_rx.clone(),
             webhook_signing_secret: self.webhook_signing_secret.clone(),
+            worker_allowed_cidrs: self.worker_allowed_cidrs.clone(),
         }
     }
 }
@@ -775,6 +805,21 @@ mod tests {
         assert!(!request.network.ipv6_only);
         assert_eq!(request.ip.as_deref(), Some("8.8.8.8"));
         assert!(!request.scan.scope.all);
+    }
+
+    #[test]
+    fn worker_scope_is_injected_after_api_request_validation() {
+        let options = ScanOptions {
+            test_protocols: true,
+            ..Default::default()
+        };
+        let cidr = vec!["10.20.0.0/16".parse().unwrap()];
+        let request =
+            ScanExecutor::options_to_request_with_worker_scope("example.com", &options, &cidr)
+                .expect("request should build");
+
+        assert_eq!(request.network.allow_cidrs, cidr);
+        assert!(!request.network.allow_private);
     }
 
     #[test]

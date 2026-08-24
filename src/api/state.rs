@@ -280,6 +280,7 @@ impl AppState {
         let executor = Arc::new(
             ScanExecutor::new(job_queue.clone(), config.max_concurrent_scans)
                 .with_webhook_signing_secret(webhook_signing_secret)
+                .with_worker_allowed_cidrs(config.worker_allowed_cidrs.clone())
                 .with_stats(stats.clone()),
         );
 
@@ -311,6 +312,7 @@ impl AppState {
         let executor = Arc::new(
             ScanExecutor::new(job_queue.clone(), self.config.max_concurrent_scans)
                 .with_webhook_signing_secret(self.executor.webhook_signing_secret())
+                .with_worker_allowed_cidrs(self.config.worker_allowed_cidrs.clone())
                 .with_stats(self.stats.clone()),
         );
         self.progress_tx = executor.progress_broadcaster();

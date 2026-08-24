@@ -80,6 +80,10 @@ pub struct ApiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_client_ca_file: Option<PathBuf>,
 
+    /// CIDR scopes that API workers may scan after DNS resolution.
+    #[serde(default)]
+    pub worker_allowed_cidrs: Vec<ipnetwork::IpNetwork>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -212,6 +216,7 @@ impl Default for ApiConfig {
             tls_cert_file: None,
             tls_key_file: None,
             tls_client_ca_file: None,
+            worker_allowed_cidrs: Vec::new(),
             enable_swagger: false,
             policy_dir: None,
         }

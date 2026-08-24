@@ -36,6 +36,7 @@ All notable changes to CipherRun are documented here. The format follows
 - SQLite/PostgreSQL job backend with conditional claims and lease recovery.
 - Database job lease heartbeats, bounded scan retries, and dead-letter records.
 - Optional OpenTelemetry OTLP tracing through the `otel` feature.
+- Administrator-owned worker CIDR scopes enforced after DNS resolution.
 
 ### Changed
 

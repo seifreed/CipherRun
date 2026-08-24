@@ -122,6 +122,10 @@ intentionally excluded.
 Credentials assigned to the same `tenant_id` share the configured request quota;
 unscoped credentials remain isolated per key.
 
+Set `worker_allowed_cidrs` in the API config to constrain worker DNS results to
+administrator-owned network scopes. The client cannot widen this list; every
+resolved private address must match an allowlisted CIDR.
+
 Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;
 without that feature, no telemetry backend is contacted.
