@@ -655,6 +655,13 @@ pub async fn try_vuln_ssl_connection(
         // fail at cert validation on bad-cert hosts and false-negative.
         builder.set_verify(SslVerifyMode::NONE);
 
+        // Legacy fixtures and real vulnerable implementations intentionally
+        // expose protocols/ciphers rejected by OpenSSL 3's default security
+        // policy. The probe has already been explicitly scoped to that legacy
+        // capability, so lower the client policy here rather than reporting a
+        // local-policy failure as a remote negative.
+        builder.set_security_level(0);
+
         if let Some(min_ver) = config.min_version {
             builder.set_min_proto_version(Some(min_ver))?;
         }
