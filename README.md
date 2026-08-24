@@ -73,6 +73,9 @@ scanner implementation.
 The `cipherrun-policy` crate provides the versioned policy-definition contracts
 without pulling in the evaluator, database, or API server.
 
+The `cipherrun-data` crate provides dependency-light rule-pack metadata
+contracts without pulling in the compliance loader or scanner runtime.
+
 ### Using Cargo
 
 ```bash

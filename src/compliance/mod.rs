@@ -4,6 +4,7 @@
 // including PCI-DSS, NIST SP 800-52r2, HIPAA, SOC 2, Mozilla Modern/Intermediate, and GDPR.
 
 pub mod checker;
+pub mod contract;
 pub mod engine;
 pub mod framework;
 pub mod loader;
@@ -17,12 +18,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use checker::ComplianceChecker;
+pub use contract::{RulePackMetadata, RulePackSource};
 pub use engine::ComplianceEngine;
 pub use framework::{ComplianceFramework, Requirement};
 pub use loader::FrameworkLoader;
 pub use reporter::Reporter;
 pub use rule::{Rule, RuleType};
-pub use source::{BuiltinFrameworkSource, RulePackMetadata, RulePackSource};
+pub use source::BuiltinFrameworkSource;
 
 pub const COMPLIANCE_DISCLAIMER: &str = "TLS posture checks mapped to selected technical controls. Passing these checks does not establish certification or full regulatory compliance.";
 

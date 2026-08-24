@@ -1,29 +1,14 @@
 use crate::application::ComplianceFrameworkSource;
 use crate::compliance::framework::ComplianceFramework;
 use crate::compliance::loader::FrameworkLoader;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::Path;
+
+use super::contract::{RulePackMetadata, RulePackSource};
 
 const MAX_FRAMEWORK_FILE_BYTES: u64 = 1024 * 1024;
 
 pub struct BuiltinFrameworkSource;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RulePackSource {
-    pub organization: String,
-    pub document: String,
-    pub version: String,
-    pub publication_date: String,
-    pub url: String,
-    pub last_reviewed_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RulePackMetadata {
-    pub version: String,
-    pub source: RulePackSource,
-    pub content_sha256: String,
-}
 
 #[derive(Deserialize)]
 struct RulePackHeader {
