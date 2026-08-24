@@ -37,6 +37,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Database job lease heartbeats, bounded scan retries, and dead-letter records.
 - Optional OpenTelemetry OTLP tracing through the `otel` feature.
 - Administrator-owned worker CIDR scopes enforced after DNS resolution.
+- Scheduled Kani formal verification for the existing proof harnesses.
 
 ### Changed
 
