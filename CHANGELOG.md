@@ -29,6 +29,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Signed, scan-bound, single-use WebSocket tickets with 60-second expiry.
 - HMAC-signed scan webhooks with stable delivery IDs and bounded transient retries.
 - Prometheus text metrics and per-response request IDs for operational tracing.
+- Bounded structured request audit events that omit query strings and bodies.
 
 ### Changed
 

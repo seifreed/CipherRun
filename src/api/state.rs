@@ -26,6 +26,7 @@ const MAX_TIMESTAMPS: usize = 100_000;
 
 /// Maximum number of hourly stats entries
 const MAX_HOURLY_ENTRIES: usize = 10_000;
+const MAX_AUDIT_EVENTS: usize = 10_000;
 
 /// Shared application state
 pub struct AppState {
@@ -92,6 +93,19 @@ pub struct ApiStats {
 
     /// Scan timestamps for rolling-window stats - bounded collection
     pub scan_timestamps: VecDeque<Instant>,
+
+    /// Bounded structured request audit trail kept for operational inspection.
+    pub audit_events: VecDeque<AuditEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEvent {
+    pub request_id: String,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub duration_ms: u64,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl ApiStats {
@@ -137,6 +151,14 @@ impl ApiStats {
     pub fn record_response(&mut self, response_time_ms: u64) {
         self.total_response_time_ms = self.total_response_time_ms.saturating_add(response_time_ms);
         self.total_responses = self.total_responses.saturating_add(1);
+    }
+
+    pub fn record_audit(&mut self, event: AuditEvent) {
+        self.audit_events.push_back(event);
+        if self.audit_events.len() > MAX_AUDIT_EVENTS {
+            let excess = self.audit_events.len() - MAX_AUDIT_EVENTS;
+            self.audit_events.drain(0..excess);
+        }
     }
 
     /// Get average scan duration
@@ -461,6 +483,15 @@ mod tests {
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.requests_last_hour.len(), 1);
         assert_eq!(stats.requests_in_last_hour(), 1);
+        stats.record_audit(AuditEvent {
+            request_id: "request-1".to_string(),
+            method: "GET".to_string(),
+            path: "/health".to_string(),
+            status: 200,
+            duration_ms: 1,
+            recorded_at: chrono::Utc::now(),
+        });
+        assert_eq!(stats.audit_events.len(), 1);
     }
 
     #[test]

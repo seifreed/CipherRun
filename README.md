@@ -108,7 +108,9 @@ failures are retried up to three times.
 
 Authenticated operators can scrape `/api/v1/metrics` in Prometheus text format.
 Every API response also carries an `X-Request-ID` value for correlating logs
-and client reports.
+and client reports. Requests are recorded in a bounded audit ring and emitted
+through the structured `audit` tracing target; query strings and bodies are
+intentionally excluded.
 
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
