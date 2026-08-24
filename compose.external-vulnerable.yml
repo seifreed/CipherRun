@@ -1,0 +1,18 @@
+# Isolated external vulnerable implementations. Run only on an authorized lab network.
+services:
+  openssl-1-0-1c:
+    image: docker.io/vulhub/openssl@sha256:3cf76769b6e33f45479e8bacd70d7c5c2bd8b8c4d5428ae3f613b1145a4a1c47
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:${OPENSSL_VULNERABLE_PORT:-14444}:443"
+    tmpfs:
+      - /run:rw,nosuid,size=16m
+      - /var/cache/nginx:rw,nosuid,size=16m
+      - /var/log/nginx:rw,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "echo | openssl s_client -connect 127.0.0.1:443 -tls1 -cipher AES128-SHA >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 20

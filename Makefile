@@ -1,4 +1,4 @@
-.PHONY: help build run shell stop test test-domain lab-validate batch compare capture results captures analyze clean-results clean-captures clean clean-all rebuild logs ps quickstart examples
+.PHONY: help build run shell stop test test-domain lab-validate external-fixture batch compare capture results captures analyze clean-results clean-captures clean clean-all rebuild logs ps quickstart examples
 
 COMPOSE := docker compose -f compose.lab.yml
 SERVICE := cipherrun-lab
@@ -54,6 +54,9 @@ test-domain: ## Test specific domain (usage: make test-domain DOMAIN=example.com
 lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with four TLS scanners
 	@status=0; $(COMPOSE) run --rm $(SERVICE) /scripts/differential-test.sh || status=$$?; \
 		$(COMPOSE) down --remove-orphans; exit $$status
+
+external-fixture: ## Validate the pinned real OpenSSL 1.0.1c vulnerable implementation
+	scripts/validate-external-vulnerable-fixture.sh
 
 batch: ## Run batch test on multiple domains
 	@echo "$(BLUE)Running batch test...$(NC)"
