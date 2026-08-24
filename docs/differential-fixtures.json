@@ -72,6 +72,15 @@
       "false_positive_notes": "A clean endpoint does not prove every backend in a load-balanced fleet is clean.",
       "false_negative_notes": "Only the configured endpoint and resolved address are tested.",
       "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "sweet32-tls",
+      "positive": "Synthetic ServerHello responses for the registered 3DES wire IDs",
+      "negative": "Any non-3DES cipher probe receives a TLS alert",
+      "expected": "CR-TLS-SWEET32-001=confirmed_vulnerable",
+      "false_positive_notes": "This fixture validates wire-level 3DES classification only; it does not implement a vulnerable TLS stack or demonstrate a birthday attack.",
+      "false_negative_notes": "The synthetic responder does not model certificate exchange, protocol negotiation, or server implementation behavior.",
+      "safety": "active-synthetic-wire"
     }
   ]
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 8)' \
+jq -e '.version == "1" and (.fixtures | length == 9)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -62,6 +62,8 @@ scan_vulnerability_fixture() {
 
 scan_vulnerability_fixture legacy-tls legacy-tls-beast --beast
 scan_vulnerability_fixture modern-tls modern-tls-beast --beast
+scan_vulnerability_fixture sweet32-tls sweet32 --sweet32
+scan_vulnerability_fixture modern-tls modern-tls-sweet32 --sweet32
 
 jq -e '.protocols[] | select(.protocol == "TLS10" and .supported == true)' \
     "$results/legacy-tls.cipherrun.json" >/dev/null
@@ -87,6 +89,10 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BEAST-001" and .status
     "$results/legacy-tls-beast.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BEAST-001" and .status == "not_vulnerable")' \
     "$results/modern-tls-beast.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-SWEET32-001" and .status == "confirmed_vulnerable")' \
+    "$results/sweet32.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-SWEET32-001" and .status == "not_vulnerable")' \
+    "$results/modern-tls-sweet32.cipherrun.json" >/dev/null
 
 awk '$1 == "TLSv1.0" && $2 == "enabled" { found=1 } END { exit !found }' \
     "$results/legacy-tls.sslscan.txt"

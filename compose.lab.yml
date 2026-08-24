@@ -38,6 +38,8 @@ services:
         condition: service_healthy
       breach-tls:
         condition: service_healthy
+      sweet32-tls:
+        condition: service_healthy
 
   legacy-tls:
     image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
@@ -140,6 +142,27 @@ services:
       - lab
     healthcheck:
       test: ["CMD-SHELL", "echo | openssl s_client -connect 127.0.0.1:443 -tls1_3 >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  sweet32-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "sweet32"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",443),2); s.close()'"]
       interval: 2s
       timeout: 2s
       retries: 15
