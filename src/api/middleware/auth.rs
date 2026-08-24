@@ -90,6 +90,31 @@ fn api_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError>
         .map_err(|error| ApiError::BadRequest(format!("Invalid X-API-Key header: {error}")))
 }
 
+fn api_key_from_authorization(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let mut values = headers.get_all("Authorization").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(ApiError::BadRequest(
+            "Duplicate Authorization header".to_string(),
+        ));
+    }
+
+    let value = value
+        .to_str()
+        .map_err(|error| ApiError::BadRequest(format!("Invalid Authorization header: {error}")))?;
+    let (scheme, token) = value.split_once(char::is_whitespace).ok_or_else(|| {
+        ApiError::BadRequest("Authorization header must use Bearer <token>".to_string())
+    })?;
+    if !scheme.eq_ignore_ascii_case("Bearer") || token.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Authorization header must use Bearer <token>".to_string(),
+        ));
+    }
+    Ok(Some(token.trim().to_string()))
+}
+
 /// Authentication middleware
 pub async fn authenticate(
     State(credentials): State<Arc<ApiCredentialStore>>,
@@ -135,7 +160,10 @@ pub async fn authenticate(
                 "stream tickets are only supported for WebSocket stream endpoints".to_string(),
             ));
         }
-        if query_api_key.is_some() || req.headers().contains_key("X-API-Key") {
+        if query_api_key.is_some()
+            || req.headers().contains_key("X-API-Key")
+            || req.headers().contains_key("Authorization")
+        {
             return Err(ApiError::BadRequest(
                 "Use either a stream ticket or an API key, not both".to_string(),
             ));
@@ -144,12 +172,19 @@ pub async fn authenticate(
     }
 
     let header_api_key = api_key_from_headers(req.headers())?;
-    let api_key = if let Some(api_key) = header_api_key {
-        api_key
-    } else {
-        return Err(ApiError::Unauthorized(
-            "Missing API key (use X-API-Key header)".to_string(),
-        ));
+    let bearer_api_key = api_key_from_authorization(req.headers())?;
+    let api_key = match (header_api_key, bearer_api_key) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::BadRequest(
+                "Use either X-API-Key or Authorization: Bearer, not both".to_string(),
+            ));
+        }
+        (Some(api_key), None) | (None, Some(api_key)) => api_key,
+        (None, None) => {
+            return Err(ApiError::Unauthorized(
+                "Missing API key (use X-API-Key or Authorization: Bearer)".to_string(),
+            ));
+        }
     };
 
     // Validate API key
@@ -341,5 +376,44 @@ mod tests {
         let err = api_key_from_headers(&headers).expect_err("duplicate headers should fail");
 
         assert!(err.to_string().contains("Duplicate X-API-Key"));
+    }
+
+    #[test]
+    fn test_api_key_from_authorization_accepts_bearer_case_insensitively() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Authorization", HeaderValue::from_static("bearer secret"));
+
+        assert_eq!(
+            api_key_from_authorization(&headers)
+                .expect("valid bearer header should parse")
+                .as_deref(),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn test_api_key_from_authorization_rejects_non_bearer_and_empty_tokens() {
+        for value in ["Basic secret", "Bearer"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(value).expect("test header should build"),
+            );
+
+            let err = api_key_from_authorization(&headers)
+                .expect_err("invalid bearer header should fail");
+            assert!(err.to_string().contains("Bearer <token>"));
+        }
+    }
+
+    #[test]
+    fn test_api_key_from_authorization_rejects_duplicates() {
+        let mut headers = HeaderMap::new();
+        headers.append("Authorization", HeaderValue::from_static("Bearer one"));
+        headers.append("Authorization", HeaderValue::from_static("Bearer two"));
+
+        let err =
+            api_key_from_authorization(&headers).expect_err("duplicate bearer headers should fail");
+        assert!(err.to_string().contains("Duplicate Authorization"));
     }
 }

@@ -13,7 +13,7 @@ use crate::api::{
 };
 use utoipa::{
     Modify, OpenApi,
-    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
+    openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme},
 };
 
 /// OpenAPI documentation structure
@@ -94,10 +94,11 @@ A production-ready REST API for CipherRun, a comprehensive TLS/SSL security scan
 
 All endpoints (except `/health`) require authentication via API key.
 
-Pass the API key in the `X-API-Key` header:
+Pass the API key in either the `X-API-Key` header or an HTTP Bearer header:
 
 ```
 X-API-Key: your-api-key-here
+Authorization: Bearer your-api-key-here
 ```
 
 ## Rate Limiting
@@ -148,7 +149,11 @@ impl Modify for SecurityAddon {
             components.add_security_scheme(
                 "api_key",
                 SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
-            )
+            );
+            components.add_security_scheme(
+                "bearer",
+                SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+            );
         }
     }
 }
@@ -169,6 +174,7 @@ mod tests {
             .expect("security schemes should be present");
 
         assert!(schemes.contains_key("api_key"));
+        assert!(schemes.contains_key("bearer"));
     }
 
     #[test]

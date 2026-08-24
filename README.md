@@ -152,8 +152,9 @@ dead-letter records instead of being silently discarded.
 queued and running work is never removed by retention cleanup.
 
 Browser WebSocket clients obtain a 60-second, one-use URL from
-`POST /api/v1/scan/{id}/stream-ticket` using the `X-API-Key` header. Raw API
-credentials in query parameters are rejected.
+`POST /api/v1/scan/{id}/stream-ticket` using the `X-API-Key` or
+`Authorization: Bearer` header. Raw API credentials in query parameters are
+rejected.
 
 To enable scan-completion webhooks, point `webhook_signing_secret_file` at an
 owner-only file containing at least 32 random bytes. Deliveries include
