@@ -84,7 +84,8 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
             post(routes::scans::create_stream_ticket),
         )
         .route("/health", get(routes::health::health_check))
-        .route("/stats", get(routes::stats::get_stats));
+        .route("/stats", get(routes::stats::get_stats))
+        .route("/metrics", get(routes::prometheus::metrics));
 
     Router::new()
         .nest("/api/v1", api_routes)
@@ -96,6 +97,10 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
         .layer(axum_middleware::from_fn_with_state(
             Arc::new(config.clone()),
             middleware::authenticate,
+        ))
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::metrics,
         ))
         .layer(CompressionLayer::new())
         .layer(middleware::logging_layer())

@@ -6,6 +6,7 @@ pub mod health;
 pub mod history;
 pub mod policies;
 mod policy_storage;
+pub mod prometheus;
 pub mod scans;
 pub mod stats;
 

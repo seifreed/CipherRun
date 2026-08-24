@@ -110,6 +110,7 @@ impl ApiServer {
             .route("/history/{domain}", get(routes::history::get_history))
             // Stats routes
             .route("/stats", get(routes::stats::get_stats))
+            .route("/metrics", get(routes::prometheus::metrics))
             // Health check
             .route("/health", get(routes::health::health_check));
 

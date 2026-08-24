@@ -39,3 +39,27 @@ async fn test_stats_endpoint_returns_server_info() {
     assert!(body.get("completed_scans").is_some());
     assert!(body.get("failed_scans").is_some());
 }
+
+#[tokio::test]
+async fn test_metrics_endpoint_returns_prometheus_text() {
+    let app = common::api::test_api_router();
+    let response = common::api::send(
+        &app,
+        common::api::authenticated_request("GET", "/api/v1/metrics", "test-user-key"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("x-request-id").is_some());
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(body.to_vec())
+            .unwrap()
+            .contains("cipherrun_requests_total")
+    );
+}

@@ -106,6 +106,10 @@ owner-only file containing at least 32 random bytes. Deliveries include
 `X-CipherRun-Signature: v1=<hex HMAC-SHA256>` over `<timestamp>.<body>`; transient
 failures are retried up to three times.
 
+Authenticated operators can scrape `/api/v1/metrics` in Prometheus text format.
+Every API response also carries an `X-Request-ID` value for correlating logs
+and client reports.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash
