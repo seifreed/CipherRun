@@ -48,6 +48,60 @@ impl axum::serve::Listener for TlsListener {
     }
 }
 
+fn load_api_tls_config(
+    cert_file: &std::path::Path,
+    key_file: &std::path::Path,
+    client_ca_file: Option<&std::path::Path>,
+) -> Result<rustls::ServerConfig> {
+    let material = crate::utils::mtls::MtlsConfig::from_separate_files(cert_file, key_file, None)
+        .map_err(|error| crate::error::TlsError::ConfigError {
+        message: format!("Failed to load API TLS material: {error}"),
+    })?;
+    let builder = if let Some(ca_file) = client_ca_file {
+        let ca_bytes =
+            std::fs::read(ca_file).map_err(|error| crate::error::TlsError::ConfigError {
+                message: format!("Failed to read API TLS client CA: {error}"),
+            })?;
+        let mut roots = rustls::RootCertStore::empty();
+        let mut found = 0usize;
+        for item in
+            pem::parse_many(ca_bytes).map_err(|error| crate::error::TlsError::ConfigError {
+                message: format!("Failed to parse API TLS client CA: {error}"),
+            })?
+        {
+            if item.tag() == "CERTIFICATE" {
+                roots
+                    .add(rustls::pki_types::CertificateDer::from(
+                        item.into_contents(),
+                    ))
+                    .map_err(|error| crate::error::TlsError::ConfigError {
+                        message: format!("Invalid API TLS client CA: {error}"),
+                    })?;
+                found += 1;
+            }
+        }
+        if found == 0 {
+            return Err(crate::error::TlsError::ConfigError {
+                message: "API TLS client CA file contains no certificates".to_string(),
+            });
+        }
+        rustls::ServerConfig::builder().with_client_cert_verifier(
+            rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+                .build()
+                .map_err(|error| crate::error::TlsError::ConfigError {
+                    message: format!("Invalid API TLS client verifier: {error}"),
+                })?,
+        )
+    } else {
+        rustls::ServerConfig::builder().with_no_client_auth()
+    };
+    builder
+        .with_single_cert(material.cert_chain, material.private_key)
+        .map_err(|error| crate::error::TlsError::ConfigError {
+            message: format!("Invalid API TLS material: {error}"),
+        })
+}
+
 /// API Server
 pub struct ApiServer {
     config: ApiConfig,
@@ -266,17 +320,11 @@ impl ApiServer {
         if let (Some(cert_file), Some(key_file)) =
             (&self.config.tls_cert_file, &self.config.tls_key_file)
         {
-            let material =
-                crate::utils::mtls::MtlsConfig::from_separate_files(cert_file, key_file, None)
-                    .map_err(|error| crate::error::TlsError::ConfigError {
-                        message: format!("Failed to load API TLS material: {error}"),
-                    })?;
-            let tls_config = rustls::ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(material.cert_chain, material.private_key)
-                .map_err(|error| crate::error::TlsError::ConfigError {
-                    message: format!("Invalid API TLS material: {error}"),
-                })?;
+            let tls_config = load_api_tls_config(
+                cert_file,
+                key_file,
+                self.config.tls_client_ca_file.as_deref(),
+            )?;
             axum::serve(
                 TlsListener {
                     listener,

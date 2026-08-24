@@ -120,6 +120,10 @@ certificate chain and private-key PEM file. The two paths must be configured
 together; otherwise the API remains HTTP for local development. TLS handshakes
 are completed before Axum receives a connection.
 
+Set `tls_client_ca_file` to a PEM CA bundle to require client certificates for
+every HTTPS connection (mTLS). Keep the CA file owner-readable and distribute
+client certificates separately from API credentials.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash

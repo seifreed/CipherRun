@@ -32,6 +32,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Bounded structured request audit events that omit query strings and bodies.
 - Request quotas are shared by credentials within the same configured tenant.
 - Optional native HTTPS listener with paired certificate and private-key files.
+- Optional client-certificate verification through a configured TLS CA bundle.
 
 ### Changed
 

@@ -72,6 +72,10 @@ pub struct ApiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_key_file: Option<PathBuf>,
 
+    /// Optional PEM CA bundle used to require client certificates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_client_ca_file: Option<PathBuf>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -193,6 +197,7 @@ impl Default for ApiConfig {
             webhook_signing_secret_file: None,
             tls_cert_file: None,
             tls_key_file: None,
+            tls_client_ca_file: None,
             enable_swagger: false,
             policy_dir: None,
         }
@@ -487,6 +492,11 @@ impl ApiConfig {
                 message: "tls_cert_file and tls_key_file must be configured together".to_string(),
             });
         }
+        if self.tls_client_ca_file.is_some() && self.tls_cert_file.is_none() {
+            return Err(TlsError::ConfigError {
+                message: "tls_client_ca_file requires native HTTPS certificate and key".to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -594,6 +604,18 @@ mod tests {
             .validate()
             .expect_err("TLS requires both certificate and key");
         assert!(err.to_string().contains("must be configured together"));
+    }
+
+    #[test]
+    fn test_tls_client_ca_requires_server_tls() {
+        let config = ApiConfig {
+            tls_client_ca_file: Some("clients-ca.pem".into()),
+            ..Default::default()
+        };
+        let err = config
+            .validate()
+            .expect_err("mTLS CA cannot be used without server TLS");
+        assert!(err.to_string().contains("requires native HTTPS"));
     }
 
     #[test]
