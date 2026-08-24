@@ -20,6 +20,7 @@ use tokio::sync::broadcast;
 /// this the limiter's maps grow unbounded for the process lifetime.
 const RATE_LIMITER_CLEANUP_INTERVAL_SECS: u64 = 300;
 const JOB_RETENTION_CLEANUP_INTERVAL_SECS: u64 = 3600;
+const MAX_WEBHOOK_SECRET_BYTES: u64 = 4096;
 
 const MAX_TIMESTAMPS: usize = 100_000;
 
@@ -227,6 +228,12 @@ impl AppState {
     pub fn new(config: ApiConfig) -> Result<Self> {
         config.validate()?;
 
+        let webhook_signing_secret = config
+            .webhook_signing_secret_file
+            .as_deref()
+            .map(load_webhook_signing_secret)
+            .transpose()?;
+
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
@@ -250,6 +257,7 @@ impl AppState {
         // Create executor
         let executor = Arc::new(
             ScanExecutor::new(job_queue.clone(), config.max_concurrent_scans)
+                .with_webhook_signing_secret(webhook_signing_secret)
                 .with_stats(stats.clone()),
         );
 
@@ -378,9 +386,72 @@ impl AppState {
     }
 }
 
+fn load_webhook_signing_secret(path: &std::path::Path) -> Result<Vec<u8>> {
+    let metadata = std::fs::metadata(path).map_err(|source| crate::TlsError::FileSystemError {
+        path: path.display().to_string(),
+        source,
+    })?;
+    if metadata.len() > MAX_WEBHOOK_SECRET_BYTES {
+        return Err(crate::TlsError::ConfigError {
+            message: format!(
+                "webhook signing secret exceeds {} bytes",
+                MAX_WEBHOOK_SECRET_BYTES
+            ),
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(crate::TlsError::ConfigError {
+                message: "webhook signing secret file must use owner-only permissions".to_string(),
+            });
+        }
+    }
+    let mut secret = std::fs::read(path).map_err(|source| crate::TlsError::FileSystemError {
+        path: path.display().to_string(),
+        source,
+    })?;
+    while matches!(secret.last(), Some(b'\n' | b'\r')) {
+        secret.pop();
+    }
+    if secret.len() < 32 {
+        return Err(crate::TlsError::ConfigError {
+            message: "webhook signing secret must contain at least 32 bytes".to_string(),
+        });
+    }
+    Ok(secret)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn owner_only(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
+    #[test]
+    fn webhook_secret_loader_trims_newline_and_enforces_minimum_length() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("webhook.secret");
+        std::fs::write(&path, [vec![b's'; 32], b"\r\n".to_vec()].concat()).unwrap();
+        owner_only(&path);
+        assert_eq!(load_webhook_signing_secret(&path).unwrap(), vec![b's'; 32]);
+
+        std::fs::write(&path, vec![b's'; 31]).unwrap();
+        owner_only(&path);
+        assert!(
+            load_webhook_signing_secret(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("at least 32 bytes")
+        );
+    }
 
     #[test]
     fn test_api_stats_request_tracking() {

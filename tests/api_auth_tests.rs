@@ -126,6 +126,23 @@ async fn test_auth_user_key_can_create_scan_returns_201() {
 }
 
 #[tokio::test]
+async fn test_scan_webhook_requires_signing_secret() {
+    let app = common::api::test_api_router();
+    let mut payload = scan_payload();
+    payload["webhook_url"] = serde_json::json!("https://example.com/hook");
+
+    let (status, body) = common::api::create_scan(&app, Some("test-user-key"), payload).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("webhook_signing_secret_file")
+    );
+}
+
+#[tokio::test]
 async fn test_scan_owner_isolation_and_admin_access() {
     let app = common::api::test_api_router();
     let (status, created) =

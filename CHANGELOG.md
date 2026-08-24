@@ -27,6 +27,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Principal-scoped atomic scan idempotency via the `Idempotency-Key` request header.
 - Configurable terminal-job TTL with startup and periodic persisted-artifact cleanup.
 - Signed, scan-bound, single-use WebSocket tickets with 60-second expiry.
+- HMAC-signed scan webhooks with stable delivery IDs and bounded transient retries.
 
 ### Changed
 

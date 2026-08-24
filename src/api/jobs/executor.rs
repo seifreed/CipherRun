@@ -15,6 +15,9 @@ use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore, broadcast};
 use tracing::{error, info, warn};
 
+const WEBHOOK_MAX_ATTEMPTS: u8 = 3;
+const WEBHOOK_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 /// Scan executor for processing background jobs
 pub struct ScanExecutor {
     job_queue: Arc<dyn JobQueue>,
@@ -22,6 +25,7 @@ pub struct ScanExecutor {
     semaphore: Arc<Semaphore>,
     progress_tx: broadcast::Sender<ProgressMessage>,
     stats: Option<Arc<RwLock<ApiStats>>>,
+    webhook_signing_secret: Option<Arc<Vec<u8>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
@@ -39,6 +43,7 @@ impl ScanExecutor {
             semaphore,
             progress_tx,
             stats: None,
+            webhook_signing_secret: None,
             shutdown_tx,
             shutdown_rx,
         }
@@ -47,6 +52,15 @@ impl ScanExecutor {
     pub fn with_stats(mut self, stats: Arc<RwLock<ApiStats>>) -> Self {
         self.stats = Some(stats);
         self
+    }
+
+    pub fn with_webhook_signing_secret(mut self, secret: Option<Vec<u8>>) -> Self {
+        self.webhook_signing_secret = secret.map(Arc::new);
+        self
+    }
+
+    pub fn has_webhook_signing_secret(&self) -> bool {
+        self.webhook_signing_secret.is_some()
     }
 
     /// Get progress broadcaster
@@ -346,9 +360,10 @@ impl ScanExecutor {
         }
 
         // Call webhook if configured
-        if let Some(webhook_url) = &job.webhook_url
+        if let (Some(webhook_url), Some(secret)) =
+            (&job.webhook_url, self.webhook_signing_secret.as_deref())
             && !matches!(job.status, ScanStatus::Cancelled)
-            && let Err(e) = Self::send_webhook(webhook_url, &job).await
+            && let Err(e) = Self::send_webhook(webhook_url, &job, secret).await
         {
             warn!("Failed to send webhook for job {}: {}", job.id, e);
         }
@@ -443,29 +458,103 @@ impl ScanExecutor {
     }
 
     /// Send webhook notification.
-    /// Validates the URL against SSRF before making the request.
-    async fn send_webhook(webhook_url: &str, job: &ScanJob) -> Result<()> {
+    /// Validates the URL against SSRF before making signed retryable requests.
+    async fn send_webhook(webhook_url: &str, job: &ScanJob, secret: &[u8]) -> Result<()> {
         let validated = validate_webhook_url(webhook_url).await?;
         let client = webhook_http_client(&validated)?;
 
+        Self::send_webhook_attempts(
+            &client,
+            webhook_url,
+            job,
+            secret,
+            WEBHOOK_MAX_ATTEMPTS,
+            WEBHOOK_RETRY_DELAY,
+        )
+        .await
+    }
+
+    async fn send_webhook_attempts(
+        client: &reqwest::Client,
+        webhook_url: &str,
+        job: &ScanJob,
+        secret: &[u8],
+        max_attempts: u8,
+        retry_delay: Duration,
+    ) -> Result<()> {
+        let event = match job.status {
+            ScanStatus::Completed => "scan.completed",
+            ScanStatus::Failed => "scan.failed",
+            _ => "scan.finished",
+        };
+        let delivery_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = chrono::Utc::now().timestamp().to_string();
+
         let payload = serde_json::json!({
+            "event": event,
+            "delivery_id": delivery_id,
             "job_id": job.id,
             "target": job.target,
             "status": job.status,
             "completed_at": job.completed_at,
             "error": job.error,
         });
+        let payload = serde_json::to_vec(&payload)?;
+        let signature = webhook_signature(secret, &timestamp, &payload);
+        let max_attempts = max_attempts.max(1);
 
-        let response = client.post(webhook_url).json(&payload).send().await?;
+        for attempt in 1..=max_attempts {
+            let response = client
+                .post(webhook_url)
+                .header("Content-Type", "application/json")
+                .header("X-CipherRun-Event", event)
+                .header("X-CipherRun-Delivery", &delivery_id)
+                .header("X-CipherRun-Timestamp", &timestamp)
+                .header("X-CipherRun-Signature", &signature)
+                .body(payload.clone())
+                .send()
+                .await;
 
-        if !response.status().is_success() {
-            return Err(TlsError::HttpError {
-                status: response.status().as_u16(),
-                details: "Webhook returned non-success status".to_string(),
-            });
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    info!(
+                        "Delivered webhook {} for job {} after {} attempt(s)",
+                        delivery_id, job.id, attempt
+                    );
+                    return Ok(());
+                }
+                Ok(response)
+                    if attempt == max_attempts
+                        || !is_retryable_webhook_status(response.status()) =>
+                {
+                    return Err(TlsError::HttpError {
+                        status: response.status().as_u16(),
+                        details: format!(
+                            "Webhook delivery {} failed after {} attempt(s)",
+                            delivery_id, attempt
+                        ),
+                    });
+                }
+                Ok(response) => warn!(
+                    "Webhook {} attempt {} returned {}, retrying",
+                    delivery_id,
+                    attempt,
+                    response.status()
+                ),
+                Err(error) if attempt == max_attempts => return Err(error.into()),
+                Err(error) => warn!(
+                    "Webhook {} attempt {} failed: {}, retrying",
+                    delivery_id, attempt, error
+                ),
+            }
+
+            let multiplier = 1u32
+                .checked_shl(u32::from(attempt.saturating_sub(1)))
+                .unwrap_or(u32::MAX);
+            tokio::time::sleep(retry_delay.saturating_mul(multiplier)).await;
         }
 
-        Ok(())
+        unreachable!("max_attempts is clamped to at least one")
     }
 
     /// Shutdown the executor gracefully
@@ -478,6 +567,25 @@ impl ScanExecutor {
     }
 }
 
+fn webhook_signature(secret: &[u8], timestamp: &str, payload: &[u8]) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret);
+    let mut context = ring::hmac::Context::with_key(&key);
+    context.update(timestamp.as_bytes());
+    context.update(b".");
+    context.update(payload);
+    format!("v1={}", hex::encode(context.sign().as_ref()))
+}
+
+fn is_retryable_webhook_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || matches!(
+            status,
+            reqwest::StatusCode::REQUEST_TIMEOUT
+                | reqwest::StatusCode::TOO_EARLY
+                | reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
+}
+
 impl Clone for ScanExecutor {
     fn clone(&self) -> Self {
         Self {
@@ -488,6 +596,7 @@ impl Clone for ScanExecutor {
             stats: self.stats.clone(),
             shutdown_tx: self.shutdown_tx.clone(),
             shutdown_rx: self.shutdown_rx.clone(),
+            webhook_signing_secret: self.webhook_signing_secret.clone(),
         }
     }
 }
@@ -495,6 +604,82 @@ impl Clone for ScanExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        body::Bytes,
+        extract::State as AxumState,
+        http::{HeaderMap, StatusCode},
+        routing::post,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct WebhookTestState {
+        attempts: AtomicUsize,
+        signature_valid: AtomicBool,
+        secret: Vec<u8>,
+    }
+
+    async fn retrying_webhook(
+        AxumState(state): AxumState<Arc<WebhookTestState>>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> StatusCode {
+        let timestamp = headers
+            .get("X-CipherRun-Timestamp")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        let signature = headers
+            .get("X-CipherRun-Signature")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("v1="))
+            .and_then(|value| hex::decode(value).ok());
+        let mut signed = timestamp.as_bytes().to_vec();
+        signed.push(b'.');
+        signed.extend_from_slice(&body);
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &state.secret);
+        let valid = signature
+            .as_deref()
+            .is_some_and(|signature| ring::hmac::verify(&key, &signed, signature).is_ok());
+        state.signature_valid.fetch_and(valid, Ordering::SeqCst);
+
+        if state.attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::NO_CONTENT
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_is_signed_and_retries_transient_failures() {
+        let state = Arc::new(WebhookTestState {
+            attempts: AtomicUsize::new(0),
+            signature_valid: AtomicBool::new(true),
+            secret: vec![b's'; 32],
+        });
+        let app = Router::new()
+            .route("/hook", post(retrying_webhook))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_completed(ScanResults::default());
+
+        ScanExecutor::send_webhook_attempts(
+            &reqwest::Client::new(),
+            &format!("http://{address}/hook"),
+            &job,
+            &state.secret,
+            3,
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state.attempts.load(Ordering::SeqCst), 3);
+        assert!(state.signature_valid.load(Ordering::SeqCst));
+        server.abort();
+    }
 
     #[test]
     fn test_options_to_request_basic_flags() {

@@ -60,6 +60,10 @@ pub struct ApiConfig {
     #[serde(default = "default_job_retention_seconds")]
     pub job_retention_seconds: u64,
 
+    /// File containing the HMAC secret used to sign scan webhooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_signing_secret_file: Option<PathBuf>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -178,6 +182,7 @@ impl Default for ApiConfig {
             job_queue_capacity: 1000,
             job_storage_dir: None,
             job_retention_seconds: default_job_retention_seconds(),
+            webhook_signing_secret_file: None,
             enable_swagger: false,
             policy_dir: None,
         }

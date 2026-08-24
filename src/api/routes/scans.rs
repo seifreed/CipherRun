@@ -121,6 +121,11 @@ pub async fn create_scan(
         validate_webhook_url(webhook_url)
             .await
             .map_err(|error| ApiError::BadRequest(format!("Invalid webhook_url: {}", error)))?;
+        if !state.executor.has_webhook_signing_secret() {
+            return Err(ApiError::ServiceUnavailable(
+                "Scan webhooks require webhook_signing_secret_file".to_string(),
+            ));
+        }
     }
 
     info!("Validated target: {}", final_target);
@@ -378,7 +383,7 @@ pub async fn websocket_handler(
 mod tests {
     use super::*;
     use crate::api::config::ApiConfig;
-    use crate::api::jobs::{JobQueue, ScanExecutor};
+    use crate::api::jobs::{InMemoryJobQueue, JobQueue, ScanExecutor};
     use crate::api::middleware::rate_limit::PerKeyRateLimiter;
     use crate::api::models::request::ScanOptions;
     use crate::api::state::ApiStats;
@@ -391,12 +396,15 @@ mod tests {
     use tokio_tungstenite::{connect_async, tungstenite::Error as WsError};
 
     fn build_state() -> Arc<AppState> {
-        Arc::new(AppState::new(ApiConfig::default()).expect("state should build"))
+        build_state_with_queue(Arc::new(InMemoryJobQueue::new(1000)))
     }
 
     fn build_state_with_queue(job_queue: Arc<dyn JobQueue>) -> Arc<AppState> {
         let config = Arc::new(ApiConfig::default());
-        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
+        let executor = Arc::new(
+            ScanExecutor::new(job_queue.clone(), 1)
+                .with_webhook_signing_secret(Some(vec![b'x'; 32])),
+        );
 
         Arc::new(AppState {
             config,

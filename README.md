@@ -100,6 +100,12 @@ Browser WebSocket clients obtain a 60-second, one-use URL from
 `POST /api/v1/scan/{id}/stream-ticket` using the `X-API-Key` header. Raw API
 credentials in query parameters are rejected.
 
+To enable scan-completion webhooks, point `webhook_signing_secret_file` at an
+owner-only file containing at least 32 random bytes. Deliveries include
+`X-CipherRun-Event`, `X-CipherRun-Delivery`, `X-CipherRun-Timestamp`, and an
+`X-CipherRun-Signature: v1=<hex HMAC-SHA256>` over `<timestamp>.<body>`; transient
+failures are retried up to three times.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash
