@@ -21,6 +21,11 @@ pub struct ApiConfig {
     /// Maximum concurrent scans
     pub max_concurrent_scans: usize,
 
+    /// Run an in-process scan executor. Disable when external workers share
+    /// the configured database-backed queue.
+    #[serde(default = "default_true")]
+    pub local_executor: bool,
+
     /// Plaintext API keys for programmatic embedding and tests only.
     /// This field is never read from or written to configuration files.
     #[serde(skip)]
@@ -204,6 +209,7 @@ impl Default for ApiConfig {
             host: "127.0.0.1".to_string(),
             port: 8080,
             max_concurrent_scans: 10,
+            local_executor: true,
             api_keys,
             credentials: Vec::new(),
             enable_cors: false, // SECURITY: Disable CORS by default
@@ -252,6 +258,14 @@ fn generate_secure_api_key() -> String {
 }
 
 impl ApiConfig {
+    /// Load the optional webhook signing secret for standalone workers.
+    pub(crate) fn webhook_signing_secret(&self) -> Result<Option<Vec<u8>>> {
+        self.webhook_signing_secret_file
+            .as_deref()
+            .map(crate::api::state::load_webhook_signing_secret)
+            .transpose()
+    }
+
     /// Create config from file
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let config = Self::from_file_unvalidated(path)?;
@@ -455,6 +469,12 @@ impl ApiConfig {
                 message: "job_retention_seconds must be greater than 0".to_string(),
             });
         }
+        if !self.local_executor && !matches!(self.job_backend, JobBackend::Database) {
+            return Err(TlsError::ConfigError {
+                message: "local_executor=false requires job_backend=database for external workers"
+                    .to_string(),
+            });
+        }
         if self.request_timeout_seconds == 0 {
             return Err(TlsError::ConfigError {
                 message: "request_timeout_seconds must be greater than 0".to_string(),
@@ -616,6 +636,18 @@ mod tests {
             .validate()
             .expect_err("CORS without an allowlist must fail");
         assert!(err.to_string().contains("allowed_origins"));
+    }
+
+    #[test]
+    fn external_workers_require_database_queue() {
+        let config = ApiConfig {
+            local_executor: false,
+            ..Default::default()
+        };
+        let error = config
+            .validate()
+            .expect_err("external workers need a shared database queue");
+        assert!(error.to_string().contains("job_backend=database"));
     }
 
     #[test]

@@ -115,6 +115,16 @@ Set `job_backend = "database"` when the API is started with a configured
 SQLite or PostgreSQL pool to use the transactional SQL job table instead of
 file storage. Database jobs use conditional claims and recover expired running
 leases on startup.
+For distributed execution, set `local_executor = false` in the API config and
+run one or more workers against the same SQL database:
+
+```bash
+cipherrun --worker --api-config api.toml --db-config database.toml
+```
+
+Workers reuse the scanner, lease heartbeat, retry, dead-letter, webhook, and
+CIDR policy code from the API executor; `local_executor = false` is rejected
+unless `job_backend = "database"` is selected.
 Running jobs renew their database lease while scanning. Transient scan failures
 are retried up to three attempts; exhausted jobs remain queryable as failed
 dead-letter records instead of being silently discarded.

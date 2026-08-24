@@ -348,9 +348,12 @@ impl ApiServer {
 
     /// Run the server
     pub async fn run(self) -> Result<()> {
-        // Start the executor
-        let state = self.state.clone();
-        state.start_executor().await?;
+        // API-only deployments can hand the shared database queue to external
+        // workers instead of running a local executor.
+        if self.config.local_executor {
+            let state = self.state.clone();
+            state.start_executor().await?;
+        }
 
         // Build router
         let app = self.build_router()?;

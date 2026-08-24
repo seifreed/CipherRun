@@ -422,7 +422,7 @@ impl AppState {
     }
 }
 
-fn load_webhook_signing_secret(path: &std::path::Path) -> Result<Vec<u8>> {
+pub(crate) fn load_webhook_signing_secret(path: &std::path::Path) -> Result<Vec<u8>> {
     let metadata = std::fs::metadata(path).map_err(|source| crate::TlsError::FileSystemError {
         path: path.display().to_string(),
         source,

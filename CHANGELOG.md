@@ -37,6 +37,8 @@ All notable changes to CipherRun are documented here. The format follows
 - Optional client-certificate verification through a configured TLS CA bundle.
 - SQLite/PostgreSQL job backend with conditional claims and lease recovery.
 - Database job lease heartbeats, bounded scan retries, and dead-letter records.
+- Standalone SQL-backed workers for distributed scan execution, with API-only
+  mode guarded by `local_executor = false` and the database job backend.
 - Optional OpenTelemetry OTLP tracing through the `otel` feature.
 - Administrator-owned worker CIDR scopes enforced after DNS resolution.
 - Scheduled Kani formal verification for the existing proof harnesses.

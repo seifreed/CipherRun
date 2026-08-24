@@ -15,6 +15,10 @@ pub struct ApiServerArgs {
     #[arg(long = "serve", id = "api_enable")]
     pub enable: bool,
 
+    /// Run a standalone worker against the database-backed job queue
+    #[arg(long = "worker", id = "worker_enable")]
+    pub worker: bool,
+
     /// API server host address (overrides config file; default: 127.0.0.1)
     #[arg(long = "api-host", value_name = "HOST", id = "api_host")]
     pub host: Option<String>,
@@ -61,6 +65,7 @@ mod tests {
         let args = parsed.args;
 
         assert!(!args.enable);
+        assert!(!args.worker);
         // No flag => None, so the config file (or ApiConfig::default()) wins.
         assert_eq!(args.host, None);
         assert_eq!(args.port, None);

@@ -5,7 +5,7 @@
 use super::{
     AnalyticsCommand, AnycastScanCommand, ApiServerCommand, Command, CtLogsCommand,
     DatabaseCommand, MassScanCommand, MonitorCommand, MxTestCommand, PqcScanCommand, ScanCommand,
-    ScanDiffCommand, SchemaCommand,
+    ScanDiffCommand, SchemaCommand, WorkerCommand,
 };
 use crate::cli::CipherRunSubcommand;
 use crate::{Args, Result, TlsError};
@@ -33,6 +33,7 @@ impl CommandRouter {
     fn has_routable_action(args: &Args) -> bool {
         args.subcommand.is_some()
             || args.api_server.enable
+            || args.api_server.worker
             || args.monitoring.enable
             || args.monitoring.test_alert
             || args.ct_logs.enable
@@ -101,7 +102,10 @@ impl CommandRouter {
             return Ok(Box::new(SchemaCommand::new(output)));
         }
 
-        // Priority 1: API server mode
+        // Priority 1: standalone worker or API server mode
+        if args.api_server.worker {
+            return Ok(Box::new(WorkerCommand::new(args)));
+        }
         if args.api_server.enable {
             return Ok(Box::new(ApiServerCommand::new(args)));
         }
@@ -171,10 +175,28 @@ impl CommandRouter {
     /// - `Ok(())` if the arguments are valid
     /// - `Err(TlsError)` with description if invalid
     pub fn validate_routing(args: &Args) -> Result<()> {
+        if args.api_server.enable && args.api_server.worker {
+            return Err(TlsError::InvalidInput {
+                message: "Cannot combine --serve and --worker".to_string(),
+            });
+        }
+        if args.api_server.worker {
+            if args.api_server.config.is_none() {
+                return Err(TlsError::InvalidInput {
+                    message: "--worker requires --api-config".to_string(),
+                });
+            }
+            if args.database.config.is_none() {
+                return Err(TlsError::InvalidInput {
+                    message: "--worker requires --db-config".to_string(),
+                });
+            }
+        }
+
         // Check for conflicting operational modes
         let mode_count = [
             args.subcommand.is_some(),
-            args.api_server.enable,
+            args.api_server.enable || args.api_server.worker,
             args.monitoring.enable || args.monitoring.test_alert,
             args.ct_logs.enable,
             args.compare.is_some()
@@ -188,7 +210,7 @@ impl CommandRouter {
 
         if mode_count > 1 {
             return Err(TlsError::InvalidInput {
-                message: "Cannot combine multiple operational modes (--serve, --monitor, --ct-logs, analytics)".to_string(),
+                message: "Cannot combine multiple operational modes (--serve, --worker, --monitor, --ct-logs, analytics)".to_string(),
             });
         }
 
@@ -240,6 +262,7 @@ impl CommandRouter {
         }
         if (args.subcommand.is_some()
             || args.api_server.enable
+            || args.api_server.worker
             || args.monitoring.enable
             || args.monitoring.test_alert
             || args.ct_logs.enable)
@@ -362,6 +385,22 @@ mod tests {
                     ..Default::default()
                 },
                 "ApiServerCommand",
+            ),
+            (
+                "worker",
+                Args {
+                    api_server: ApiServerArgs {
+                        worker: true,
+                        config: Some("api.toml".into()),
+                        ..Default::default()
+                    },
+                    database: DatabaseArgs {
+                        config: Some("database.toml".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                "WorkerCommand",
             ),
             (
                 "monitor",

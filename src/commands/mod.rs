@@ -23,6 +23,7 @@ mod scan_post_presenter;
 mod scan_presenter;
 mod scan_results_presenter;
 mod schema;
+mod worker;
 
 pub(crate) use command::exit_for_result_list;
 pub use command::{Command, CommandExit};
@@ -41,10 +42,12 @@ pub use pqc_scan::PqcScanCommand;
 pub use scan::ScanCommand;
 pub use scan_diff::ScanDiffCommand;
 pub use schema::SchemaCommand;
+pub use worker::WorkerCommand;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Args;
 
     #[test]
     fn test_commands_reexports_names() {
@@ -57,5 +60,6 @@ mod tests {
         assert_eq!(DatabaseCommand::new(args.clone()).name(), "DatabaseCommand");
         assert_eq!(ScanCommand::new(args).name(), "ScanCommand");
         assert_eq!(SchemaCommand::new(None).name(), "SchemaCommand");
+        assert_eq!(WorkerCommand::new(Args::default()).name(), "WorkerCommand");
     }
 }
