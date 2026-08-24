@@ -15,6 +15,11 @@ case "$profile" in
             -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
             -tls1 -cipher 'AES128-SHA:@SECLEVEL=0'
         ;;
+    legacy11)
+        exec openssl s_server -quiet -www -accept 443 \
+            -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
+            -tls1_1 -cipher 'AES128-SHA:@SECLEVEL=0'
+        ;;
     weak)
         exec openssl s_server -quiet -www -accept 443 \
             -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
