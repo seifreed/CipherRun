@@ -8,6 +8,7 @@ scripts/check-data-contract-sync.sh
 scripts/check-probes-contract-sync.sh
 scripts/check-server-contract-sync.sh
 scripts/check-protocol-contract-sync.sh
+scripts/check-worker-package.sh
 scripts/check-policy-contract-sync.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
@@ -19,6 +20,7 @@ cargo package -p cipherrun-cli --locked --allow-dirty
 cargo package -p cipherrun-data --locked --allow-dirty
 cargo package -p cipherrun-probes --locked --allow-dirty
 cargo package -p cipherrun-server --locked --allow-dirty
+cargo package -p cipherrun-worker --locked --allow-dirty
 cargo package -p cipherrun-policy --locked --allow-dirty
 cargo package -p cipherrun-protocol --locked --allow-dirty
 cargo package -p cipherrun --locked --allow-dirty

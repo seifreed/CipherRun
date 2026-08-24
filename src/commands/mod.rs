@@ -46,7 +46,7 @@ pub use remediation::RemediationCommand;
 pub use scan::ScanCommand;
 pub use scan_diff::ScanDiffCommand;
 pub use schema::SchemaCommand;
-pub use worker::WorkerCommand;
+pub use worker::{WorkerCommand, run_worker};
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,13 @@
+[package]
+name = "cipherrun-worker"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Standalone database-backed CipherRun scan worker"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/seifreed/cipherrun"
+readme = "README.md"
+
+[dependencies]
+cipherrun = { version = "0.4.0", path = "../.." }
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }

@@ -39,6 +39,7 @@ members = [
     "crates/cipherrun-data",
     "crates/cipherrun-probes",
     "crates/cipherrun-server",
+    "crates/cipherrun-worker",
     "crates/cipherrun-policy",
     "crates/cipherrun-protocol",
 ]

@@ -85,6 +85,9 @@ integrations without pulling in the command router.
 The `cipherrun-server` crate provides stable permission and job-backend
 contracts without pulling in Axum, SQLx, or the scan executor.
 
+The `cipherrun-worker` crate is a standalone worker binary that reuses the
+main package's durable queue and scan executor.
+
 ### Using Cargo
 
 ```bash
