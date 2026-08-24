@@ -32,6 +32,7 @@ pub struct ProtocolTester {
     pub(super) protocol_filter: Option<Vec<Protocol>>,
     pub(super) test_all_ips: bool,
     pub(super) retry_config: Option<crate::utils::retry::RetryConfig>,
+    pub(super) use_ech: bool,
 }
 
 impl ProtocolTester {
@@ -52,6 +53,7 @@ impl ProtocolTester {
             protocol_filter: None,
             test_all_ips: false,
             retry_config: None,
+            use_ech: false,
         }
     }
 
@@ -72,6 +74,7 @@ impl ProtocolTester {
             protocol_filter: None,
             test_all_ips: false,
             retry_config: None,
+            use_ech: false,
         }
     }
 
@@ -127,6 +130,11 @@ impl ProtocolTester {
 
     pub fn with_retry_config(mut self, config: Option<crate::utils::retry::RetryConfig>) -> Self {
         self.retry_config = config;
+        self
+    }
+
+    pub fn with_ech(mut self, enable: bool) -> Self {
+        self.use_ech = enable;
         self
     }
 

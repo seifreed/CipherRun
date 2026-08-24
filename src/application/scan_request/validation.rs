@@ -135,6 +135,16 @@ impl ScanRequest {
             return Err(invalid_input("--pkpass requires --pk or --mtls."));
         }
 
+        if self.tls.ech
+            && (self.tls.mtls_cert.is_some()
+                || self.tls.client_key.is_some()
+                || self.tls.client_certs.is_some())
+        {
+            return Err(invalid_input(
+                "Cannot combine --ech with client certificate authentication.",
+            ));
+        }
+
         if let Some(format) = &self.fingerprint.export_hello {
             crate::output::hello_export::HelloExportFormat::parse(format)?;
         }

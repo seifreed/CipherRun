@@ -100,6 +100,8 @@ impl ProtocolPhase {
             tester = tester.with_sni(Some(sni.clone()));
         }
 
+        tester = tester.with_ech(context.args.tls.ech);
+
         // Set protocol filter if specified
         // Allows testing only specific protocols (e.g., --tls12 --tls13)
         if let Some(protocols) = context.args.protocols_to_test() {

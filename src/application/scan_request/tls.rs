@@ -17,4 +17,5 @@ pub struct ScanRequestTls {
     pub client_key: Option<PathBuf>,
     pub client_key_password: Option<String>,
     pub client_certs: Option<PathBuf>,
+    pub ech: bool,
 }

@@ -158,6 +158,10 @@ pub struct ScanArgs {
     #[arg(long = "quic")]
     pub quic: bool,
 
+    /// Offer Encrypted ClientHello using the target's HTTPS/SVCB record
+    #[arg(long = "ech")]
+    pub ech: bool,
+
     /// Test all TLS protocols (skip SSLv2/SSLv3)
     #[arg(long = "tlsall")]
     pub tlsall: bool,
@@ -293,6 +297,7 @@ mod tests {
         assert!(!args.tls12);
         assert!(!args.tls13);
         assert!(!args.quic);
+        assert!(!args.ech);
         assert!(!args.tlsall);
         assert!(!args.show_sigs);
         assert!(!args.show_groups);

@@ -465,6 +465,7 @@ impl Args {
                 proto: crate::application::scan_request::ScanRequestProto {
                     enabled: self.scan.protocols
                         || self.scan.quic
+                        || self.scan.ech
                         || safe_profile
                         || self.starttls.starttls_protocol().is_some(),
                     ssl2: self.scan.ssl2,
@@ -573,6 +574,7 @@ impl Args {
                 client_key: self.tls.client_key.clone(),
                 client_key_password: self.tls.client_key_password.clone(),
                 client_certs: self.tls.client_certs.clone(),
+                ech: self.scan.ech,
             },
             fingerprint: crate::application::scan_request::ScanRequestFingerprint {
                 ja3: self.fingerprint.ja3,

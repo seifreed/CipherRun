@@ -152,6 +152,7 @@ impl VulnerabilityScanner {
 
         let sni_hostname = args.tls.sni_name.clone();
         protocol_tester = protocol_tester.with_sni(sni_hostname.clone());
+        protocol_tester = protocol_tester.with_ech(args.tls.ech);
         cipher_tester = cipher_tester.with_sni(sni_hostname.clone());
 
         let starttls = args.starttls_protocol();

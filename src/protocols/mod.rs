@@ -50,6 +50,7 @@ impl Extension {
 pub mod alpn;
 pub mod auto_detection;
 pub mod client_cas;
+pub(crate) mod ech;
 pub mod fallback_scsv;
 pub mod groups;
 pub mod handshake;

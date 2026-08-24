@@ -388,6 +388,20 @@ fn rejects_conflicting_mtls_modes() {
 }
 
 #[test]
+fn rejects_ech_with_client_authentication() {
+    let request = ScanRequest {
+        tls: ScanRequestTls {
+            ech: true,
+            mtls_cert: Some("bundle.pem".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_common_error_contains(request, "Cannot combine --ech");
+}
+
+#[test]
 fn rejects_mtls_key_password_without_key() {
     let request = ScanRequest {
         tls: ScanRequestTls {

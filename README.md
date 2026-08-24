@@ -233,6 +233,9 @@ cipherrun -p example.com
 # Explicit QUIC/UDP and HTTP/3 probe
 cipherrun --quic example.com:443
 
+# Offer Encrypted ClientHello from the target's HTTPS/SVCB record
+cipherrun --ech example.com:443
+
 # Cipher enumeration
 cipherrun -e example.com
 

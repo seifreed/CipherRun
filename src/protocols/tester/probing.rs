@@ -516,7 +516,14 @@ impl ProtocolTester {
             }
         }
 
-        let connector = tls13::connector(self.mtls_config.as_ref())?;
+        let connector = if self.use_ech {
+            match crate::protocols::ech::connector(&self.target.hostname).await? {
+                Some(connector) => connector,
+                None => return Ok(ProtocolProbeOutcome::Inconclusive),
+            }
+        } else {
+            tls13::connector(self.mtls_config.as_ref())?
+        };
 
         let sni_host = self.sni_hostname.as_ref().unwrap_or(&self.target.hostname);
         let domain = crate::utils::network::server_name_for_hostname(sni_host)?;

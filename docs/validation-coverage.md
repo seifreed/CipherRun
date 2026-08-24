@@ -19,6 +19,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | TLS 1.3 availability | Protocol negotiation | `modern-tls` | `weak-tls` | All four | Negotiation coverage only |
 | QUIC listener discovery | UDP Version Negotiation probe | Explicit `--quic` target | Closed/filtered UDP port | CipherRun | Listener response only; does not claim HTTP/3 application support |
 | HTTP/3 application support | `reqwest` HTTP/3 prior-knowledge request over QUIC | ALPN phase on a reachable HTTPS target | Closed/filtered UDP port | CipherRun | Requires a routable UDP path and returns inconclusive on transport loss |
+| ECH | HTTPS/SVCB `ech` discovery plus rustls ECH TLS 1.3 handshake | Explicit `--ech` target publishing a compatible ECH config | No HTTPS/SVCB ECH config or rejected handshake | CipherRun | Requires DNS-published config and an ECH-capable endpoint; absent/rejected config is inconclusive |
 | BEAST | Active/configuration probe | `legacy-tls-beast` | `modern-tls-beast` | CipherRun | TLS 1.0 CBC posture signal; no browser exploit claim |
 | SWEET32 | Wire-level cipher probe | `sweet32-tls` | `modern-tls-sweet32` | CipherRun | Synthetic 3DES ServerHello; no birthday attack claim |
 | FREAK, LOGJAM, RC4, NULL | Wire-level cipher probe | `weak-ciphers-tls` | `modern-tls-weak-ciphers` | CipherRun | Synthetic legacy ServerHello classification; no exploit claim |
