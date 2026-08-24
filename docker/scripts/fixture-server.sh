@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -192,6 +192,45 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 connection.recv(16384)
                 response = b"\x14\x03\x01\x00\x01\x01" if vulnerable else b"\x15\x03\x01\x00\x02\x02\x28"
                 connection.sendall(response)
+            except (OSError, TimeoutError):
+                pass
+PY
+        ;;
+    ticketbleed|ticketbleed-patched)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+
+vulnerable = sys.argv[1] == "ticketbleed"
+marker = bytes.fromhex("cafebabedeadbeef0123456789abcdef")
+
+def handshake_record(message):
+    return b"\x16\x03\x03" + len(message).to_bytes(2, "big") + message
+
+def new_session_ticket():
+    body = b"\x00\x00\x00\x00" + b"\x00\x06ticket"
+    message = b"\x04" + len(body).to_bytes(3, "big") + body
+    return handshake_record(message)
+
+def server_hello():
+    session_id = marker + (b"\x77" * 16 if vulnerable else b"")
+    body = b"\x03\x03" + (b"\x00" * 32) + bytes([len(session_id)]) + session_id + b"\xc0\x2f\x00"
+    message = b"\x02" + len(body).to_bytes(3, "big") + body
+    return handshake_record(message)
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                connection.recv(16384)
+                connection.sendall(new_session_ticket())
+                connection.recv(16384)
+                connection.sendall(server_hello())
             except (OSError, TimeoutError):
                 pass
 PY

@@ -137,6 +137,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "ticketbleed-tls",
+      "positive": "Synthetic NewSessionTicket flow echoes the marker with 16 extra bytes",
+      "negative": "Synthetic NewSessionTicket flow echoes only the marker",
+      "expected": "CR-TLS-TICKETBLEED-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates session-ID leak classification only; it is not an F5 BIG-IP implementation.",
+      "false_negative_notes": "The responder does not model TLS ticket encryption or allocator state.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "ticketbleed-patched-tls",
+      "positive": "Synthetic NewSessionTicket flow echoes only the marker",
+      "negative": "Synthetic NewSessionTicket flow echoes the marker with extra bytes",
+      "expected": "CR-TLS-TICKETBLEED-001=not_vulnerable",
+      "false_positive_notes": "A clean marker echo does not cover unrelated session-ticket flaws.",
+      "false_negative_notes": "Only the resumed ServerHello session-ID path is exercised.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",
