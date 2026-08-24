@@ -6,7 +6,7 @@ configuration-inference checks. It does not turn a weak configuration into proof
 a historical implementation CVE.
 
 Run `make lab-validate` to scan isolated `legacy-tls`, `legacy11-tls`, `weak-tls`, and `modern-tls` endpoints with
-CipherRun, sslscan, testssl.sh, and OpenSSL. Raw output is written below
+CipherRun, sslscan, SSLyze, testssl.sh, TLS-Scanner, and OpenSSL. Raw output is written below
 `results/differential/`; no fixture exposes a host port or reaches the public Internet.
 Each run also publishes `fixture-metadata.json`, which records expected results,
 false-positive/false-negative notes, and safety classification for every fixture.
@@ -20,7 +20,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | QUIC listener discovery | UDP Version Negotiation probe | Explicit `--quic` target | Closed/filtered UDP port | CipherRun | Listener response only; does not claim HTTP/3 application support |
 | HTTP/3 application support | `reqwest` HTTP/3 prior-knowledge request over QUIC | ALPN phase on a reachable HTTPS target | Closed/filtered UDP port | CipherRun | Requires a routable UDP path and returns inconclusive on transport loss |
 | ECH | HTTPS/SVCB `ech` discovery plus rustls ECH TLS 1.3 handshake | Explicit `--ech` target publishing a compatible ECH config | No HTTPS/SVCB ECH config or rejected handshake | CipherRun | Requires DNS-published config and an ECH-capable endpoint; absent/rejected config is inconclusive |
-| Server interoperability | TLS 1.2/1.3 listeners behind nginx, Apache, HAProxy, Envoy, and Caddy | `*-interop` services in the isolated Compose lab | TLS 1.0/1.1 disabled on each service | CipherRun, sslscan, testssl.sh, OpenSSL | Listener posture only; application-specific behavior and load-balancer fleets require separate fixtures |
+| Server interoperability | TLS 1.2/1.3 listeners behind nginx, Apache, HAProxy, Envoy, and Caddy | `*-interop` services in the isolated Compose lab | TLS 1.0/1.1 disabled on each service | CipherRun, sslscan, SSLyze, testssl.sh, TLS-Scanner, OpenSSL | Listener posture only; application-specific behavior and load-balancer fleets require separate fixtures |
 | STARTTLS negotiation interoperability | SMTP, IMAP, POP3, XMPP, PostgreSQL, MySQL, and LDAP capability/upgrade negotiation | `starttls-interop` | `starttls-negative` | CipherRun `--starttls-only`, OpenSSL transcripts | Negotiation boundary only; no TLS handshake, authentication, injection, Opossum, or historical CVE exploit claim |
 | BEAST | Active/configuration probe | `legacy-tls-beast` | `modern-tls-beast` | CipherRun | TLS 1.0 CBC posture signal; no browser exploit claim |
 | SWEET32 | Wire-level cipher probe | `sweet32-tls` | `modern-tls-sweet32` | CipherRun | Synthetic 3DES ServerHello; no birthday attack claim |

@@ -107,6 +107,46 @@ services:
       starttls-negative:
         condition: service_healthy
 
+  sslyze-lab:
+    image: nablac0d3/sslyze:6.1.0@sha256:e6d59470e380ecb626e831d1c3e006a410f7081266171054c0ce616ee03627d3
+    entrypoint: ["/bin/bash", "/scripts/sslyze-differential.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    volumes:
+      - ./docker/scripts/sslyze-differential.sh:/scripts/sslyze-differential.sh:ro
+      - ./results:/results
+    environment:
+      RESULTS_DIR: /results
+      DIFFERENTIAL_TARGETS: ${DIFFERENTIAL_TARGETS:-legacy-tls legacy11-tls weak-tls modern-tls}
+    networks:
+      - lab
+    depends_on:
+      legacy-tls: { condition: service_healthy }
+      legacy11-tls: { condition: service_healthy }
+      weak-tls: { condition: service_healthy }
+      modern-tls: { condition: service_healthy }
+
+  tls-scanner-lab:
+    image: ghcr.io/tls-attacker/tlsscanner@sha256:a302e8ca1d3a4f9d603281c2493f91a0a4d0cfe12526020fba8c53596bd610dd
+    entrypoint: ["/bin/bash", "/scripts/tls-scanner-differential.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    volumes:
+      - ./docker/scripts/tls-scanner-differential.sh:/scripts/tls-scanner-differential.sh:ro
+      - ./results:/results
+    environment:
+      RESULTS_DIR: /results
+      DIFFERENTIAL_TARGETS: ${DIFFERENTIAL_TARGETS:-legacy-tls legacy11-tls weak-tls modern-tls}
+    networks:
+      - lab
+    depends_on:
+      legacy-tls: { condition: service_healthy }
+      legacy11-tls: { condition: service_healthy }
+      weak-tls: { condition: service_healthy }
+      modern-tls: { condition: service_healthy }
+
   legacy-tls:
     image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:

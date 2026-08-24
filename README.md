@@ -214,7 +214,7 @@ Set `tls_client_ca_file` to a PEM CA bundle to require client certificates for
 every HTTPS connection (mTLS). Keep the CA file owner-readable and distribute
 client certificates separately from API credentials.
 
-`Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
+`Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources and digest-pinned SSLyze/TLS-Scanner services. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash
 mkdir -p captures results
@@ -223,7 +223,7 @@ make lab-validate
 ```
 
 `make lab-validate` starts isolated weak and modern TLS fixtures, records CipherRun,
-sslscan, testssl.sh, and OpenSSL results, and fails when the expected TLS 1.2/1.3
+sslscan, SSLyze, testssl.sh, TLS-Scanner, and OpenSSL results, and fails when the expected TLS 1.2/1.3
 negotiation boundary changes. See the public [validation coverage matrix](docs/validation-coverage.md).
 
 ---
