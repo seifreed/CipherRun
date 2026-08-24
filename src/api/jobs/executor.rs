@@ -503,6 +503,7 @@ impl ScanExecutor {
         }
     }
 
+    #[allow(dead_code)]
     fn options_to_request(target: &str, options: &ScanOptions) -> Result<ScanRequest> {
         Self::options_to_request_with_worker_scope(target, options, &[])
     }

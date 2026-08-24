@@ -114,7 +114,7 @@ rand = "0.10.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opentelemetry = { version = "0.32", optional = true }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto"], optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"], optional = true }
 opentelemetry_sdk = { version = "0.32", optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
