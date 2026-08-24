@@ -20,6 +20,7 @@ use colored::control;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use tracing::{Level, info};
+#[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
@@ -195,13 +196,35 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
         BoxMakeWriter::new(std::io::stderr)
     };
 
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_writer(writer)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).map_err(|e| {
-        cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
-    })?;
+    #[cfg(feature = "otel")]
+    {
+        use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_writer(writer)
+            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
+                log_level,
+            ));
+        let otel_layer = cipherrun::telemetry::layer()?;
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(otel_layer)
+            .try_init()
+            .map_err(|e| {
+                cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
+            })?;
+    }
+
+    #[cfg(not(feature = "otel"))]
+    {
+        let subscriber = FmtSubscriber::builder()
+            .with_max_level(log_level)
+            .with_writer(writer)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).map_err(|e| {
+            cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
+        })?;
+    }
     Ok(())
 }
 

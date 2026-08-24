@@ -33,6 +33,8 @@ pub mod rating;
 pub mod scanner;
 pub mod security;
 pub mod starttls;
+#[cfg(feature = "otel")]
+pub mod telemetry;
 pub mod utils;
 pub mod vulnerabilities;
 

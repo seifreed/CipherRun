@@ -38,6 +38,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 # download the Swagger UI bundle. Keep it off by default so the project builds
 # and tests fully offline.
 swagger = ["dep:utoipa-swagger-ui"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+]
 default = []
 
 [dependencies]
@@ -107,6 +113,10 @@ rand = "0.10.1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto"], optional = true }
+opentelemetry_sdk = { version = "0.32", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 # Parallel processing
 parking_lot = "0.12"

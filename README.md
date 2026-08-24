@@ -97,6 +97,9 @@ Set `job_backend = "database"` when the API is started with a configured
 SQLite or PostgreSQL pool to use the transactional SQL job table instead of
 file storage. Database jobs use conditional claims and recover expired running
 leases on startup.
+Running jobs renew their database lease while scanning. Transient scan failures
+are retried up to three attempts; exhausted jobs remain queryable as failed
+dead-letter records instead of being silently discarded.
 `job_retention_seconds` controls terminal job TTL (seven days by default);
 queued and running work is never removed by retention cleanup.
 
@@ -118,6 +121,10 @@ intentionally excluded.
 
 Credentials assigned to the same `tenant_id` share the configured request quota;
 unscoped credentials remain isolated per key.
+
+Build with `--features otel` to export tracing spans through the standard OTLP
+HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;
+without that feature, no telemetry backend is contacted.
 
 Native HTTPS is available by setting `tls_cert_file` and `tls_key_file` to a
 certificate chain and private-key PEM file. The two paths must be configured

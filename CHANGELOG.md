@@ -34,6 +34,8 @@ All notable changes to CipherRun are documented here. The format follows
 - Optional native HTTPS listener with paired certificate and private-key files.
 - Optional client-certificate verification through a configured TLS CA bundle.
 - SQLite/PostgreSQL job backend with conditional claims and lease recovery.
+- Database job lease heartbeats, bounded scan retries, and dead-letter records.
+- Optional OpenTelemetry OTLP tracing through the `otel` feature.
 
 ### Changed
 
