@@ -56,7 +56,8 @@ lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with fou
 		$(COMPOSE) down --remove-orphans; exit $$status
 
 external-fixture: ## Validate pinned vulnerable and patched OpenSSL implementations
-	scripts/validate-external-vulnerable-fixture.sh
+	cargo build --locked --bin cipherrun
+	CIPHERRUN_BIN=target/debug/cipherrun scripts/validate-external-vulnerable-fixture.sh
 
 batch: ## Run batch test on multiple domains
 	@echo "$(BLUE)Running batch test...$(NC)"

@@ -20,6 +20,26 @@
       "false_positive_notes": "A successful TLS 1.2 control handshake does not prove that every historical vulnerability is patched in every deployment.",
       "false_negative_notes": "This control does not exercise the vulnerable TLS 1.0 nginx path or application-specific configuration.",
       "safety": "active-safe-modern-negotiation"
+    },
+    {
+      "name": "openssl-1-0-1c-ssl3-poodle",
+      "image": "docker.io/vulhub/openssl@sha256:3cf76769b6e33f45479e8bacd70d7c5c2bd8b8c4d5428ae3f613b1145a4a1c47",
+      "version": "OpenSSL 1.0.1c",
+      "expected": "SSLv3 handshake succeeds with AES128-SHA; CR-TLS-POODLE-001=confirmed_vulnerable",
+      "transcript": "results/external-fixture/openssl-1-0-1c-ssl3.txt",
+      "false_positive_notes": "The result confirms SSLv3 negotiation and the configured POODLE downgrade prerequisite; it does not demonstrate a CBC padding-oracle exploit or any POODLE variant.",
+      "false_negative_notes": "The fixture does not exercise application traffic, browser behavior, or timing/oracle classification.",
+      "safety": "active-safe-legacy-negotiation"
+    },
+    {
+      "name": "openssl-1-1-1m-poodle-control",
+      "image": "docker.io/vulhub/openssl@sha256:dffde83f29dc4a70e183ca7bf374f6a153839eda3a406fd5e2d41e953f72b978",
+      "version": "OpenSSL 1.1.1m",
+      "expected": "TLS 1.2 handshake succeeds and SSLv3 is not enabled; CR-TLS-POODLE-001=not_vulnerable",
+      "transcript": "results/external-fixture/openssl-1-1-1m-poodle-control.txt",
+      "false_positive_notes": "A patched-version control proves only the configured listener posture, not every deployment using that library.",
+      "false_negative_notes": "Only protocol negotiation is tested; CBC padding behavior is not exercised.",
+      "safety": "active-safe-modern-negotiation"
     }
   ]
 }
