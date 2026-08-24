@@ -18,13 +18,13 @@ jobs:
         target: [parsed_input, framework_loader]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@cargo-fuzz
+        uses: taiki-e/install-action@82fc405565b9cf90abfe700ba43b4751ce2fe422 # cargo-fuzz
 
       - name: Run fuzz target
         run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=120
