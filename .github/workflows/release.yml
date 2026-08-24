@@ -64,6 +64,12 @@ jobs:
           docker build --tag cipherrun:release .
           docker run --rm cipherrun:release --version
 
+      - name: Run controlled differential fixtures
+        run: make lab-validate
+
+      - name: Run pinned external vulnerable and patched fixtures
+        run: make external-fixture
+
   build:
     name: Build ${{ matrix.target }}
     needs: validate
