@@ -1,13 +1,23 @@
 use axum::{
-    Router,
+    Extension, Router,
     routing::{get, post},
 };
 
 use cipherrun::api::models::request::{PolicyEvaluationRequest, PolicyRequest};
 use cipherrun::api::routes::policies;
+use cipherrun::api::{Permission, middleware::AuthExtension};
 use std::sync::Arc;
 
 mod common;
+
+fn test_auth() -> Extension<AuthExtension> {
+    Extension(AuthExtension {
+        permission: Permission::Admin,
+        key_id: "test-admin".to_string(),
+        principal_id: "test-admin".to_string(),
+        tenant_id: None,
+    })
+}
 
 #[tokio::test]
 async fn test_create_policy_returns_created() {
@@ -19,6 +29,7 @@ async fn test_create_policy_returns_created() {
 
     let app = Router::new()
         .route("/policies", post(policies::create_policy))
+        .layer(test_auth())
         .with_state(Arc::new(state));
 
     let request = PolicyRequest {
@@ -48,6 +59,7 @@ async fn test_policies_no_policy_dir_returns_503() {
         .route("/policies", post(policies::create_policy))
         .route("/policies/{id}", get(policies::get_policy))
         .route("/policies/{id}/evaluate", post(policies::evaluate_policy))
+        .layer(test_auth())
         .with_state(state);
 
     let request = PolicyRequest {

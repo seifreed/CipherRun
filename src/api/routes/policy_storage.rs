@@ -22,6 +22,12 @@ pub(super) type PolicyMetadata = (
 /// Parsed policy file content: (name, description, created_at, enabled, rules_content)
 pub(super) type ParsedPolicyContent = (String, Option<String>, chrono::DateTime<Utc>, bool, String);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PolicyOwner {
+    pub principal_id: String,
+    pub tenant_id: Option<String>,
+}
+
 pub(super) fn policy_dir_from_state(state: &AppState) -> Result<&PathBuf, ApiError> {
     state
         .policy_dir
@@ -48,21 +54,78 @@ fn sanitize_metadata_value(value: &str) -> String {
         .to_string()
 }
 
+#[cfg(test)]
 pub(super) fn build_policy_content(request: &PolicyRequest, now: chrono::DateTime<Utc>) -> String {
+    build_policy_content_with_owner(request, now, None)
+}
+
+pub(super) fn build_policy_content_with_owner(
+    request: &PolicyRequest,
+    now: chrono::DateTime<Utc>,
+    owner: Option<&PolicyOwner>,
+) -> String {
     let description = request
         .description
         .as_deref()
         .map(sanitize_metadata_value)
         .filter(|d| !d.is_empty())
         .unwrap_or_else(|| "No description".to_string());
+    let owner_metadata = owner
+        .map(|owner| {
+            format!(
+                "# Principal: {}\n# Tenant: {}\n",
+                sanitize_metadata_value(&owner.principal_id),
+                owner
+                    .tenant_id
+                    .as_deref()
+                    .map(sanitize_metadata_value)
+                    .filter(|tenant| !tenant.is_empty())
+                    .unwrap_or_else(|| "none".to_string())
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "# Policy: {}\n# Description: {}\n# Created: {}\n# Enabled: {}\n\n{}",
+        "# Policy: {}\n# Description: {}\n# Created: {}\n# Enabled: {}\n{}\n{}",
         sanitize_metadata_value(&request.name),
         description,
         now.to_rfc3339(),
         request.enabled,
+        owner_metadata,
         request.rules
     )
+}
+
+pub(super) fn read_policy_owner(policy_path: &Path) -> Result<Option<PolicyOwner>, ApiError> {
+    let metadata = fs::metadata(policy_path)
+        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
+    if metadata.len() > MAX_STORED_POLICY_BYTES {
+        return Err(ApiError::BadRequest(format!(
+            "Policy file is too large: {} bytes (max {})",
+            metadata.len(),
+            MAX_STORED_POLICY_BYTES
+        )));
+    }
+    let content = fs::read_to_string(policy_path)
+        .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
+    let principal_id = content.lines().find_map(|line| {
+        line.strip_prefix("# Principal: ")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    });
+    let Some(principal_id) = principal_id else {
+        return Ok(None);
+    };
+    let tenant_id = content.lines().find_map(|line| {
+        line.strip_prefix("# Tenant: ")
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && *value != "none")
+            .map(str::to_string)
+    });
+    Ok(Some(PolicyOwner {
+        principal_id,
+        tenant_id,
+    }))
 }
 
 pub(super) fn parse_policy_file_content(

@@ -1,10 +1,12 @@
 // Policy Routes
 
 use super::policy_storage::{
-    build_policy_content, policy_dir_from_state, read_policy_with_metadata, sanitized_policy_path,
+    PolicyOwner, build_policy_content_with_owner, policy_dir_from_state, read_policy_owner,
+    read_policy_with_metadata, sanitized_policy_path,
 };
 use crate::api::{
     adapters::policy as policy_adapter,
+    middleware::AuthExtension,
     models::{
         error::{ApiError, ApiErrorResponse},
         request::{PolicyEvaluationRequest, PolicyRequest},
@@ -21,7 +23,7 @@ use crate::application::PolicySource as _;
 use crate::policy::FilesystemPolicySource;
 use crate::policy::parser::PolicyLoader;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, State},
     http::StatusCode,
 };
@@ -39,6 +41,20 @@ fn existing_policy_path(policy_dir: &std::path::Path, id: &str) -> Result<PathBu
     }
 
     Ok(policy_path)
+}
+
+fn authorize_policy(policy_path: &std::path::Path, auth: &AuthExtension) -> Result<(), ApiError> {
+    if auth.permission == crate::api::config::Permission::Admin {
+        return Ok(());
+    }
+    let owner = read_policy_owner(policy_path)?;
+    if owner.as_ref().is_some_and(|owner| {
+        owner.principal_id == auth.principal_id && owner.tenant_id == auth.tenant_id
+    }) {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound("Policy not found".to_string()))
+    }
 }
 
 fn policy_id_from_request_name(name: &str) -> Result<String, ApiError> {
@@ -82,6 +98,7 @@ fn policy_id_from_request_name(name: &str) -> Result<String, ApiError> {
 )]
 pub async fn create_policy(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthExtension>,
     Json(request): Json<PolicyRequest>,
 ) -> Result<(StatusCode, Json<PolicyResponse>), ApiError> {
     let policy_dir = policy_dir_from_state(&state)?;
@@ -100,12 +117,25 @@ pub async fn create_policy(
         }
         other => other,
     })?;
-    let now = Utc::now();
-    let policy_content = build_policy_content(&request, now);
-
     // This handler creates or updates a policy. Report 200 OK when overwriting an
     // existing policy and 201 Created only for a genuinely new one.
     let existed = policy_path.exists();
+    if existed {
+        authorize_policy(&policy_path, &auth)?;
+    }
+    let owner = if existed {
+        read_policy_owner(&policy_path)?.unwrap_or_else(|| PolicyOwner {
+            principal_id: auth.principal_id.clone(),
+            tenant_id: auth.tenant_id.clone(),
+        })
+    } else {
+        PolicyOwner {
+            principal_id: auth.principal_id.clone(),
+            tenant_id: auth.tenant_id.clone(),
+        }
+    };
+    let now = Utc::now();
+    let policy_content = build_policy_content_with_owner(&request, now, Some(&owner));
 
     fs::write(&policy_path, policy_content)
         .map_err(|e| ApiError::Internal(format!("Failed to write policy file: {}", e)))?;
@@ -143,9 +173,11 @@ pub async fn create_policy(
 pub async fn get_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Extension(auth): Extension<AuthExtension>,
 ) -> Result<Json<PolicyResponse>, ApiError> {
     let policy_dir = policy_dir_from_state(&state)?;
     let policy_path = existing_policy_path(policy_dir, &id)?;
+    authorize_policy(&policy_path, &auth)?;
 
     let (name, description, created_at, enabled, rules_content, updated_at) =
         read_policy_with_metadata(&policy_path, id.clone())?;
@@ -184,10 +216,12 @@ pub async fn get_policy(
 pub async fn evaluate_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Extension(auth): Extension<AuthExtension>,
     Json(request): Json<PolicyEvaluationRequest>,
 ) -> Result<Json<PolicyEvaluationResponse>, ApiError> {
     let policy_dir = policy_dir_from_state(&state)?;
     let policy_path = existing_policy_path(policy_dir, &id)?;
+    authorize_policy(&policy_path, &auth)?;
 
     let policy = FilesystemPolicySource
         .load_policy(&policy_path)
@@ -239,13 +273,15 @@ fn sanitize_filename(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::api::config::ApiConfig;
+    use crate::api::config::Permission;
     use crate::api::jobs::{InMemoryJobQueue, ScanExecutor};
+    use crate::api::middleware::AuthExtension;
     use crate::api::middleware::rate_limit::PerKeyRateLimiter;
     use crate::api::models::request::{PolicyEvaluationRequest, PolicyRequest};
     use crate::api::routes::policy_storage::parse_policy_file_content;
     use crate::api::state::{ApiStats, AppState};
-    use axum::Json;
     use axum::extract::{Path, State};
+    use axum::{Extension, Json};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Instant;
@@ -299,6 +335,23 @@ protocols:
         }
     }
 
+    fn auth_for(principal_id: &str, permission: Permission) -> Extension<AuthExtension> {
+        Extension(AuthExtension {
+            permission,
+            key_id: "test-key".to_string(),
+            principal_id: principal_id.to_string(),
+            tenant_id: Some("test-tenant".to_string()),
+        })
+    }
+
+    fn test_auth() -> Extension<AuthExtension> {
+        auth_for("test-principal", Permission::User)
+    }
+
+    fn admin_auth() -> Extension<AuthExtension> {
+        auth_for("admin-principal", Permission::Admin)
+    }
+
     #[tokio::test]
     async fn test_create_and_get_policy() {
         let (_dir, state) = policy_state();
@@ -306,11 +359,11 @@ protocols:
         let mut request = policy_request("Test Policy", sample_policy_yaml());
         request.description = Some("Test policy description".to_string());
 
-        let (_, Json(created)) = create_policy(State(state.clone()), Json(request))
+        let (_, Json(created)) = create_policy(State(state.clone()), test_auth(), Json(request))
             .await
             .expect("policy creation should succeed");
 
-        let fetched = get_policy(State(state), Path(created.id.clone()))
+        let fetched = get_policy(State(state), Path(created.id.clone()), test_auth())
             .await
             .expect("policy fetch should succeed")
             .0;
@@ -321,11 +374,38 @@ protocols:
     }
 
     #[tokio::test]
+    async fn policy_access_is_scoped_to_owner_and_admin_updates_keep_owner() {
+        let (_dir, state) = policy_state();
+        let create_request = policy_request("Owned Policy", sample_policy_yaml());
+        let (_, Json(created)) =
+            create_policy(State(state.clone()), test_auth(), Json(create_request))
+                .await
+                .expect("policy creation should succeed");
+
+        let other = get_policy(
+            State(state.clone()),
+            Path(created.id.clone()),
+            auth_for("other-principal", Permission::User),
+        )
+        .await
+        .expect_err("another principal must not read the policy");
+        assert!(matches!(other, ApiError::NotFound(_)));
+
+        let update_request = policy_request("Owned Policy", sample_policy_yaml());
+        let _ = create_policy(State(state.clone()), admin_auth(), Json(update_request))
+            .await
+            .expect("admin update should succeed");
+        let _ = get_policy(State(state), Path(created.id), test_auth())
+            .await
+            .expect("original owner must retain access after admin update");
+    }
+
+    #[tokio::test]
     async fn test_create_policy_invalid_yaml() {
         let (_dir, state) = policy_state();
         let request = policy_request("Broken Policy", "not: [valid");
 
-        let err = create_policy(State(state), Json(request))
+        let err = create_policy(State(state), test_auth(), Json(request))
             .await
             .expect_err("invalid policy should error");
 
@@ -337,7 +417,7 @@ protocols:
         let (_dir, state) = policy_state();
         let request = policy_request(" \t ", sample_policy_yaml());
 
-        let err = create_policy(State(state), Json(request))
+        let err = create_policy(State(state), test_auth(), Json(request))
             .await
             .expect_err("empty request name should fail");
 
@@ -349,7 +429,7 @@ protocols:
         let (_dir, state) = policy_state();
         let request = policy_request("...", sample_policy_yaml());
 
-        let err = create_policy(State(state), Json(request))
+        let err = create_policy(State(state), test_auth(), Json(request))
             .await
             .expect_err("policy name without usable filename characters should fail");
 
@@ -361,7 +441,7 @@ protocols:
         let (dir, state) = policy_state();
         let request = policy_request("a".repeat(MAX_POLICY_ID_BYTES + 1), sample_policy_yaml());
 
-        let err = create_policy(State(state), Json(request))
+        let err = create_policy(State(state), test_auth(), Json(request))
             .await
             .expect_err("overlong policy filename should fail validation");
 
@@ -379,7 +459,7 @@ protocols:
     async fn test_get_policy_missing() {
         let (_dir, state) = policy_state();
 
-        let err = get_policy(State(state), Path("missing".to_string()))
+        let err = get_policy(State(state), Path("missing".to_string()), test_auth())
             .await
             .expect_err("missing policy should error");
 
@@ -390,13 +470,15 @@ protocols:
     async fn test_evaluate_policy_rejects_empty_scan_options() {
         let (_dir, state) = policy_state();
         let create_request = policy_request("Test Policy", sample_policy_yaml());
-        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
-            .await
-            .expect("policy creation should succeed");
+        let (_, Json(created)) =
+            create_policy(State(state.clone()), test_auth(), Json(create_request))
+                .await
+                .expect("policy creation should succeed");
 
         let err = evaluate_policy(
             State(state),
             Path(created.id),
+            test_auth(),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
                 options: Some(Default::default()),
@@ -412,13 +494,15 @@ protocols:
     async fn test_evaluate_policy_rejects_invalid_common_options() {
         let (_dir, state) = policy_state();
         let create_request = policy_request("Test Policy", sample_policy_yaml());
-        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
-            .await
-            .expect("policy creation should succeed");
+        let (_, Json(created)) =
+            create_policy(State(state.clone()), test_auth(), Json(create_request))
+                .await
+                .expect("policy creation should succeed");
 
         let err = evaluate_policy(
             State(state),
             Path(created.id),
+            test_auth(),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
                 options: Some(crate::api::models::request::ScanOptions {
@@ -438,13 +522,15 @@ protocols:
     async fn test_evaluate_policy_maps_runtime_invalid_input_to_bad_request() {
         let (_dir, state) = policy_state();
         let create_request = policy_request("Test Policy", sample_policy_yaml());
-        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
-            .await
-            .expect("policy creation should succeed");
+        let (_, Json(created)) =
+            create_policy(State(state.clone()), test_auth(), Json(create_request))
+                .await
+                .expect("policy creation should succeed");
 
         let err = evaluate_policy(
             State(state),
             Path(created.id),
+            test_auth(),
             Json(PolicyEvaluationRequest {
                 target: "example.com:443".to_string(),
                 options: Some(crate::api::models::request::ScanOptions {
@@ -464,13 +550,15 @@ protocols:
     async fn test_evaluate_policy_rejects_private_target() {
         let (_dir, state) = policy_state();
         let create_request = policy_request("Test Policy", sample_policy_yaml());
-        let (_, Json(created)) = create_policy(State(state.clone()), Json(create_request))
-            .await
-            .expect("policy creation should succeed");
+        let (_, Json(created)) =
+            create_policy(State(state.clone()), test_auth(), Json(create_request))
+                .await
+                .expect("policy creation should succeed");
 
         let err = evaluate_policy(
             State(state),
             Path(created.id),
+            test_auth(),
             Json(PolicyEvaluationRequest {
                 target: "127.0.0.1:443".to_string(),
                 options: Some(crate::api::models::request::ScanOptions {
