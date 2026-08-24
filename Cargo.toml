@@ -36,6 +36,7 @@ include = [
 members = [
     "crates/cipherrun-core",
     "crates/cipherrun-data",
+    "crates/cipherrun-probes",
     "crates/cipherrun-policy",
     "crates/cipherrun-protocol",
 ]

@@ -2,6 +2,7 @@
 
 mod builders;
 pub mod config;
+pub mod contract;
 pub mod default_port;
 pub mod diff;
 pub mod mass;

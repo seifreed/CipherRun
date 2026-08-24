@@ -4,6 +4,7 @@ set -euo pipefail
 cargo fmt --all --check
 scripts/check-core-contract-sync.sh
 scripts/check-data-contract-sync.sh
+scripts/check-probes-contract-sync.sh
 scripts/check-protocol-contract-sync.sh
 scripts/check-policy-contract-sync.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
@@ -13,6 +14,7 @@ cargo audit
 cargo deny check
 cargo package -p cipherrun-core --locked --allow-dirty
 cargo package -p cipherrun-data --locked --allow-dirty
+cargo package -p cipherrun-probes --locked --allow-dirty
 cargo package -p cipherrun-policy --locked --allow-dirty
 cargo package -p cipherrun-protocol --locked --allow-dirty
 cargo package -p cipherrun --locked --allow-dirty

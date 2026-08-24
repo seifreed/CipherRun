@@ -76,6 +76,9 @@ without pulling in the evaluator, database, or API server.
 The `cipherrun-data` crate provides dependency-light rule-pack metadata
 contracts without pulling in the compliance loader or scanner runtime.
 
+The `cipherrun-probes` crate provides dependency-light probe status contracts
+without pulling in the scanner networking runtime.
+
 ### Using Cargo
 
 ```bash
