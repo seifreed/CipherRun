@@ -87,6 +87,24 @@ jobs:
           path: results/differential/
           if-no-files-found: error
 
+  external-vulnerable-fixture:
+    name: External vulnerable TLS fixture
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate pinned vulnerable and patched implementations
+        run: make external-fixture
+
+      - name: Upload external fixture transcripts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: external-vulnerable-fixture-transcripts
+          path: results/external-fixture/
+          if-no-files-found: warn
+
   build-test:
     name: build-test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
