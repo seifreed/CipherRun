@@ -468,6 +468,24 @@
       "false_positive_notes": "The control validates CipherRun's GREASE response classification; it is not evidence that OpenSSL accepts every unknown extension.",
       "false_negative_notes": "It does not cover all future reserved values or load-balanced backends.",
       "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "early-data-tls",
+      "positive": "OpenSSL TLS 1.3 server enables -early_data with a 16 KiB maximum",
+      "negative": "The patched control disables early data with max_early_data=0",
+      "expected": "CR-TLS-EARLY-DATA-REPLAY-001=confirmed_vulnerable",
+      "false_positive_notes": "The scanner confirms repeated 0-RTT acceptance by this OpenSSL endpoint; it does not infer application-level replay impact.",
+      "false_negative_notes": "The result depends on TLS 1.3 session tickets and the local network path; failed resumption is inconclusive.",
+      "safety": "active-safe-replay"
+    },
+    {
+      "name": "early-data-patched-tls",
+      "positive": "OpenSSL TLS 1.3 server disables early data with max_early_data=0",
+      "negative": "The vulnerable control accepts repeated 0-RTT requests",
+      "expected": "CR-TLS-EARLY-DATA-REPLAY-001=not_vulnerable",
+      "false_positive_notes": "A clean control proves only that this endpoint did not accept 0-RTT during the probe.",
+      "false_negative_notes": "It does not assess replay protection for another route or load-balanced backend.",
+      "safety": "active-safe-replay"
     }
   ]
 }

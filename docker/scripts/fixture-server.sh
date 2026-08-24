@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|early-data|early-data-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -28,6 +28,16 @@ case "$profile" in
     modern)
         exec openssl s_server -quiet -www -accept 443 \
             -cert "$workdir/cert.pem" -key "$workdir/key.pem" -tls1_3
+        ;;
+    early-data|early-data-patched)
+        if [[ "$profile" == "early-data" ]]; then
+            exec openssl s_server -quiet -www -accept 14455 \
+                -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
+                -tls1_3 -early_data -max_early_data 16384
+        fi
+        exec openssl s_server -quiet -www -accept 14455 \
+            -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
+            -tls1_3 -max_early_data 0
         ;;
     breach)
         exec python3 - "$workdir/cert.pem" "$workdir/key.pem" <<'PY'
