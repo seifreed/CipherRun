@@ -76,6 +76,10 @@ services:
         condition: service_healthy
       poodle-patched-tls:
         condition: service_healthy
+      poodle-variant-vulnerable-tls:
+        condition: service_healthy
+      poodle-variant-patched-tls:
+        condition: service_healthy
       grease-intolerant-tls:
         condition: service_healthy
       grease-tolerant-tls:
@@ -603,6 +607,48 @@ services:
       - lab
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",14443),2); s.close()'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  poodle-variant-vulnerable-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "poodle-variant-vulnerable"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",14457),2); s.close()'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  poodle-variant-patched-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "poodle-variant-patched"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",14457),2); s.close()'"]
       interval: 2s
       timeout: 2s
       retries: 15

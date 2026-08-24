@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|renegotiation-insecure|renegotiation-secure|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|early-data|early-data-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|renegotiation-insecure|renegotiation-secure|starttls-injection|starttls-injection-patched|poodle|poodle-patched|poodle-variant-vulnerable|poodle-variant-patched|grease-intolerant|grease-tolerant|early-data|early-data-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -427,6 +427,90 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 connection.sendall(response())
             except (OSError, TimeoutError):
                 pass
+PY
+        ;;
+    poodle-variant-vulnerable|poodle-variant-patched)
+        exec python3 - "${profile}" "$workdir/cert.pem" "$workdir/key.pem" <<'PY'
+import select
+import socket
+import subprocess
+import sys
+import time
+
+profile, cert_file, key_file = sys.argv[1:]
+patched = profile == "poodle-variant-patched"
+backend = subprocess.Popen(
+    [
+        "openssl", "s_server", "-quiet", "-www", "-accept", "14458",
+        "-cert", cert_file, "-key", key_file, "-tls1_2",
+        "-cipher", "AES128-SHA:@SECLEVEL=0",
+    ],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+
+ALERT = b"\x15\x03\x03\x00\x02\x02\x15"
+
+def should_alert(payload):
+    # The scanner's crafted records use a 16-byte MAC at offsets 32..48.
+    # Zombie uses the zero-MAC record; Golden uses valid 0x06 padding.
+    return payload[32:48] == b"\x00" * 16 or payload[-7:] == b"\x06" * 7
+
+def handle(client):
+    upstream = None
+    try:
+        upstream = socket.create_connection(("127.0.0.1", 14458), 3)
+        client.settimeout(3)
+        upstream.settimeout(3)
+        pending = b""
+        sockets = [client, upstream]
+        while sockets:
+            readable, _, _ = select.select(sockets, [], [], 3)
+            if not readable:
+                return
+            for source in readable:
+                data = source.recv(16384)
+                if not data:
+                    return
+                if source is upstream:
+                    client.sendall(data)
+                    continue
+                pending += data
+                while len(pending) >= 5:
+                    length = int.from_bytes(pending[3:5], "big")
+                    if len(pending) < 5 + length:
+                        break
+                    record, pending = pending[:5 + length], pending[5 + length:]
+                    if record[0] != 0x17:
+                        upstream.sendall(record)
+                        continue
+                    if patched or should_alert(record[5:]):
+                        client.sendall(ALERT)
+                    return
+    except OSError:
+        return
+    finally:
+        for connection in (client, upstream):
+            if connection is not None:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", 14457))
+        server.listen()
+        while True:
+            client, _ = server.accept()
+            handle(client)
+finally:
+    backend.terminate()
+    try:
+        backend.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        backend.kill()
 PY
         ;;
     grease-intolerant|grease-tolerant)

@@ -470,6 +470,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "poodle-variant-vulnerable-tls",
+      "positive": "TLS 1.2 CBC handshake behind a proxy with selective Zombie/Golden oracle alerts",
+      "negative": "The same backend returns no response for the contrasting malformed record",
+      "expected": "CR-TLS-ZOMBIE-POODLE-001=confirmed_vulnerable;CR-TLS-GOLDEN-DOODLE-001=confirmed_vulnerable",
+      "false_positive_notes": "The proxy deliberately models the observable alert asymmetry; it is a detector fixture, not a vulnerable OpenSSL implementation.",
+      "false_negative_notes": "Only the three crafted record classes and one TLS 1.2 CBC handshake are exercised; timing behavior is not modeled.",
+      "safety": "active-isolated-oracle-simulation"
+    },
+    {
+      "name": "poodle-variant-patched-tls",
+      "positive": "TLS 1.2 CBC handshake behind a proxy with uniform alerts for malformed records",
+      "negative": "The vulnerable control emits selective alerts for the same record classes",
+      "expected": "CR-TLS-ZOMBIE-POODLE-001=not_vulnerable;CR-TLS-GOLDEN-DOODLE-001=not_vulnerable",
+      "false_positive_notes": "Uniform fixture responses validate the negative detector path only; they do not prove every CBC implementation is patched.",
+      "false_negative_notes": "The control does not model timing or implementation-specific error paths.",
+      "safety": "active-isolated-oracle-simulation"
+    },
+    {
       "name": "grease-intolerant-tls",
       "positive": "Real OpenSSL TLS 1.2 backend behind a gate that rejects RFC 8701 GREASE values",
       "negative": "The same backend accepts a standard ClientHello for baseline connectivity",

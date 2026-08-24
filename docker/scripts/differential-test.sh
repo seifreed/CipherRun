@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 56)' \
+jq -e '.version == "1" and (.fixtures | length == 58)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -131,6 +131,8 @@ scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
 scan_vulnerability_fixture poodle-tls poodle --poodle 14443
 scan_vulnerability_fixture poodle-patched-tls poodle-patched --poodle 14443
+scan_vulnerability_fixture poodle-variant-vulnerable-tls poodle-variant-vulnerable --poodle 14457
+scan_vulnerability_fixture poodle-variant-patched-tls poodle-variant-patched --poodle 14457
 scan_vulnerability_fixture grease-intolerant-tls grease-intolerant --grease 14453
 scan_vulnerability_fixture grease-tolerant-tls grease-tolerant --grease 14453
 scan_vulnerability_fixture early-data-tls early-data --early-data 14455
@@ -251,6 +253,12 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .statu
     "$results/poodle.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .status == "not_vulnerable")' \
     "$results/poodle-patched.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-ZOMBIE-POODLE-001" and .status == "confirmed_vulnerable")' \
+    "$results/poodle-variant-vulnerable.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-GOLDEN-DOODLE-001" and .status == "confirmed_vulnerable")' \
+    "$results/poodle-variant-vulnerable.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select((.finding_id == "CR-TLS-ZOMBIE-POODLE-001" or .finding_id == "CR-TLS-GOLDEN-DOODLE-001") and .status == "not_vulnerable")' \
+    "$results/poodle-variant-patched.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-GREASE-INTOLERANCE-001" and (.evidence.observed | contains("rejected")))' \
     "$results/grease-intolerant.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-GREASE-INTOLERANCE-001" and (.evidence.observed | contains("tolerates")))' \
