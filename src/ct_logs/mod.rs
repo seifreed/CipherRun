@@ -17,6 +17,12 @@ pub use streamer::{CtConfig, CtStreamer};
 
 use crate::error::TlsError;
 
+/// Consumer for CT entries discovered by the streaming engine.
+#[async_trait::async_trait]
+pub trait CtEntrySink: Send + Sync {
+    async fn handle_entry(&self, entry: &CtLogEntry) -> Result<()>;
+}
+
 /// Result type for CT logs operations
 pub type Result<T> = std::result::Result<T, TlsError>;
 

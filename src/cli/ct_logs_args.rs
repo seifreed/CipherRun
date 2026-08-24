@@ -3,6 +3,7 @@
 // Licensed under GPL-3.0
 
 use clap::Args;
+use std::path::PathBuf;
 
 /// Certificate Transparency logs streaming options
 ///
@@ -42,6 +43,10 @@ pub struct CtLogsArgs {
     /// Silent mode for CT logs (no stats output, only certificates)
     #[arg(long = "ct-silent", requires = "ct_logs_enable")]
     pub silent: bool,
+
+    /// Monitor CT-discovered names using this monitor TOML configuration
+    #[arg(long = "ct-monitor-config", requires = "ct_logs_enable")]
+    pub monitor_config: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -67,6 +72,7 @@ mod tests {
         assert_eq!(args.batch_size, 1000);
         assert!(!args.json);
         assert!(!args.silent);
+        assert!(args.monitor_config.is_none());
     }
 
     #[test]
@@ -78,6 +84,7 @@ mod tests {
         assert!(args.beginning);
         assert!(args.json);
         assert!(!args.silent);
+        assert!(args.monitor_config.is_none());
     }
 
     #[test]

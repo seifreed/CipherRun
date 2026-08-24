@@ -93,6 +93,20 @@ places the one-time plaintext token in `api.token`; both files are created with
 owner-only permissions and existing files are never overwritten. Move the token
 to your secret manager and remove the local token file after enrollment.
 
+### CT Discovery Monitoring
+
+CT streaming can feed the existing monitoring scheduler, scanner, and alert
+channels. Configure an explicit suffix allowlist in the monitor TOML:
+
+```toml
+[monitor]
+ct_discovery_suffixes = ["example.com"]
+```
+
+Then run `cipherrun --ct-logs --ct-monitor-config monitor.toml`. CT names are
+deduplicated, normalized, and rejected unless they match an allowlisted suffix;
+an empty allowlist performs no discovery.
+
 Set `job_storage_dir` in `api.toml` for durable standalone job state. Queued,
 running, completed, failed, and cancelled jobs survive restarts; interrupted
 running jobs are safely returned to the queue. Omitting it selects the

@@ -3,7 +3,7 @@
 // Implements continuous streaming of CT logs with statistics
 
 use super::{
-    CtLogEntry, Result, client::CtClient, parser::Parser, sources::SourceManager,
+    CtEntrySink, CtLogEntry, Result, client::CtClient, parser::Parser, sources::SourceManager,
     stats::StatsTracker,
 };
 use crate::error::TlsError;
@@ -124,6 +124,16 @@ impl CtStreamer {
 
     /// Start streaming CT logs
     pub async fn start(&mut self) -> Result<()> {
+        self.start_with_sink(None).await
+    }
+
+    /// Request graceful shutdown of all source streams.
+    pub fn stop(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+
+    /// Start streaming CT logs and deliver each parsed entry to an optional sink.
+    pub async fn start_with_sink(&mut self, sink: Option<Arc<dyn CtEntrySink>>) -> Result<()> {
         info!("Starting CT log streaming...");
 
         // Setup signal handler for graceful shutdown
@@ -142,8 +152,19 @@ impl CtStreamer {
 
         // Spawn output handler
         let json_output = self.config.json_output;
+        let sink_for_output = sink.clone();
         let output_handle = tokio::spawn(async move {
             while let Some(entry) = rx.recv().await {
+                if let Some(sink) = &sink_for_output
+                    && let Err(error) = sink.handle_entry(&entry).await
+                {
+                    warn!(
+                        source = %entry.log_source,
+                        index = entry.index,
+                        "CT entry sink rejected certificate: {}",
+                        error
+                    );
+                }
                 if json_output {
                     // JSON output mode - one entry per line
                     if let Ok(json) = serde_json::to_string(&entry) {

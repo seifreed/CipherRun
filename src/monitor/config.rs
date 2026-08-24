@@ -31,6 +31,9 @@ pub struct MonitorSettings {
     pub alerts: AlertsConfig,
     pub thresholds: ThresholdsConfig,
     pub deduplication: DeduplicationConfig,
+    /// Suffixes that CT-discovered names must match before monitoring.
+    #[serde(default)]
+    pub ct_discovery_suffixes: Vec<String>,
 }
 
 /// Alerts configuration
@@ -150,6 +153,7 @@ impl Default for MonitorSettings {
             alerts: AlertsConfig::default(),
             thresholds: ThresholdsConfig::default(),
             deduplication: DeduplicationConfig::default(),
+            ct_discovery_suffixes: Vec::new(),
         }
     }
 }
@@ -262,6 +266,11 @@ impl MonitorConfig {
             return Err(TlsError::ConfigError {
                 message: "monitor.deduplication.window_hours must be greater than 0".to_string(),
             });
+        }
+        for suffix in &self.monitor.ct_discovery_suffixes {
+            validate_hostname(suffix).map_err(|error| TlsError::ConfigError {
+                message: format!("Invalid monitor.ct_discovery_suffixes entry: {error}"),
+            })?;
         }
         self.validate_alerts()?;
         Ok(())

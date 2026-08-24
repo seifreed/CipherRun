@@ -3,11 +3,14 @@
 use crate::Result;
 use crate::certificates::parser::{CertificateInfo, CertificateParser};
 use crate::certificates::validator::parse_cert_date;
+use crate::ct_logs::{CtEntrySink, CtLogEntry};
 use crate::monitor::alerts::{Alert, AlertDetails, AlertManager};
 use crate::monitor::config::MonitorConfig;
 use crate::monitor::detector::ChangeDetector;
 use crate::monitor::inventory::{CertificateInventory, MonitoredDomain};
 use crate::monitor::scheduler::SchedulingEngine;
+use crate::security::input_validation::looks_like_dotted_ip_literal;
+use crate::security::validate_hostname;
 use crate::utils::network::Target;
 use chrono::Utc;
 use std::path::Path;
@@ -63,6 +66,58 @@ impl MonitorDaemon {
         let mut inventory = self.inventory.lock().await;
         inventory.add_domain(domain)?;
         Ok(())
+    }
+
+    /// Add newly observed CT names to the monitored inventory.
+    ///
+    /// Discovery is opt-in: an empty suffix allowlist accepts no CT names.
+    pub async fn ingest_ct_entry(&self, entry: &CtLogEntry) -> Result<usize> {
+        let suffixes: Vec<String> = self
+            .config
+            .monitor
+            .ct_discovery_suffixes
+            .iter()
+            .map(|suffix| suffix.trim_end_matches('.').to_ascii_lowercase())
+            .collect();
+        if suffixes.is_empty() {
+            return Ok(0);
+        }
+
+        let mut names = std::collections::BTreeSet::new();
+        if let Some(common_name) = &entry.certificate.subject_cn {
+            names.insert(common_name.clone());
+        }
+        names.extend(entry.certificate.subject_an.iter().cloned());
+
+        let mut inventory = self.inventory.lock().await;
+        let mut added = 0;
+        for raw_name in names {
+            let name = raw_name
+                .trim()
+                .trim_end_matches('.')
+                .strip_prefix("*.")
+                .unwrap_or(raw_name.trim().trim_end_matches('.'))
+                .to_ascii_lowercase();
+            if name.is_empty()
+                || looks_like_dotted_ip_literal(&name)
+                || validate_hostname(&name).is_err()
+                || !suffixes
+                    .iter()
+                    .any(|suffix| name == *suffix || name.ends_with(&format!(".{suffix}")))
+            {
+                continue;
+            }
+            if inventory.get_domain(&name).is_some() {
+                continue;
+            }
+            let mut domain = MonitoredDomain::new(name, 443)
+                .with_interval(self.config.monitor.default_interval_seconds);
+            domain.alert_thresholds = (&self.config.monitor.thresholds).into();
+            inventory.add_domain(domain)?;
+            added += 1;
+        }
+
+        Ok(added)
     }
 
     /// Start the monitoring daemon
@@ -469,6 +524,13 @@ impl MonitorDaemon {
     }
 }
 
+#[async_trait::async_trait]
+impl CtEntrySink for MonitorDaemon {
+    async fn handle_entry(&self, entry: &CtLogEntry) -> crate::ct_logs::Result<()> {
+        self.ingest_ct_entry(entry).await.map(|_| ())
+    }
+}
+
 /// Daemon statistics
 #[derive(Debug, Clone)]
 pub struct DaemonStats {
@@ -531,6 +593,24 @@ mod tests {
         }
     }
 
+    fn ct_entry(subject_cn: Option<&str>, subject_an: &[&str]) -> CtLogEntry {
+        CtLogEntry {
+            log_source: "test-log".to_string(),
+            index: 7,
+            timestamp: Utc::now(),
+            cert_type: crate::ct_logs::CertType::X509Certificate,
+            certificate: crate::ct_logs::parser::Certificate {
+                der: Vec::new(),
+                subject_cn: subject_cn.map(str::to_string),
+                subject_an: subject_an.iter().map(|name| (*name).to_string()).collect(),
+                issuer_cn: Some("Test CA".to_string()),
+                not_before: Utc::now(),
+                not_after: Utc::now(),
+                serial: "1".to_string(),
+            },
+        }
+    }
+
     #[tokio::test]
     async fn test_daemon_creation() {
         let config = MonitorConfig::default();
@@ -579,6 +659,20 @@ mod tests {
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 1);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_ct_entry_is_allowlisted_and_deduplicated() {
+        let mut config = MonitorConfig::default();
+        config.monitor.ct_discovery_suffixes = vec!["example.com".to_string()];
+        let daemon = MonitorDaemon::new(config)
+            .await
+            .expect("test assertion should succeed");
+        let entry = ct_entry(Some("*.example.com"), &["api.example.com", "outside.test"]);
+
+        assert_eq!(daemon.ingest_ct_entry(&entry).await.unwrap(), 2);
+        assert_eq!(daemon.ingest_ct_entry(&entry).await.unwrap(), 0);
+        assert_eq!(daemon.stats().await.total_domains, 2);
     }
 
     #[tokio::test]
