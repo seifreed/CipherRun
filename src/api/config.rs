@@ -84,6 +84,10 @@ pub struct ApiConfig {
     #[serde(default)]
     pub worker_allowed_cidrs: Vec<ipnetwork::IpNetwork>,
 
+    /// Proxies allowed to supply X-Forwarded-For client addresses.
+    #[serde(default)]
+    pub trusted_proxy_cidrs: Vec<ipnetwork::IpNetwork>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -217,6 +221,7 @@ impl Default for ApiConfig {
             tls_key_file: None,
             tls_client_ca_file: None,
             worker_allowed_cidrs: Vec::new(),
+            trusted_proxy_cidrs: Vec::new(),
             enable_swagger: false,
             policy_dir: None,
         }

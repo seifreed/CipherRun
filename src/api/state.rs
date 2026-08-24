@@ -105,6 +105,7 @@ pub struct AuditEvent {
     pub path: String,
     pub status: u16,
     pub duration_ms: u64,
+    pub client_ip: Option<String>,
     pub recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -502,6 +503,7 @@ mod tests {
             path: "/health".to_string(),
             status: 200,
             duration_ms: 1,
+            client_ip: None,
             recorded_at: chrono::Utc::now(),
         });
         assert_eq!(stats.audit_events.len(), 1);

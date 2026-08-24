@@ -39,6 +39,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Administrator-owned worker CIDR scopes enforced after DNS resolution.
 - Scheduled Kani formal verification for the existing proof harnesses.
 - Native HTTPS responses now include a one-year HSTS policy.
+- Forwarded client addresses are trusted only from configured proxy CIDRs.
 
 ### Changed
 

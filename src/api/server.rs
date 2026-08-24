@@ -13,7 +13,7 @@ use crate::utils::network::canonical_target;
 use axum::{
     Router,
     error_handling::HandleErrorLayer,
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, connect_info::Connected},
     middleware as axum_middleware,
     routing::{delete, get, post},
 };
@@ -25,6 +25,9 @@ use tower::{BoxError, ServiceBuilder};
 use tower_http::compression::CompressionLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
+
+#[derive(Clone, Copy)]
+pub(crate) struct PeerAddr(pub(crate) std::net::SocketAddr);
 
 struct TlsListener {
     listener: TcpListener,
@@ -53,6 +56,18 @@ impl axum::serve::Listener for TlsListener {
 
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
         self.listener.local_addr()
+    }
+}
+
+impl Connected<axum::serve::IncomingStream<'_, TcpListener>> for PeerAddr {
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TcpListener>) -> Self {
+        Self(*stream.remote_addr())
+    }
+}
+
+impl Connected<axum::serve::IncomingStream<'_, TlsListener>> for PeerAddr {
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TlsListener>) -> Self {
+        Self(*stream.remote_addr())
     }
 }
 
@@ -363,11 +378,15 @@ impl ApiServer {
                     listener,
                     acceptor: TlsAcceptor::from(Arc::new(tls_config)),
                 },
-                app,
+                app.into_make_service_with_connect_info::<PeerAddr>(),
             )
             .await?;
         } else {
-            axum::serve(listener, app).await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<PeerAddr>(),
+            )
+            .await?;
         }
 
         Ok(())

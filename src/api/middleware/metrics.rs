@@ -1,3 +1,4 @@
+use crate::api::middleware::proxy::client_ip;
 use crate::api::state::{AppState, AuditEvent};
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub async fn metrics(
     let request_id = Uuid::new_v4().to_string();
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
+    let client_ip = client_ip(&request, &state).map(|ip| ip.to_string());
     state.record_request().await;
     let mut response = next.run(request).await;
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -24,6 +26,7 @@ pub async fn metrics(
         path: path.clone(),
         status,
         duration_ms,
+        client_ip: client_ip.clone(),
         recorded_at: chrono::Utc::now(),
     });
     tracing::info!(
@@ -33,6 +36,7 @@ pub async fn metrics(
         path = %path,
         status,
         duration_ms,
+        client_ip = client_ip.as_deref().unwrap_or("unknown"),
         "api request"
     );
     if let Ok(value) = request_id.parse() {

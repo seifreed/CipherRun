@@ -125,6 +125,8 @@ unscoped credentials remain isolated per key.
 Set `worker_allowed_cidrs` in the API config to constrain worker DNS results to
 administrator-owned network scopes. The client cannot widen this list; every
 resolved private address must match an allowlisted CIDR.
+Set `trusted_proxy_cidrs` before deploying behind a reverse proxy. `X-Forwarded-For`
+is ignored unless the immediate TCP peer belongs to one of these CIDRs.
 
 Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;
