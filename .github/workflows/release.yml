@@ -182,11 +182,6 @@ jobs:
               cargo publish -p "$crate" --locked --token "$CARGO_REGISTRY_TOKEN"
             fi
           done
-          if curl --fail --silent --show-error "https://crates.io/api/v1/crates/cipherrun/${VERSION}" > /dev/null; then
-            echo "cipherrun ${VERSION} is already published; continuing"
-          else
-            cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
-          fi
 
   release:
     name: Create GitHub Release

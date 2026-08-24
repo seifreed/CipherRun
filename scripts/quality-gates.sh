@@ -20,7 +20,6 @@ cargo package -p cipherrun-cli --locked --allow-dirty
 cargo package -p cipherrun-data --locked --allow-dirty
 cargo package -p cipherrun-probes --locked --allow-dirty
 cargo package -p cipherrun-server --locked --allow-dirty
-cargo package -p cipherrun-worker --locked --allow-dirty
 cargo package -p cipherrun-policy --locked --allow-dirty
 cargo package -p cipherrun-protocol --locked --allow-dirty
 cargo package -p cipherrun --locked --allow-dirty
