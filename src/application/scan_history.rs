@@ -5,6 +5,8 @@ pub struct ScanHistoryQuery {
     pub hostname: String,
     pub port: u16,
     pub limit: usize,
+    pub principal_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

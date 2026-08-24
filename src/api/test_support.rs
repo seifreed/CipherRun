@@ -24,5 +24,6 @@ pub(crate) fn build_test_state() -> Arc<AppState> {
         db_pool: None,
         policy_dir: None,
         stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
+        results_store: None,
     })
 }

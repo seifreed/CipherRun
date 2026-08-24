@@ -42,6 +42,15 @@ impl<'a> CertificateInventoryPort for CertificateInventoryService<'a> {
     ) -> crate::Result<Option<CertificateInventoryRecord>> {
         get_certificate(self.pool, fingerprint).await
     }
+
+    async fn get_certificate_for_owner(
+        &self,
+        fingerprint: &str,
+        principal_id: Option<&str>,
+        tenant_id: Option<&str>,
+    ) -> crate::Result<Option<CertificateInventoryRecord>> {
+        get_certificate_for_owner(self.pool, fingerprint, principal_id, tenant_id).await
+    }
 }
 
 struct CertificateListQuery {
@@ -98,8 +107,28 @@ pub async fn get_certificate(
     fingerprint: &str,
 ) -> crate::Result<Option<CertificateInventoryRecord>> {
     match pool {
-        DatabasePool::Postgres(pool) => fetch_certificate_detail_postgres(pool, fingerprint).await,
-        DatabasePool::Sqlite(pool) => fetch_certificate_detail_sqlite(pool, fingerprint).await,
+        DatabasePool::Postgres(pool) => {
+            fetch_certificate_detail_postgres(pool, fingerprint, None, None).await
+        }
+        DatabasePool::Sqlite(pool) => {
+            fetch_certificate_detail_sqlite(pool, fingerprint, None, None).await
+        }
+    }
+}
+
+pub async fn get_certificate_for_owner(
+    pool: &DatabasePool,
+    fingerprint: &str,
+    principal_id: Option<&str>,
+    tenant_id: Option<&str>,
+) -> crate::Result<Option<CertificateInventoryRecord>> {
+    match pool {
+        DatabasePool::Postgres(pool) => {
+            fetch_certificate_detail_postgres(pool, fingerprint, principal_id, tenant_id).await
+        }
+        DatabasePool::Sqlite(pool) => {
+            fetch_certificate_detail_sqlite(pool, fingerprint, principal_id, tenant_id).await
+        }
     }
 }
 
@@ -123,6 +152,25 @@ fn build_certificate_list_query_for_dialect(
             placeholder
         ));
         params.push(hostname.clone());
+    }
+
+    if let Some(ref principal_id) = query.principal_id {
+        let principal_placeholder = dialect.placeholder(params.len() + 1);
+        params.push(principal_id.clone());
+        let tenant_match = if let Some(tenant_id) = &query.tenant_id {
+            let tenant_placeholder = dialect.placeholder(params.len() + 2);
+            params.push(tenant_id.clone());
+            match dialect {
+                SqlDialect::Postgres => format!("s.tenant_id = {}", tenant_placeholder),
+                SqlDialect::Sqlite => format!("s.tenant_id = {}", tenant_placeholder),
+            }
+        } else {
+            "s.tenant_id IS NULL".to_string()
+        };
+        where_clauses.push(format!(
+            "EXISTS (SELECT 1 FROM scan_certificates owner_sc JOIN scans s ON owner_sc.scan_id = s.scan_id WHERE owner_sc.cert_id = c.cert_id AND s.principal_id = {} AND {})",
+            principal_placeholder, tenant_match
+        ));
     }
 
     if let Some(days) = query.expiring_within_days {
@@ -394,9 +442,12 @@ async fn fetch_certificate_list_sqlite(
 async fn fetch_certificate_detail_postgres(
     pool: &sqlx::PgPool,
     fingerprint: &str,
+    principal_id: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> crate::Result<Option<CertificateInventoryRecord>> {
     let normalized_fingerprint = normalize_fingerprint_lookup(fingerprint);
-    let row = sqlx::query(
+    let owner_clause = principal_id.map(|_| " AND EXISTS (SELECT 1 FROM scan_certificates owner_sc JOIN scans owner_s ON owner_sc.scan_id = owner_s.scan_id WHERE owner_sc.cert_id = c.cert_id AND owner_s.principal_id = $2 AND owner_s.tenant_id IS NOT DISTINCT FROM $3)").unwrap_or("");
+    let query = format!(
         r#"
         SELECT
             c.fingerprint_sha256,
@@ -409,14 +460,18 @@ async fn fetch_certificate_detail_postgres(
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
-        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = $1
+        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = $1{}
         GROUP BY c.cert_id, c.fingerprint_sha256, c.subject, c.issuer, c.not_before, c.not_after, c.san_domains
         "#,
-    )
-    .bind(normalized_fingerprint)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
+        owner_clause
+    );
+    let mut stmt = sqlx::query(&query).bind(normalized_fingerprint);
+    if principal_id.is_some() {
+        stmt = stmt.bind(principal_id).bind(tenant_id);
+    }
+    let row = stmt.fetch_optional(pool).await.map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e))
+    })?;
 
     row.map(certificate_record_from_pg_row).transpose()
 }
@@ -424,9 +479,12 @@ async fn fetch_certificate_detail_postgres(
 async fn fetch_certificate_detail_sqlite(
     pool: &sqlx::SqlitePool,
     fingerprint: &str,
+    principal_id: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> crate::Result<Option<CertificateInventoryRecord>> {
     let normalized_fingerprint = normalize_fingerprint_lookup(fingerprint);
-    let row = sqlx::query(
+    let owner_clause = principal_id.map(|_| " AND EXISTS (SELECT 1 FROM scan_certificates owner_sc JOIN scans owner_s ON owner_sc.scan_id = owner_s.scan_id WHERE owner_sc.cert_id = c.cert_id AND owner_s.principal_id = ? AND owner_s.tenant_id IS ?)").unwrap_or("");
+    let query = format!(
         r#"
         SELECT
             c.fingerprint_sha256,
@@ -439,14 +497,18 @@ async fn fetch_certificate_detail_sqlite(
         FROM certificates c
         LEFT JOIN scan_certificates sc ON c.cert_id = sc.cert_id
         LEFT JOIN scans s ON sc.scan_id = s.scan_id
-        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = ?
+        WHERE REPLACE(UPPER(c.fingerprint_sha256), ':', '') = ?{}
         GROUP BY c.cert_id
         "#,
-    )
-    .bind(normalized_fingerprint)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e)))?;
+        owner_clause
+    );
+    let mut stmt = sqlx::query(&query).bind(normalized_fingerprint);
+    if principal_id.is_some() {
+        stmt = stmt.bind(principal_id).bind(tenant_id);
+    }
+    let row = stmt.fetch_optional(pool).await.map_err(|e| {
+        crate::TlsError::DatabaseError(format!("Failed to fetch certificate: {}", e))
+    })?;
 
     row.map(certificate_record_from_sqlite_row).transpose()
 }
@@ -463,6 +525,8 @@ mod tests {
             sort: CertificateInventorySort::ExpiryAsc,
             hostname: None,
             expiring_within_days: None,
+            principal_id: None,
+            tenant_id: None,
         };
         let built = build_certificate_list_query(&query).expect("query should build");
 
@@ -479,6 +543,8 @@ mod tests {
             sort: CertificateInventorySort::IssuedDesc,
             hostname: Some("example.com".to_string()),
             expiring_within_days: Some(30),
+            principal_id: None,
+            tenant_id: None,
         };
         let built = build_certificate_list_query(&query).expect("query should build");
 
@@ -501,6 +567,8 @@ mod tests {
             sort: CertificateInventorySort::ExpiryAsc,
             hostname: Some("example.com".to_string()),
             expiring_within_days: None,
+            principal_id: None,
+            tenant_id: None,
         };
 
         let built = build_certificate_list_query(&query).expect("query should build");
@@ -516,6 +584,8 @@ mod tests {
             sort: CertificateInventorySort::ExpiryAsc,
             hostname: Some("example.com".to_string()),
             expiring_within_days: Some(30),
+            principal_id: None,
+            tenant_id: None,
         };
 
         let built = build_certificate_list_query_for_dialect(&query, SqlDialect::Postgres)
@@ -535,6 +605,8 @@ mod tests {
             sort: CertificateInventorySort::ExpiryAsc,
             hostname: None,
             expiring_within_days: Some(u32::MAX),
+            principal_id: None,
+            tenant_id: None,
         };
 
         let err = match build_certificate_list_query(&query) {
@@ -563,6 +635,8 @@ mod tests {
             sort: CertificateInventorySort::ExpiryAsc,
             hostname: None,
             expiring_within_days: None,
+            principal_id: None,
+            tenant_id: None,
         };
 
         let future = service.list_certificates(&query);

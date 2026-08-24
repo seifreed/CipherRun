@@ -25,6 +25,18 @@ pub async fn load_inventory_record(
         .map_err(|e| ApiError::Internal(format!("Failed to fetch certificate: {}", e)))
 }
 
+pub async fn load_inventory_record_for_owner(
+    reader: &impl CertificateInventoryPort,
+    fingerprint: &str,
+    principal_id: Option<&str>,
+    tenant_id: Option<&str>,
+) -> Result<Option<CertificateInventoryRecord>, ApiError> {
+    reader
+        .get_certificate_for_owner(fingerprint, principal_id, tenant_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to fetch certificate: {}", e)))
+}
+
 pub fn inventory_service_from_state(
     state: &AppState,
 ) -> Result<CertificateInventoryService<'_>, ApiError> {

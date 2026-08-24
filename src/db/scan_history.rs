@@ -34,21 +34,46 @@ async fn fetch_history_postgres(
     query: &ScanHistoryQuery,
 ) -> crate::Result<ScanHistoryPage> {
     let total_scans = count_history_postgres(pool, query).await?;
-    let rows = sqlx::query(
-        r#"
+    let rows = if let Some(principal_id) = &query.principal_id {
+        sqlx::query(
+            r#"
+        SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
+        FROM scans
+        WHERE LOWER(target_hostname) = $1 AND target_port = $2
+          AND principal_id = $3 AND tenant_id IS NOT DISTINCT FROM $4
+        ORDER BY scan_timestamp DESC, scan_id DESC
+        LIMIT $5
+        "#,
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(principal_id)
+        .bind(&query.tenant_id)
+        .bind(scan_history_limit(query.limit)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+        })?
+    } else {
+        sqlx::query(
+            r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
         WHERE LOWER(target_hostname) = $1 AND target_port = $2
         ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT $3
         "#,
-    )
-    .bind(&query.hostname)
-    .bind(query.port as i32)
-    .bind(scan_history_limit(query.limit)?)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(scan_history_limit(query.limit)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+        })?
+    };
 
     collect_page(total_scans, rows, scan_history_entry_from_pg_row)
 }
@@ -58,21 +83,46 @@ async fn fetch_history_sqlite(
     query: &ScanHistoryQuery,
 ) -> crate::Result<ScanHistoryPage> {
     let total_scans = count_history_sqlite(pool, query).await?;
-    let rows = sqlx::query(
-        r#"
+    let rows = if let Some(principal_id) = &query.principal_id {
+        sqlx::query(
+            r#"
+        SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
+        FROM scans
+        WHERE LOWER(target_hostname) = ? AND target_port = ?
+          AND principal_id = ? AND tenant_id IS ?
+        ORDER BY scan_timestamp DESC, scan_id DESC
+        LIMIT ?
+        "#,
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(principal_id)
+        .bind(&query.tenant_id)
+        .bind(scan_history_limit(query.limit)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+        })?
+    } else {
+        sqlx::query(
+            r#"
         SELECT scan_id, scan_timestamp, overall_grade, overall_score, scan_duration_ms
         FROM scans
         WHERE LOWER(target_hostname) = ? AND target_port = ?
         ORDER BY scan_timestamp DESC, scan_id DESC
         LIMIT ?
         "#,
-    )
-    .bind(&query.hostname)
-    .bind(query.port as i32)
-    .bind(scan_history_limit(query.limit)?)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e)))?;
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(scan_history_limit(query.limit)?)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history: {}", e))
+        })?
+    };
 
     collect_page(total_scans, rows, scan_history_entry_from_sqlite_row)
 }
@@ -81,20 +131,39 @@ async fn count_history_postgres(
     pool: &sqlx::PgPool,
     query: &ScanHistoryQuery,
 ) -> crate::Result<usize> {
-    let count: i64 = sqlx::query_scalar(
-        r#"
+    let count: i64 = if let Some(principal_id) = &query.principal_id {
+        sqlx::query_scalar(
+            r#"
+        SELECT COUNT(*) FROM scans
+        WHERE LOWER(target_hostname) = $1 AND target_port = $2
+          AND principal_id = $3 AND tenant_id IS NOT DISTINCT FROM $4
+        "#,
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(principal_id)
+        .bind(&query.tenant_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+        })?
+    } else {
+        sqlx::query_scalar(
+            r#"
         SELECT COUNT(*)
         FROM scans
         WHERE LOWER(target_hostname) = $1 AND target_port = $2
         "#,
-    )
-    .bind(&query.hostname)
-    .bind(query.port as i32)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
-    })?;
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+        })?
+    };
 
     usize::try_from(count)
         .map_err(|e| crate::TlsError::DatabaseError(format!("Invalid scan history count: {}", e)))
@@ -104,20 +173,39 @@ async fn count_history_sqlite(
     pool: &sqlx::SqlitePool,
     query: &ScanHistoryQuery,
 ) -> crate::Result<usize> {
-    let count: i64 = sqlx::query_scalar(
-        r#"
+    let count: i64 = if let Some(principal_id) = &query.principal_id {
+        sqlx::query_scalar(
+            r#"
+        SELECT COUNT(*) FROM scans
+        WHERE LOWER(target_hostname) = ? AND target_port = ?
+          AND principal_id = ? AND tenant_id IS ?
+        "#,
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .bind(principal_id)
+        .bind(&query.tenant_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+        })?
+    } else {
+        sqlx::query_scalar(
+            r#"
         SELECT COUNT(*)
         FROM scans
         WHERE LOWER(target_hostname) = ? AND target_port = ?
         "#,
-    )
-    .bind(&query.hostname)
-    .bind(query.port as i32)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
-    })?;
+        )
+        .bind(&query.hostname)
+        .bind(query.port as i32)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            crate::TlsError::DatabaseError(format!("Failed to query scan history count: {}", e))
+        })?
+    };
 
     usize::try_from(count)
         .map_err(|e| crate::TlsError::DatabaseError(format!("Invalid scan history count: {}", e)))
@@ -302,6 +390,8 @@ mod tests {
                 hostname: "example.com".to_string(),
                 port: 443,
                 limit: 10,
+                principal_id: None,
+                tenant_id: None,
             })
             .await
             .expect("history should load");
@@ -343,12 +433,48 @@ mod tests {
                 hostname: "example.com".to_string(),
                 port: 443,
                 limit: 10,
+                principal_id: None,
+                tenant_id: None,
             })
             .await
             .expect("history should load");
 
         assert_eq!(page.total_scans, 1);
         assert_eq!(page.scans.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_isolated_by_principal_and_tenant() {
+        let pool = sqlite_pool().await;
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        for principal in ["alice", "bob"] {
+            sqlx::query(
+                "INSERT INTO scans (target_hostname, target_port, principal_id, tenant_id) VALUES (?, ?, ?, ?)",
+            )
+            .bind("owned-history.test")
+            .bind(443_i32)
+            .bind(principal)
+            .bind("tenant-a")
+            .execute(sqlite)
+            .await
+            .expect("owned scan should insert");
+        }
+
+        let page = ScanHistoryService::new(&pool)
+            .get_history(&ScanHistoryQuery {
+                hostname: "owned-history.test".to_string(),
+                port: 443,
+                limit: 10,
+                principal_id: Some("alice".to_string()),
+                tenant_id: Some("tenant-a".to_string()),
+            })
+            .await
+            .expect("owned history should load");
+
+        assert_eq!(page.total_scans, 1);
     }
 
     #[tokio::test]
@@ -382,6 +508,8 @@ mod tests {
                 hostname: "invalid-history.test".to_string(),
                 port: 443,
                 limit: 10,
+                principal_id: None,
+                tenant_id: None,
             })
             .await
             .expect_err("invalid scan timestamp should fail history loading");
@@ -425,6 +553,8 @@ mod tests {
                 hostname: "paged-history.test".to_string(),
                 port: 443,
                 limit: 1,
+                principal_id: None,
+                tenant_id: None,
             })
             .await
             .expect("history should load");

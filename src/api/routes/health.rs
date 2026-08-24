@@ -201,6 +201,7 @@ mod tests {
             db_pool: None,
             policy_dir: None,
             stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
+            results_store: None,
         });
 
         let Json(response) = health_check(State(state)).await;

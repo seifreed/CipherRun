@@ -165,10 +165,10 @@ administrator-owned network scopes. The client cannot widen this list; every
 resolved private address must match an allowlisted CIDR.
 Set `trusted_proxy_cidrs` before deploying behind a reverse proxy. `X-Forwarded-For`
 is ignored unless the immediate TCP peer belongs to one of these CIDRs.
-Certificate inventory is administrator-owned because the current analytics schema
-does not yet carry tenant ownership; non-admin credentials cannot query it.
-The same restriction applies to global scan history and statistics until those
-analytics records carry tenant ownership.
+Historical scans and certificate inventory are scoped to the authenticated
+principal and tenant for non-admin credentials. Administrator credentials retain
+global visibility; `/api/v1/stats` remains administrator-only because its in-memory
+request counters are process-wide rather than tenant-scoped.
 
 Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;

@@ -23,6 +23,9 @@ fn usize_to_i32(value: usize, field: &str) -> crate::Result<i32> {
 pub struct PersistedScan {
     pub target_hostname: String,
     pub target_port: u16,
+    pub principal_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub created_by_key_id: Option<String>,
     pub overall_grade: Option<String>,
     pub overall_score: Option<u8>,
     pub scan_duration_ms: u64,
@@ -92,6 +95,18 @@ pub struct PersistedCertificate {
 impl PersistedScan {
     pub fn from_scan_results(results: &ScanResults) -> crate::Result<Self> {
         Self::try_from_scan_results(results)
+    }
+
+    pub fn with_owner(
+        mut self,
+        principal_id: impl Into<String>,
+        tenant_id: Option<String>,
+        created_by_key_id: impl Into<String>,
+    ) -> Self {
+        self.principal_id = Some(principal_id.into());
+        self.tenant_id = tenant_id;
+        self.created_by_key_id = Some(created_by_key_id.into());
+        self
     }
 
     pub fn try_from_scan_results(results: &ScanResults) -> crate::Result<Self> {
@@ -249,6 +264,9 @@ impl PersistedScan {
         Ok(Self {
             target_hostname,
             target_port,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
             overall_grade,
             overall_score,
             scan_duration_ms: results.scan_time_ms,

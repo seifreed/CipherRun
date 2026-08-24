@@ -62,6 +62,9 @@ pub struct AppState {
 
     /// Signed, one-use WebSocket stream tickets.
     pub stream_tickets: Arc<StreamTicketManager>,
+
+    /// Optional durable analytics store for completed API scans.
+    pub results_store: Option<Arc<dyn crate::application::ScanResultsStore>>,
 }
 
 /// API statistics
@@ -311,6 +314,7 @@ impl AppState {
             db_pool: None,
             policy_dir,
             stream_tickets: Arc::new(StreamTicketManager::new()?),
+            results_store: None,
         })
     }
 
@@ -321,8 +325,26 @@ impl AppState {
                 .with_worker_allowed_cidrs(self.config.worker_allowed_cidrs.clone())
                 .with_stats(self.stats.clone()),
         );
+        let executor = if let Some(store) = &self.results_store {
+            Arc::new(executor.as_ref().clone().with_results_store(store.clone()))
+        } else {
+            executor
+        };
         self.progress_tx = executor.progress_broadcaster();
         self.job_queue = job_queue;
+        self.executor = executor;
+    }
+
+    pub fn replace_results_store(&mut self, store: Arc<dyn crate::application::ScanResultsStore>) {
+        self.results_store = Some(store.clone());
+        let executor = Arc::new(
+            ScanExecutor::new(self.job_queue.clone(), self.config.max_concurrent_scans)
+                .with_webhook_signing_secret(self.executor.webhook_signing_secret())
+                .with_worker_allowed_cidrs(self.config.worker_allowed_cidrs.clone())
+                .with_stats(self.stats.clone())
+                .with_results_store(store),
+        );
+        self.progress_tx = executor.progress_broadcaster();
         self.executor = executor;
     }
 

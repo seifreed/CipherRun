@@ -305,6 +305,8 @@ fn default_inventory_query() -> CertificateInventoryQuery {
         sort: CertificateInventorySort::ExpiryAsc,
         hostname: None,
         expiring_within_days: None,
+        principal_id: None,
+        tenant_id: None,
     }
 }
 

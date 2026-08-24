@@ -3,10 +3,21 @@ use crate::application::ScanHistoryQuery;
 use crate::utils::network::normalize_dns_hostname;
 
 pub fn history_query_from_api(domain: String, query: &HistoryQuery) -> ScanHistoryQuery {
+    history_query_from_api_owned(domain, query, None, None)
+}
+
+pub fn history_query_from_api_owned(
+    domain: String,
+    query: &HistoryQuery,
+    principal_id: Option<String>,
+    tenant_id: Option<String>,
+) -> ScanHistoryQuery {
     ScanHistoryQuery {
         hostname: normalize_dns_hostname(domain).to_ascii_lowercase(),
         port: query.port,
         limit: query.limit,
+        principal_id,
+        tenant_id,
     }
 }
 

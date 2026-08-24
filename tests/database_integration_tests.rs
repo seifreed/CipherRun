@@ -452,6 +452,9 @@ async fn test_store_scan_duplicate_certificate_dedupes_to_same_cert_id() {
     let make_scan = || PersistedScan {
         target_hostname: "dedupe-cert.test".to_string(),
         target_port: 443,
+        principal_id: None,
+        tenant_id: None,
+        created_by_key_id: None,
         overall_grade: None,
         overall_score: None,
         scan_duration_ms: 100,

@@ -6,7 +6,7 @@ use crate::api::models::request::ScanOptions;
 use crate::api::models::response::{ProgressMessage, ScanStatus};
 use crate::api::presenters::target_input::scan_request_from_target_and_options;
 use crate::api::state::ApiStats;
-use crate::application::ScanRequest;
+use crate::application::{PersistedScan, ScanRequest, ScanResultsStore};
 use crate::error::TlsError;
 use crate::scanner::{ScanResults, Scanner};
 use crate::security::webhook::{validate_webhook_url, webhook_http_client};
@@ -29,6 +29,7 @@ pub struct ScanExecutor {
     stats: Option<Arc<RwLock<ApiStats>>>,
     webhook_signing_secret: Option<Arc<Vec<u8>>>,
     worker_allowed_cidrs: Arc<Vec<ipnetwork::IpNetwork>>,
+    results_store: Option<Arc<dyn ScanResultsStore>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
@@ -48,6 +49,7 @@ impl ScanExecutor {
             stats: None,
             webhook_signing_secret: None,
             worker_allowed_cidrs: Arc::new(Vec::new()),
+            results_store: None,
             shutdown_tx,
             shutdown_rx,
         }
@@ -65,6 +67,11 @@ impl ScanExecutor {
 
     pub fn with_worker_allowed_cidrs(mut self, cidrs: Vec<ipnetwork::IpNetwork>) -> Self {
         self.worker_allowed_cidrs = Arc::new(cidrs);
+        self
+    }
+
+    pub fn with_results_store(mut self, store: Arc<dyn ScanResultsStore>) -> Self {
+        self.results_store = Some(store);
         self
     }
 
@@ -302,6 +309,15 @@ impl ScanExecutor {
         match scan_result {
             Ok(results) => {
                 info!("Scan job {} completed successfully", job.id);
+                if let Err(error) = self.persist_results(&job, &results).await {
+                    error!("Failed to persist scan job {} results: {}", job.id, error);
+                    job.mark_failed(error.to_string());
+                    failed = true;
+                    let _ = self.progress_tx.send(ProgressMessage::failed(
+                        &job.id,
+                        job.error.clone().unwrap_or_default(),
+                    ));
+                }
                 let duration_ms = job
                     .started_at
                     .map(|started| {
@@ -320,19 +336,25 @@ impl ScanExecutor {
                             job.id
                         );
                     } else {
-                        job.mark_completed(results);
+                        if !failed {
+                            job.mark_completed(results);
+                        }
                     }
                 } else {
-                    job.mark_completed(results);
+                    if !failed {
+                        job.mark_completed(results);
+                    }
                 }
 
                 let msg = if cancelled {
                     ProgressMessage::cancelled(&job.id, job.progress)
+                } else if failed {
+                    ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default())
                 } else {
                     ProgressMessage::completed(&job.id)
                 };
                 let _ = self.progress_tx.send(msg);
-                if !cancelled {
+                if !cancelled && !failed {
                     completed_duration = Some(duration_ms);
                 }
             }
@@ -441,6 +463,19 @@ impl ScanExecutor {
         {
             warn!("Failed to send webhook for job {}: {}", job.id, e);
         }
+    }
+
+    /// Run the actual scan
+    async fn persist_results(&self, job: &ScanJob, results: &ScanResults) -> Result<()> {
+        let Some(store) = &self.results_store else {
+            return Ok(());
+        };
+        let persisted = PersistedScan::try_from_scan_results(results)?.with_owner(
+            job.principal_id.clone(),
+            job.tenant_id.clone(),
+            job.created_by_key_id.clone(),
+        );
+        store.store_scan(&persisted).await.map(|_| ())
     }
 
     /// Run the actual scan
@@ -688,6 +723,7 @@ impl Clone for ScanExecutor {
             shutdown_rx: self.shutdown_rx.clone(),
             webhook_signing_secret: self.webhook_signing_secret.clone(),
             worker_allowed_cidrs: self.worker_allowed_cidrs.clone(),
+            results_store: self.results_store.clone(),
         }
     }
 }

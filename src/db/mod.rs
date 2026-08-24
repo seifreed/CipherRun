@@ -56,7 +56,21 @@ impl ScanResultsStore for CipherRunDatabase {
     }
 }
 
+#[async_trait]
+impl ScanResultsStore for DatabasePool {
+    async fn store_scan(&self, scan: &PersistedScan) -> crate::Result<i64> {
+        CipherRunDatabase::from_pool(self.clone())
+            .store_scan(scan)
+            .await
+    }
+}
+
 impl CipherRunDatabase {
+    pub fn from_pool(pool: DatabasePool) -> Self {
+        let scan_repo = ScanRepositoryImpl::new(pool.clone());
+        Self { pool, scan_repo }
+    }
+
     /// Create new database instance
     pub async fn new(config: &DatabaseConfig) -> crate::Result<Self> {
         let pool = DatabasePool::new(config).await?;
@@ -91,6 +105,11 @@ impl CipherRunDatabase {
 
         // Create scan record
         let mut scan = ScanRecord::new(results.target_hostname.clone(), results.target_port);
+        scan = scan.with_owner(
+            results.principal_id.clone(),
+            results.tenant_id.clone(),
+            results.created_by_key_id.clone(),
+        );
         if let (Some(grade), Some(score)) = (&results.overall_grade, results.overall_score) {
             scan = scan.with_rating(grade.clone(), score);
         }
@@ -180,6 +199,9 @@ mod tests {
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
             target_port: 443,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: 123,
@@ -221,6 +243,9 @@ mod tests {
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
             target_port: 443,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: 123,
@@ -281,6 +306,9 @@ mod tests {
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
             target_port: 443,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
             overall_grade: None,
             overall_score: None,
             scan_duration_ms: 1,

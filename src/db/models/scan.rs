@@ -19,6 +19,12 @@ pub struct ScanRecord {
     #[sqlx(default)]
     pub revocation_json: Option<String>,
     pub scanner_version: Option<String>,
+    #[sqlx(default)]
+    pub principal_id: Option<String>,
+    #[sqlx(default)]
+    pub tenant_id: Option<String>,
+    #[sqlx(default)]
+    pub created_by_key_id: Option<String>,
 }
 
 impl ScanRecord {
@@ -34,6 +40,9 @@ impl ScanRecord {
             scan_duration_ms: None,
             revocation_json: None,
             scanner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
         }
     }
 
@@ -57,6 +66,18 @@ impl ScanRecord {
     /// Set serialized revocation data for the scan.
     pub fn with_revocation_json(mut self, revocation_json: Option<String>) -> Self {
         self.revocation_json = revocation_json;
+        self
+    }
+
+    pub fn with_owner(
+        mut self,
+        principal_id: Option<String>,
+        tenant_id: Option<String>,
+        created_by_key_id: Option<String>,
+    ) -> Self {
+        self.principal_id = principal_id;
+        self.tenant_id = tenant_id;
+        self.created_by_key_id = created_by_key_id;
         self
     }
 }

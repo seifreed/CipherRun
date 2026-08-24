@@ -37,6 +37,15 @@ pub trait CertificateInventoryPort: Send + Sync {
         &self,
         fingerprint: &str,
     ) -> crate::Result<Option<CertificateInventoryRecord>>;
+
+    async fn get_certificate_for_owner(
+        &self,
+        fingerprint: &str,
+        _principal_id: Option<&str>,
+        _tenant_id: Option<&str>,
+    ) -> crate::Result<Option<CertificateInventoryRecord>> {
+        self.get_certificate(fingerprint).await
+    }
 }
 
 #[async_trait]

@@ -305,6 +305,7 @@ mod tests {
             db_pool: None,
             policy_dir: Some(policy_dir),
             stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
+            results_store: None,
         })
     }
 

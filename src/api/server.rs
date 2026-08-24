@@ -159,6 +159,9 @@ impl ApiServer {
     ) -> Result<Self> {
         let mut state = AppState::new(config.clone())?;
         state.db_pool = db_pool;
+        if let Some(pool) = &state.db_pool {
+            state.replace_results_store(Arc::new(pool.as_ref().clone()));
+        }
         if config.job_backend == JobBackend::Database {
             let pool =
                 state
@@ -228,13 +231,13 @@ impl ApiServer {
             // Certificate routes
             .route(
                 "/certificates",
-                get(routes::certificates::list_certificates)
-                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+                get(routes::certificates::list_certificates_for_auth)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             .route(
                 "/certificates/{fingerprint}",
-                get(routes::certificates::get_certificate)
-                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+                get(routes::certificates::get_certificate_for_auth)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             // Compliance routes
             .route(
@@ -256,8 +259,8 @@ impl ApiServer {
             // History routes
             .route(
                 "/history/{domain}",
-                get(routes::history::get_history)
-                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+                get(routes::history::get_history_for_auth)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             // Stats routes
             .route(

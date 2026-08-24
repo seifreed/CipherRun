@@ -1,8 +1,10 @@
 // Certificate Routes
 
 use crate::api::adapters::certificate_inventory::{
-    inventory_service_from_state, load_inventory_page, load_inventory_record,
+    inventory_service_from_state, load_inventory_page, load_inventory_record_for_owner,
 };
+use crate::api::config::Permission;
+use crate::api::middleware::AuthExtension;
 
 use crate::api::{
     models::{
@@ -68,6 +70,8 @@ fn inventory_query_from_api(
         sort,
         hostname,
         expiring_within_days: query.expiring_within_days,
+        principal_id: None,
+        tenant_id: None,
     })
 }
 
@@ -125,11 +129,33 @@ fn validate_certificate_fingerprint(fingerprint: &str) -> Result<(), ApiError> {
     )
 )]
 pub async fn list_certificates(
+    state: State<Arc<AppState>>,
+    query: Query<CertificateQuery>,
+) -> Result<Json<CertificateListResponse>, ApiError> {
+    list_certificates_for_auth(
+        state,
+        axum::Extension(AuthExtension {
+            permission: Permission::Admin,
+            key_id: String::new(),
+            principal_id: String::new(),
+            tenant_id: None,
+        }),
+        query,
+    )
+    .await
+}
+
+pub async fn list_certificates_for_auth(
     State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<AuthExtension>,
     Query(query): Query<CertificateQuery>,
 ) -> Result<Json<CertificateListResponse>, ApiError> {
     let inventory_service = inventory_service_from_state(&state)?;
-    let inventory_query = inventory_query_from_api(&query)?;
+    let mut inventory_query = inventory_query_from_api(&query)?;
+    if auth.permission != Permission::Admin {
+        inventory_query.principal_id = Some(auth.principal_id.clone());
+        inventory_query.tenant_id = auth.tenant_id.clone();
+    }
     let inventory_page = load_inventory_page(&inventory_service, &inventory_query).await?;
 
     Ok(Json(present_certificate_list(
@@ -164,13 +190,35 @@ pub async fn list_certificates(
     )
 )]
 pub async fn get_certificate(
+    state: State<Arc<AppState>>,
+    path: Path<String>,
+) -> Result<Json<CertificateSummary>, ApiError> {
+    get_certificate_for_auth(
+        state,
+        axum::Extension(AuthExtension {
+            permission: Permission::Admin,
+            key_id: String::new(),
+            principal_id: String::new(),
+            tenant_id: None,
+        }),
+        path,
+    )
+    .await
+}
+
+pub async fn get_certificate_for_auth(
     State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<AuthExtension>,
     Path(fingerprint): Path<String>,
 ) -> Result<Json<CertificateSummary>, ApiError> {
     validate_certificate_fingerprint(&fingerprint)?;
 
     let inventory_service = inventory_service_from_state(&state)?;
-    let cert = load_inventory_record(&inventory_service, &fingerprint)
+    let owner = (auth.permission != Permission::Admin).then_some(auth.principal_id.as_str());
+    let tenant = (auth.permission != Permission::Admin)
+        .then_some(auth.tenant_id.as_deref())
+        .flatten();
+    let cert = load_inventory_record_for_owner(&inventory_service, &fingerprint, owner, tenant)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Certificate {} not found", fingerprint)))?;
 

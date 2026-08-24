@@ -15,6 +15,8 @@ pub struct CertificateInventoryQuery {
     pub sort: CertificateInventorySort,
     pub hostname: Option<String>,
     pub expiring_within_days: Option<u32>,
+    pub principal_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

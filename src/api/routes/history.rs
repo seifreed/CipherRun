@@ -1,7 +1,9 @@
 // Scan History Routes
 
 use crate::api::adapters::history::{history_service_from_state, load_scan_history};
-use crate::api::adapters::history_query::history_query_from_api;
+use crate::api::adapters::history_query::history_query_from_api_owned;
+use crate::api::config::Permission;
+use crate::api::middleware::AuthExtension;
 use crate::api::{
     models::{
         error::{ApiError, ApiErrorResponse},
@@ -124,7 +126,27 @@ mod tests {
     )
 )]
 pub async fn get_history(
+    state: State<Arc<AppState>>,
+    path: Path<String>,
+    query: Query<HistoryQuery>,
+) -> Result<Json<ScanHistoryResponse>, ApiError> {
+    get_history_for_auth(
+        state,
+        axum::Extension(AuthExtension {
+            permission: Permission::Admin,
+            key_id: String::new(),
+            principal_id: String::new(),
+            tenant_id: None,
+        }),
+        path,
+        query,
+    )
+    .await
+}
+
+pub async fn get_history_for_auth(
     State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<AuthExtension>,
     Path(domain): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ScanHistoryResponse>, ApiError> {
@@ -133,7 +155,13 @@ pub async fn get_history(
     validate_hostname(&domain).map_err(|err| ApiError::BadRequest(err.to_string()))?;
 
     let service = history_service_from_state(&state)?;
-    let history_query = history_query_from_api(domain.clone(), &query);
+    let (principal_id, tenant_id) = if auth.permission == Permission::Admin {
+        (None, None)
+    } else {
+        (Some(auth.principal_id), auth.tenant_id)
+    };
+    let history_query =
+        history_query_from_api_owned(domain.clone(), &query, principal_id, tenant_id);
     let page = load_scan_history(&service, &history_query).await?;
 
     if page.scans.is_empty() {
