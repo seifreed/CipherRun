@@ -155,6 +155,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "robot-tls",
+      "positive": "Synthetic RSA handshake returns stable distinct alert codes per invalid vector",
+      "negative": "Synthetic RSA handshake returns one alert code for every invalid vector",
+      "expected": "CR-TLS-ROBOT-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates alert-code oracle classification only; it is not a vulnerable RSA TLS implementation.",
+      "false_negative_notes": "The responder does not perform RSA decryption or model timing behavior.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "robot-patched-tls",
+      "positive": "Synthetic RSA handshake returns one alert code for every invalid vector",
+      "negative": "Synthetic RSA handshake returns stable distinct alert codes per invalid vector",
+      "expected": "CR-TLS-ROBOT-001=not_vulnerable",
+      "false_positive_notes": "A uniform alert response does not cover timing-only or application-level oracles.",
+      "false_negative_notes": "Only the alert-code response path is exercised.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",

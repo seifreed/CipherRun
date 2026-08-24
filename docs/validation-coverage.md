@@ -29,7 +29,8 @@ false-positive/false-negative notes, and safety classification for every fixture
 | Heartbleed | Active heartbeat probe | `heartbleed-tls` | `heartbleed-patched-tls` | CipherRun | Synthetic heartbeat transcript; no vulnerable OpenSSL implementation or memory-layout claim |
 | CCS Injection | Active early-CCS probe | `ccs-tls` | `ccs-patched-tls` | CipherRun | Synthetic CCS transcript; no vulnerable OpenSSL implementation claim |
 | Ticketbleed | Active session-ticket probe | `ticketbleed-tls` | `ticketbleed-patched-tls` | CipherRun | Synthetic session-ID transcript; no F5 BIG-IP implementation claim |
-| ROBOT, POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
+| ROBOT | Active RSA alert-oracle probe | `robot-tls` | `robot-patched-tls` | CipherRun | Synthetic RSA transcript; no vulnerable implementation or timing-oracle claim |
+| POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
 | Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | Partial | `modern-tls` | Not yet complete | Needs dedicated handshake fixtures |
 | STARTTLS injection, Opossum | Active STARTTLS probe | Not yet isolated | Not yet isolated | Not yet complete | Needs protocol-specific mail fixtures |

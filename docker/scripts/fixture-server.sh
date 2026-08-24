@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -231,6 +231,57 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 connection.sendall(new_session_ticket())
                 connection.recv(16384)
                 connection.sendall(server_hello())
+            except (OSError, TimeoutError):
+                pass
+PY
+        ;;
+    robot|robot-patched)
+        openssl x509 -in "$workdir/cert.pem" -outform DER -out "$workdir/cert.der"
+        exec python3 - "$workdir/cert.der" "${profile}" <<'PY'
+import socket
+import sys
+
+cert = open(sys.argv[1], "rb").read()
+vulnerable = sys.argv[2] == "robot"
+
+def handshake(kind, body=b""):
+    return bytes([kind]) + len(body).to_bytes(3, "big") + body
+
+def handshake_record(messages):
+    payload = b"".join(messages)
+    return b"\x16\x03\x01" + len(payload).to_bytes(2, "big") + payload
+
+def server_messages():
+    hello_body = b"\x03\x01" + (b"\xaa" * 32) + b"\x00\x00\x2f\x00"
+    cert_body = (3 + len(cert)).to_bytes(3, "big") + len(cert).to_bytes(3, "big") + cert
+    return handshake_record((handshake(0x02, hello_body), handshake(0x0b, cert_body), handshake(0x0e)))
+
+def alert_code(client_data):
+    if not vulnerable:
+        return 0x46
+    payload = client_data[12:]
+    if payload and payload[0] == 0xff:
+        return 0x47
+    if payload[:2] == b"\x00\x01":
+        return 0x48
+    if payload and payload[0] == 0xaa:
+        return 0x49
+    return 0x46
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(4)
+            try:
+                connection.recv(16384)
+                connection.sendall(server_messages())
+                client_data = connection.recv(16384)
+                code = alert_code(client_data)
+                connection.sendall(bytes.fromhex(f"150303000202{code:02x}"))
             except (OSError, TimeoutError):
                 pass
 PY
