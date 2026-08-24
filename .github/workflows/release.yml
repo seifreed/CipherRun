@@ -180,6 +180,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -192,6 +194,18 @@ jobs:
         shell: bash
         run: |
           shasum -a 256 dist/*.tar.gz dist/*.zip | sed 's#dist/##' > dist/SHA256SUMS
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: dist/cipherrun-sbom.cdx.json
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
 
       - name: Create GitHub Release
         env:
