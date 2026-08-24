@@ -119,6 +119,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "ccs-tls",
+      "positive": "Synthetic ServerHello accepts the premature ChangeCipherSpec record",
+      "negative": "Synthetic ServerHello responds to the premature record with an alert",
+      "expected": "CR-TLS-CCS-INJECTION-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates early CCS response classification only; it is not a vulnerable OpenSSL implementation.",
+      "false_negative_notes": "The responder does not model key scheduling or a complete TLS handshake.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "ccs-patched-tls",
+      "positive": "Synthetic ServerHello rejects the premature ChangeCipherSpec record",
+      "negative": "Synthetic ServerHello accepts the premature record",
+      "expected": "CR-TLS-CCS-INJECTION-001=not_vulnerable",
+      "false_positive_notes": "A clean early-CCS response does not cover unrelated TLS state-machine flaws.",
+      "false_negative_notes": "Only the premature CCS response path is exercised.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",

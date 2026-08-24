@@ -48,6 +48,10 @@ services:
         condition: service_healthy
       heartbleed-patched-tls:
         condition: service_healthy
+      ccs-tls:
+        condition: service_healthy
+      ccs-patched-tls:
+        condition: service_healthy
       weak-ciphers-tls:
         condition: service_healthy
       interop-cert:
@@ -264,6 +268,48 @@ services:
       args:
         CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command: ["/scripts/fixture-server.sh", "heartbleed-patched"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",443),2); s.close()'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  ccs-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "ccs"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",443),2); s.close()'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  ccs-patched-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "ccs-patched"]
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,size=16m
