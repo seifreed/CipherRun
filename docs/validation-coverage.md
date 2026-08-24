@@ -33,7 +33,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | POODLE classic (SSLv3) | Protocol negotiation | `poodle-tls` | `poodle-patched-tls` | CipherRun | Synthetic SSLv3 transcript; no CBC padding oracle claim |
 | POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
-| Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | `fallback-tls` for SCSV | `fallback-patched-tls` | CipherRun | SCSV transcript only; renegotiation, early data, and GREASE still need dedicated handshakes |
+| Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | `fallback-tls` for SCSV; `grease-intolerant-tls` | `fallback-patched-tls`; `grease-tolerant-tls` | CipherRun | SCSV and GREASE have isolated handshakes; renegotiation and early data still need dedicated fixtures |
 | STARTTLS injection | Active STARTTLS command-pipelining probe | `smtp-injection`, `imap-injection`, `pop3-injection` | `*-injection-patched` | CipherRun | Synthetic transcripts validate the heuristic; no authentication or proxy deployment claim |
 | Opossum (CVE-2022-0778) | Certificate parsing / timeout probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched certificate parsers |
 | Winshock | Platform inference | N/A | N/A | N/A | Cannot be confirmed by a generic remote TLS endpoint |

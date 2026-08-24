@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -385,6 +385,97 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 connection.sendall(response())
             except (OSError, TimeoutError):
                 pass
+PY
+        ;;
+    grease-intolerant|grease-tolerant)
+        openssl s_server -quiet -www -accept 14454 \
+            -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
+            -tls1_2 -cipher 'DEFAULT:@SECLEVEL=0' >/dev/null 2>&1 &
+        backend_pid=$!
+        trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+import threading
+
+intolerant = sys.argv[1] == "grease-intolerant"
+GREASE = tuple(bytes.fromhex(f"{value:04x}") for value in (
+    0x0A0A, 0x1A1A, 0x2A2A, 0x3A3A, 0x4A4A, 0x5A5A, 0x6A6A, 0x7A7A,
+    0x8A8A, 0x9A9A, 0xAAAA, 0xBABA, 0xCACA, 0xDADA, 0xEAEA, 0xFAFA,
+))
+ALERT = b"\x15\x03\x03\x00\x02\x02\x46"  # illegal_parameter
+
+def synthetic_server_hello():
+    body = b"\x03\x03" + (b"\xaa" * 32) + b"\x00\xc0\x2f\x00\x00\x00"
+    message = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x03" + len(message).to_bytes(2, "big") + message
+
+def recv_exact(connection, size):
+    data = b""
+    while len(data) < size:
+        chunk = connection.recv(size - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+def relay(source, destination):
+    try:
+        while True:
+            data = source.recv(16384)
+            if not data:
+                break
+            destination.sendall(data)
+    except OSError:
+        pass
+    finally:
+        try:
+            destination.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+def handle(client):
+    with client:
+        client.settimeout(5)
+        try:
+            header = recv_exact(client, 5)
+            if header is None:
+                return
+            length = int.from_bytes(header[3:5], "big")
+            body = recv_exact(client, length)
+            if body is None:
+                return
+            first_record = header + body
+            if intolerant and any(marker in first_record for marker in GREASE):
+                client.sendall(ALERT)
+                return
+            if not intolerant and any(marker in first_record for marker in GREASE):
+                # OpenSSL's TLS 1.2 parser rejects the combined synthetic
+                # extension probe. Keep this control honest: the fixture
+                # answers with the smallest valid ServerHello instead of
+                # attributing GREASE tolerance to the OpenSSL backend.
+                client.sendall(synthetic_server_hello())
+                return
+
+            backend = socket.create_connection(("127.0.0.1", 14454), 5)
+            with backend:
+                backend.sendall(first_record)
+                upstream = threading.Thread(target=relay, args=(client, backend), daemon=True)
+                downstream = threading.Thread(target=relay, args=(backend, client), daemon=True)
+                upstream.start()
+                downstream.start()
+                upstream.join()
+                downstream.join()
+        except (OSError, TimeoutError):
+            return
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 14453))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        threading.Thread(target=handle, args=(connection,), daemon=True).start()
 PY
         ;;
     weak-ciphers)

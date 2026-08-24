@@ -450,6 +450,24 @@
       "false_positive_notes": "Rejecting SSLv3 does not cover TLS POODLE or newer CBC oracle variants.",
       "false_negative_notes": "Only the SSLv3 protocol negotiation path is exercised.",
       "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "grease-intolerant-tls",
+      "positive": "Real OpenSSL TLS 1.2 backend behind a gate that rejects RFC 8701 GREASE values",
+      "negative": "The same backend accepts a standard ClientHello for baseline connectivity",
+      "expected": "CR-TLS-GREASE-INTOLERANCE-001=not_applicable;observed=rejected",
+      "false_positive_notes": "The gate rejects only registered GREASE values; it does not claim a CVE or application impact.",
+      "false_negative_notes": "The fixture covers this endpoint and the four probe ClientHellos only; other extension values are not modeled.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "grease-tolerant-tls",
+      "positive": "Baseline uses a real OpenSSL TLS 1.2 backend; GREASE probes use an explicit valid ServerHello control",
+      "negative": "The intolerant gate rejects the same GREASE values",
+      "expected": "CR-TLS-GREASE-INTOLERANCE-001=not_applicable;observed=tolerates",
+      "false_positive_notes": "The control validates CipherRun's GREASE response classification; it is not evidence that OpenSSL accepts every unknown extension.",
+      "false_negative_notes": "It does not cover all future reserved values or load-balanced backends.",
+      "safety": "active-synthetic-wire"
     }
   ]
 }
