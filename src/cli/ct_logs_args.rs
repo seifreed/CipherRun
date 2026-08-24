@@ -45,7 +45,11 @@ pub struct CtLogsArgs {
     pub silent: bool,
 
     /// Monitor CT-discovered names using this monitor TOML configuration
-    #[arg(long = "ct-monitor-config", requires = "ct_logs_enable")]
+    #[arg(
+        long = "ct-monitor-config",
+        requires = "ct_logs_enable",
+        id = "ct_monitor_config"
+    )]
     pub monitor_config: Option<PathBuf>,
 }
 

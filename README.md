@@ -230,6 +230,10 @@ cipherrun --policy policy.yaml --fail-on-policy example.com
 cipherrun diff baseline.json current.json
 cipherrun --baseline baseline.json example.com
 
+# Generate reviewable hardening snippets from a scan result
+cipherrun remediate results.json --format nginx
+cipherrun remediate results.json --format envoy --output envoy-tls.yaml
+
 # Explicitly authorized internal-network scans (local CLI only)
 cipherrun --allow-private intranet.example.internal
 cipherrun --allow-cidr 10.20.0.0/16 host.internal
@@ -260,6 +264,11 @@ publication reference, review date, and runtime SHA-256 of the exact YAML.
 Remote timing probes follow the published [timing methodology](docs/timing-methodology.md),
 including sample counts, descriptive statistics, confidence intervals, thresholds,
 and the conditions that produce an inconclusive verdict.
+
+`remediate` generates configuration snippets for nginx, Apache, HAProxy, Envoy,
+or Caddy. It never changes a running service, and it deliberately leaves
+inconclusive or potential findings visible for operator review. Existing output
+files are protected unless `--overwrite` is supplied.
 
 ---
 

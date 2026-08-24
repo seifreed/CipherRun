@@ -23,6 +23,24 @@ pub enum CipherRunSubcommand {
         output: Option<PathBuf>,
     },
 
+    /// Generate hardened TLS configuration from a versioned scan result
+    Remediate {
+        /// Scan result JSON produced by CipherRun
+        input: PathBuf,
+
+        /// Target configuration format
+        #[arg(long, value_name = "FORMAT", value_parser = ["nginx", "apache", "haproxy", "envoy", "caddy"])]
+        format: String,
+
+        /// Write the generated configuration to a file
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+
+        /// Allow replacing an existing output file
+        #[arg(long)]
+        overwrite: bool,
+    },
+
     /// Scan SSH/VPN config files and source code for quantum-vulnerable algorithms
     Pqc {
         /// Path to sshd_config or SSH config file to audit

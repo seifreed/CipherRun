@@ -15,6 +15,7 @@ mod mass_scan;
 mod monitor;
 mod mx_test;
 mod pqc_scan;
+mod remediation;
 mod scan;
 mod scan_diff;
 mod scan_exporter;
@@ -39,6 +40,7 @@ pub use mass_scan::MassScanCommand;
 pub use monitor::MonitorCommand;
 pub use mx_test::MxTestCommand;
 pub use pqc_scan::PqcScanCommand;
+pub use remediation::RemediationCommand;
 pub use scan::ScanCommand;
 pub use scan_diff::ScanDiffCommand;
 pub use schema::SchemaCommand;
@@ -60,6 +62,10 @@ mod tests {
         assert_eq!(DatabaseCommand::new(args.clone()).name(), "DatabaseCommand");
         assert_eq!(ScanCommand::new(args).name(), "ScanCommand");
         assert_eq!(SchemaCommand::new(None).name(), "SchemaCommand");
+        assert_eq!(
+            RemediationCommand::new("input.json".into(), "nginx".to_string(), None, false).name(),
+            "RemediationCommand"
+        );
         assert_eq!(WorkerCommand::new(Args::default()).name(), "WorkerCommand");
     }
 }
