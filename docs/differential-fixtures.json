@@ -81,6 +81,24 @@
       "false_positive_notes": "This fixture validates wire-level 3DES classification only; it does not implement a vulnerable TLS stack or demonstrate a birthday attack.",
       "false_negative_notes": "The synthetic responder does not model certificate exchange, protocol negotiation, or server implementation behavior.",
       "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "weak-ciphers-tls",
+      "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
+      "negative": "Any non-legacy cipher probe receives a TLS alert",
+      "expected": "CR-TLS-RC4-001=confirmed_vulnerable;CR-TLS-NULL-CIPHER-001=confirmed_vulnerable;CR-TLS-FREAK-001=confirmed_vulnerable;CR-TLS-LOGJAM-001=confirmed_vulnerable",
+      "false_positive_notes": "This fixture validates wire-level legacy cipher classification only; it does not implement a vulnerable TLS stack or demonstrate RC4, FREAK, or LOGJAM exploitation.",
+      "false_negative_notes": "The synthetic responder does not model certificate exchange, protocol negotiation, DH parameters, or server implementation behavior.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "modern-tls-weak-ciphers",
+      "positive": "No registered legacy cipher IDs accepted by the modern TLS fixture",
+      "negative": "weak-ciphers-tls synthetic legacy responses",
+      "expected": "CR-TLS-RC4-001=not_vulnerable;CR-TLS-NULL-CIPHER-001=not_vulnerable;CR-TLS-FREAK-001=not_vulnerable;CR-TLS-LOGJAM-001=inconclusive",
+      "false_positive_notes": "A clean modern fixture does not prove every backend in a load-balanced fleet is clean.",
+      "false_negative_notes": "Only the configured endpoint and resolved address are tested.",
+      "safety": "active-safe-negotiation"
     }
   ]
 }

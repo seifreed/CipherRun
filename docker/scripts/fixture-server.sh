@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -82,6 +82,48 @@ ALERT = b"\x15\x03\x03\x00\x02\x02\x28"
 
 def response(client_hello):
     if not any(cipher in client_hello for cipher in THREEDES):
+        return ALERT
+    body = b"\x03\x03" + (b"\x00" * 32) + b"\x00" + b"\x00\x0a" + b"\x00"
+    handshake = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x03" + len(handshake).to_bytes(2, "big") + handshake
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                client_hello = connection.recv(16384)
+                connection.sendall(response(client_hello))
+            except OSError:
+                pass
+PY
+        ;;
+    weak-ciphers)
+        exec python3 - <<'PY'
+import socket
+
+# Synthetic wire-level fixture for legacy cipher detectors. It accepts only
+# the registered RC4, NULL, RSA_EXPORT, and DH_EXPORT IDs; every other probe
+# receives an alert. No certificate or application handshake is attempted.
+WEAK = tuple(bytes.fromhex(value) for value in (
+    # RC4
+    "0005", "0004", "c011", "c007", "c00c", "c002", "c016", "0018",
+    # NULL
+    "0001", "0002", "003b", "c006", "c010", "c001", "c00b", "c015",
+    # FREAK RSA_EXPORT
+    "0003", "0006", "0008", "0062", "0064", "0060", "0061",
+    # LOGJAM DH_EXPORT
+    "0014", "0011", "0063", "0065",
+))
+
+ALERT = b"\x15\x03\x03\x00\x02\x02\x28"
+
+def response(client_hello):
+    if not any(cipher in client_hello for cipher in WEAK):
         return ALERT
     body = b"\x03\x03" + (b"\x00" * 32) + b"\x00" + b"\x00\x0a" + b"\x00"
     handshake = b"\x02" + len(body).to_bytes(3, "big") + body
