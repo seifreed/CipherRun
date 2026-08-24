@@ -126,6 +126,10 @@ pub struct ScanArgs {
     #[arg(long = "early-data")]
     pub early_data: bool,
 
+    /// Test server tolerance for GREASE values (RFC 8701)
+    #[arg(long = "grease")]
+    pub grease: bool,
+
     /// Run full test suite
     #[arg(short = '9', long = "full")]
     pub full: bool,
@@ -292,6 +296,7 @@ mod tests {
         assert!(!args.logjam);
         assert!(!args.drown);
         assert!(!args.early_data);
+        assert!(!args.grease);
         assert!(!args.full);
         assert!(args.all);
         assert!(!args.ssl2);

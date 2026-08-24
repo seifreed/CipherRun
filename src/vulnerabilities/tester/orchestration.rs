@@ -528,6 +528,14 @@ impl VulnerabilityScanner {
                 "Early data",
             );
         }
+        if self.selected_checks.is_enabled(&VulnerabilityType::GREASE) {
+            collect_result(
+                &mut results,
+                self.test_grease().await,
+                VulnerabilityType::GREASE,
+                "GREASE",
+            );
+        }
         if self
             .selected_checks
             .is_enabled(&VulnerabilityType::CCSInjection)

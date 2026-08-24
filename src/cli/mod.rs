@@ -245,6 +245,7 @@ impl Args {
                 || self.scan.logjam
                 || self.scan.drown
                 || self.scan.early_data
+                || self.scan.grease
                 || self.compliance.framework.is_some()
                 || self.compliance.policy.is_some())
         {
@@ -514,6 +515,7 @@ impl Args {
                     logjam: self.scan.logjam,
                     drown: self.scan.drown,
                     early_data: self.scan.early_data,
+                    grease: self.scan.grease,
                 },
                 certs: crate::application::scan_request::ScanRequestCerts {
                     analyze_certificates: self.scan.show_certificates || safe_profile,

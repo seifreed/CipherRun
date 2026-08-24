@@ -73,6 +73,9 @@ impl SelectedVulnerabilityChecks {
         if args.scan.vulns.early_data {
             enabled.insert(VulnerabilityType::EarlyDataReplay);
         }
+        if args.scan.vulns.grease {
+            enabled.insert(VulnerabilityType::GREASE);
+        }
         Self { enabled }
     }
 

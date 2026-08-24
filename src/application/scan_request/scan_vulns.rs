@@ -22,4 +22,5 @@ pub struct ScanRequestVulns {
     pub logjam: bool,
     pub drown: bool,
     pub early_data: bool,
+    pub grease: bool,
 }

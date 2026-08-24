@@ -195,6 +195,7 @@ impl ScanRequest {
             || self.scan.vulns.logjam
             || self.scan.vulns.drown
             || self.scan.vulns.early_data
+            || self.scan.vulns.grease
     }
 
     pub(crate) fn has_starttls_negotiation_request(&self) -> bool {
