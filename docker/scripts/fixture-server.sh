@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -99,6 +99,33 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 client_hello = connection.recv(16384)
                 connection.sendall(response(client_hello))
             except OSError:
+                pass
+PY
+        ;;
+    crime|crime-patched)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+
+compression = 0x01 if sys.argv[1] == "crime" else 0x00
+
+def response():
+    body = b"\x03\x03" + (b"\x00" * 32) + b"\x00" + b"\x00\x2f" + bytes([compression]) + b"\x00\x00"
+    handshake = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x03" + len(handshake).to_bytes(2, "big") + handshake
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                connection.recv(16384)
+                connection.sendall(response())
+            except (OSError, TimeoutError):
                 pass
 PY
         ;;

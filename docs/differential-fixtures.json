@@ -83,6 +83,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "crime-tls",
+      "positive": "Synthetic ServerHello negotiates DEFLATE TLS compression",
+      "negative": "Synthetic ServerHello negotiates the null compression method",
+      "expected": "CR-TLS-CRIME-001=confirmed_vulnerable",
+      "false_positive_notes": "This fixture validates TLS compression classification only; it does not execute a CRIME secret-recovery attack.",
+      "false_negative_notes": "The synthetic responder does not model a complete TLS stack or application-layer compression.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "crime-patched-tls",
+      "positive": "Synthetic ServerHello negotiates the null compression method",
+      "negative": "Synthetic ServerHello negotiates DEFLATE TLS compression",
+      "expected": "CR-TLS-CRIME-001=not_vulnerable",
+      "false_positive_notes": "A clean compression negotiation does not prove HTTP/2 or application-layer compression safety.",
+      "false_negative_notes": "Only the TLS compression negotiation path is exercised.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",
