@@ -193,6 +193,11 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate package-manager manifests
+        env:
+          CIPHERRUN_REPOSITORY: ${{ github.repository }}
+        run: scripts/generate-package-manifests.sh "${{ needs.validate.outputs.version }}" dist dist
+
       - name: Create checksums manifest
         shell: bash
         run: |
