@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|early-data|early-data-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|renegotiation-insecure|renegotiation-secure|starttls-injection|starttls-injection-patched|poodle|poodle-patched|grease-intolerant|grease-tolerant|early-data|early-data-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -327,6 +327,38 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
             try:
                 client_data = connection.recv(16384)
                 connection.sendall(response(client_data))
+            except (OSError, TimeoutError):
+                pass
+PY
+        ;;
+    renegotiation-insecure|renegotiation-secure)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+
+secure = sys.argv[1] == "renegotiation-secure"
+
+def server_hello(with_extension):
+    extensions = b"\xff\x01\x00\x01\x00" if with_extension else b""
+    body = b"\x03\x03" + (b"\xbb" * 32) + b"\x00\xc0\x2f\x00" + len(extensions).to_bytes(2, "big") + extensions
+    message = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x03" + len(message).to_bytes(2, "big") + message
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 14456))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                client_data = connection.recv(16384)
+                has_extension = b"\xff\x01" in client_data
+                if secure and not has_extension:
+                    connection.sendall(b"\x15\x03\x03\x00\x02\x02\x28")
+                else:
+                    connection.sendall(server_hello(secure))
             except (OSError, TimeoutError):
                 pass
 PY

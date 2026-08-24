@@ -191,6 +191,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "renegotiation-insecure-tls",
+      "positive": "Synthetic ServerHello omits renegotiation_info after a ClientHello without RFC 5746",
+      "negative": "Secure ServerHello with renegotiation_info",
+      "expected": "CR-TLS-RENEGOTIATION-001=inconclusive",
+      "false_positive_notes": "The detector intentionally does not claim CVE-2009-3555 from an incomplete handshake; a legacy endpoint may simply have renegotiation disabled.",
+      "false_negative_notes": "The fixture does not complete a renegotiation or prove an implementation-level attack path.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "renegotiation-secure-tls",
+      "positive": "Synthetic ServerHello includes RFC 5746 renegotiation_info and rejects the legacy probe",
+      "negative": "ServerHello without renegotiation_info",
+      "expected": "CR-TLS-RENEGOTIATION-001=not_vulnerable",
+      "false_positive_notes": "The result proves only the controlled RFC 5746 negotiation response, not every renegotiation policy of a deployed fleet.",
+      "false_negative_notes": "Only the initial handshake extension is exercised; client-initiated renegotiation policy is not modeled.",
+      "safety": "active-safe-negotiation"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",

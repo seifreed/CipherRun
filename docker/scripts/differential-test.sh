@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 54)' \
+jq -e '.version == "1" and (.fixtures | length == 56)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -125,6 +125,8 @@ scan_vulnerability_fixture robot-tls robot --robot
 scan_vulnerability_fixture robot-patched-tls robot-patched --robot
 scan_vulnerability_fixture fallback-tls fallback --tls-fallback
 scan_vulnerability_fixture fallback-patched-tls fallback-patched --tls-fallback
+scan_vulnerability_fixture renegotiation-insecure-tls renegotiation-insecure --renegotiation 14456
+scan_vulnerability_fixture renegotiation-secure-tls renegotiation-secure --renegotiation 14456
 scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
 scan_vulnerability_fixture poodle-tls poodle --poodle 14443
@@ -235,6 +237,10 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and
     "$results/fallback.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and .status == "not_vulnerable")' \
     "$results/fallback-patched.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RENEGOTIATION-001" and .status == "inconclusive")' \
+    "$results/renegotiation-insecure.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RENEGOTIATION-001" and .status == "not_vulnerable")' \
+    "$results/renegotiation-secure.cipherrun.json" >/dev/null
 for fixture in smtp imap pop3; do
     jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-STARTTLS-INJECTION-001" and .status == "confirmed_vulnerable")' \
         "$results/${fixture}-injection.cipherrun.json" >/dev/null
