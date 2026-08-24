@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_revert_last_sqlite_migration_drops_revocation_json() {
+    async fn test_revert_sqlite_migrations_in_order() {
         let pool = sqlite_pool().await;
 
         run_migrations(&pool)
@@ -337,7 +337,7 @@ mod tests {
 
         revert_migration(&pool)
             .await
-            .expect("revert should succeed");
+            .expect("ownership revert should succeed");
 
         if let DatabasePool::Sqlite(sqlite_pool) = &pool {
             let columns = sqlx::query("PRAGMA table_info(scans)")
@@ -345,15 +345,31 @@ mod tests {
                 .await
                 .expect("test assertion should succeed");
 
-            assert!(
-                !columns
-                    .iter()
-                    .any(|row| row.try_get::<String, _>("name").ok().as_deref()
-                        == Some("revocation_json")),
-                "revocation_json column should be removed by revert"
-            );
+            assert!(!columns.iter().any(|row| {
+                matches!(
+                    row.try_get::<String, _>("name").ok().as_deref(),
+                    Some("principal_id" | "tenant_id" | "created_by_key_id")
+                )
+            }));
+            assert!(columns.iter().any(|row| {
+                row.try_get::<String, _>("name").ok().as_deref() == Some("revocation_json")
+            }));
         } else {
             panic!("expected sqlite pool");
+        }
+
+        revert_migration(&pool)
+            .await
+            .expect("revocation revert should succeed");
+
+        if let DatabasePool::Sqlite(sqlite_pool) = &pool {
+            let columns = sqlx::query("PRAGMA table_info(scans)")
+                .fetch_all(sqlite_pool)
+                .await
+                .expect("test assertion should succeed");
+            assert!(!columns.iter().any(|row| {
+                row.try_get::<String, _>("name").ok().as_deref() == Some("revocation_json")
+            }));
         }
 
         pool.close().await;
