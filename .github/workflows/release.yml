@@ -175,12 +175,13 @@ jobs:
             exit 1
           fi
 
-          if curl --fail --silent --show-error "https://crates.io/api/v1/crates/cipherrun-core/${VERSION}" > /dev/null; then
-            echo "cipherrun-core ${VERSION} is already published; continuing"
-          else
-            cargo publish -p cipherrun-core --locked --token "$CARGO_REGISTRY_TOKEN"
-          fi
-
+          for crate in cipherrun-protocol cipherrun-core; do
+            if curl --fail --silent --show-error "https://crates.io/api/v1/crates/${crate}/${VERSION}" > /dev/null; then
+              echo "${crate} ${VERSION} is already published; continuing"
+            else
+              cargo publish -p "$crate" --locked --token "$CARGO_REGISTRY_TOKEN"
+            fi
+          done
           if curl --fail --silent --show-error "https://crates.io/api/v1/crates/cipherrun/${VERSION}" > /dev/null; then
             echo "cipherrun ${VERSION} is already published; continuing"
           else

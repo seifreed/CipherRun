@@ -66,6 +66,10 @@ the stable finding status, detection method, vulnerability identifiers, and
 structured evidence contracts. It can be used without compiling the CLI, API,
 database, or monitoring modules.
 
+It also publishes `cipherrun-protocol`, which exposes the dependency-light
+TLS/SSL protocol version and negotiation-result contracts independently of the
+scanner implementation.
+
 ### Using Cargo
 
 ```bash
