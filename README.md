@@ -112,6 +112,9 @@ and client reports. Requests are recorded in a bounded audit ring and emitted
 through the structured `audit` tracing target; query strings and bodies are
 intentionally excluded.
 
+Credentials assigned to the same `tenant_id` share the configured request quota;
+unscoped credentials remain isolated per key.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash

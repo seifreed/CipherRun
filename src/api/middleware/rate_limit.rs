@@ -293,6 +293,13 @@ pub enum RateLimitResult {
     },
 }
 
+fn quota_scope(auth: &AuthExtension) -> String {
+    auth.tenant_id
+        .as_deref()
+        .map(|tenant| format!("tenant:{tenant}"))
+        .unwrap_or_else(|| format!("key:{}", auth.key_id))
+}
+
 /// Rate limiting middleware function
 pub async fn rate_limit(
     State(state): State<Arc<AppState>>,
@@ -321,16 +328,18 @@ pub async fn rate_limit(
             return Ok(next.run(req).await);
         }
 
-        // Check rate limit for this API key
-        match state.rate_limiter.check(&auth.key_id) {
+        // Tenant credentials share one quota; unscoped credentials retain a
+        // per-key quota so one tenant cannot consume another tenant's budget.
+        let scope = quota_scope(&auth);
+        match state.rate_limiter.check(&scope) {
             RateLimitResult::Allowed {
                 limit,
                 remaining,
                 reset_at,
             } => {
                 tracing::debug!(
-                    "Rate limit check passed for key {}: {}/{} remaining",
-                    auth.key_id,
+                    "Rate limit check passed for scope {}: {}/{} remaining",
+                    scope,
                     remaining,
                     limit
                 );
@@ -359,8 +368,8 @@ pub async fn rate_limit(
                 reset_at,
             } => {
                 tracing::warn!(
-                    "Rate limit exceeded for key {}: limit={}, retry_after={}s",
-                    auth.key_id,
+                    "Rate limit exceeded for scope {}: limit={}, retry_after={}s",
+                    scope,
                     limit,
                     retry_after
                 );
@@ -420,6 +429,21 @@ impl Clone for PerKeyRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenant_credentials_share_quota_scope() {
+        let auth = AuthExtension {
+            permission: Permission::User,
+            key_id: "key-1".to_string(),
+            principal_id: "principal-1".to_string(),
+            tenant_id: Some("tenant-1".to_string()),
+        };
+        assert_eq!(quota_scope(&auth), "tenant:tenant-1");
+
+        let mut unscoped = auth;
+        unscoped.tenant_id = None;
+        assert_eq!(quota_scope(&unscoped), "key:key-1");
+    }
 
     #[test]
     fn test_rate_limiter_allows_first_request() {

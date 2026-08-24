@@ -30,6 +30,7 @@ All notable changes to CipherRun are documented here. The format follows
 - HMAC-signed scan webhooks with stable delivery IDs and bounded transient retries.
 - Prometheus text metrics and per-response request IDs for operational tracing.
 - Bounded structured request audit events that omit query strings and bodies.
+- Request quotas are shared by credentials within the same configured tenant.
 
 ### Changed
 
