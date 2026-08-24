@@ -6,6 +6,7 @@ use crate::monitor::alerts::{raw_webhook_host, reject_private_webhook_host};
 use crate::monitor::types::AlertThresholds;
 use crate::security::input_validation::{looks_like_dotted_ip_literal, looks_like_obfuscated_ip};
 use crate::security::validate_hostname;
+#[cfg(feature = "email")]
 use lettre::message::Mailbox;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -216,6 +217,7 @@ impl MonitorConfig {
     pub fn enabled_channels(&self) -> Vec<String> {
         let mut channels = Vec::new();
 
+        #[cfg(feature = "email")]
         if let Some(ref email) = self.monitor.alerts.email
             && email.enabled
         {
@@ -293,21 +295,28 @@ impl MonitorConfig {
         if let Some(email) = &self.monitor.alerts.email
             && email.enabled
         {
-            validate_hostname(&email.smtp_server).map_err(|error| TlsError::ConfigError {
-                message: format!("Invalid email smtp_server: {error}"),
-            })?;
-            email
-                .from_address
-                .parse::<Mailbox>()
-                .map_err(|error| TlsError::ConfigError {
-                    message: format!("Invalid email from_address: {error}"),
+            #[cfg(feature = "email")]
+            {
+                validate_hostname(&email.smtp_server).map_err(|error| TlsError::ConfigError {
+                    message: format!("Invalid email smtp_server: {error}"),
                 })?;
-            for addr in &email.to_addresses {
-                addr.parse::<Mailbox>()
+                email
+                    .from_address
+                    .parse::<Mailbox>()
                     .map_err(|error| TlsError::ConfigError {
-                        message: format!("Invalid email to_addresses entry: {error}"),
+                        message: format!("Invalid email from_address: {error}"),
                     })?;
+                for addr in &email.to_addresses {
+                    addr.parse::<Mailbox>()
+                        .map_err(|error| TlsError::ConfigError {
+                            message: format!("Invalid email to_addresses entry: {error}"),
+                        })?;
+                }
             }
+            #[cfg(not(feature = "email"))]
+            return Err(TlsError::ConfigError {
+                message: "email alerts require the `email` feature".to_string(),
+            });
         }
         if let Some(slack) = &self.monitor.alerts.slack
             && slack.enabled

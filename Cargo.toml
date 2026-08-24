@@ -48,6 +48,8 @@ resolver = "2"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [features]
+default = ["email"]
+email = ["dep:lettre"]
 # Swagger UI is optional: enabling it requires network access at build time to
 # download the Swagger UI bundle. Keep it off by default so the project builds
 # and tests fully offline.
@@ -58,7 +60,6 @@ otel = [
     "dep:opentelemetry_sdk",
     "dep:tracing-opentelemetry",
 ]
-default = []
 
 [dependencies]
 # Async runtime
@@ -146,7 +147,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 toml = "1.0"
 
 # Email
-lettre = { version = "0.11", features = ["tokio1-native-tls"] }
+lettre = { version = "0.11", features = ["tokio1-native-tls"], optional = true }
 
 # Async utilities
 futures = "0.3"

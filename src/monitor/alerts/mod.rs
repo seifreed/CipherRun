@@ -1,6 +1,7 @@
 // Alert System - Multi-channel alerting
 
 pub mod channels;
+#[cfg(feature = "email")]
 pub mod email;
 pub mod formatting;
 pub mod pagerduty;
@@ -558,8 +559,15 @@ impl AlertManager {
         if let Some(ref email_config) = config.monitor.alerts.email
             && email_config.enabled
         {
-            let channel = email::EmailChannel::new(email_config.clone())?;
-            manager.add_channel(Box::new(channel));
+            #[cfg(not(feature = "email"))]
+            return Err(crate::TlsError::ConfigError {
+                message: "email alerts require the `email` feature".to_string(),
+            });
+            #[cfg(feature = "email")]
+            {
+                let channel = email::EmailChannel::new(email_config.clone())?;
+                manager.add_channel(Box::new(channel));
+            }
         }
 
         // Initialize Slack channel if configured

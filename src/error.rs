@@ -240,8 +240,11 @@ macro_rules! impl_from_error {
 // Simple error conversions using the macro
 impl_from_error!(csv::Error, "CSV error");
 impl_from_error!(handlebars::RenderError, "Template render error");
+#[cfg(feature = "email")]
 impl_from_error!(lettre::address::AddressError, "Email address error");
+#[cfg(feature = "email")]
 impl_from_error!(lettre::error::Error, "Email error");
+#[cfg(feature = "email")]
 impl_from_error!(lettre::transport::smtp::Error, "SMTP error");
 impl_from_error!(toml::de::Error, "TOML deserialization error");
 impl_from_error!(toml::ser::Error, "TOML serialization error");
