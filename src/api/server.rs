@@ -23,6 +23,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use tower::{BoxError, ServiceBuilder};
 use tower_http::compression::CompressionLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 
 struct TlsListener {
@@ -249,13 +250,20 @@ impl ApiServer {
             ));
 
         // CORS is opt-in and only permits explicitly configured origins.
-        let router = if self.config.enable_cors {
+        let mut router = if self.config.enable_cors {
             router.layer(middleware::cors_layer_with_origins(
                 self.config.allowed_origins.clone(),
             )?)
         } else {
             router
         };
+
+        if self.config.tls_cert_file.is_some() {
+            router = router.layer(SetResponseHeaderLayer::if_not_present(
+                axum::http::header::STRICT_TRANSPORT_SECURITY,
+                axum::http::HeaderValue::from_static("max-age=31536000"),
+            ));
+        }
 
         #[cfg(test)]
         let router = router.route(
@@ -437,6 +445,36 @@ mod tests {
         let server = ApiServer::new(config).expect("test assertion should succeed");
         let _router = server.build_router().expect("router should build");
         // Just verify it builds without panicking
+    }
+
+    #[tokio::test]
+    async fn https_router_sets_hsts_header() {
+        let config = ApiConfig {
+            tls_cert_file: Some("/tmp/cipherrun-test-cert.pem".into()),
+            tls_key_file: Some("/tmp/cipherrun-test-key.pem".into()),
+            ..Default::default()
+        };
+        let app = ApiServer::new(config)
+            .expect("server should build")
+            .build_router()
+            .expect("router should build");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(
+            response
+                .headers()
+                .get("strict-transport-security")
+                .and_then(|value| value.to_str().ok()),
+            Some("max-age=31536000")
+        );
     }
 
     #[tokio::test]
