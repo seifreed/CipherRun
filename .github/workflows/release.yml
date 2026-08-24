@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -214,6 +215,22 @@ jobs:
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: dist/*
+
+      - name: Publish and sign production container
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker build --tag "$IMAGE" --build-arg CIPHERRUN_VERSION="$VERSION" .
+          docker push "$IMAGE"
+          if ! command -v cosign >/dev/null 2>&1; then
+            go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+            export PATH="$(go env GOPATH)/bin:$PATH"
+          fi
+          scripts/sign-container.sh "$IMAGE"
 
       - name: Create GitHub Release
         env:
