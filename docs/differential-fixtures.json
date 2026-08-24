@@ -432,6 +432,24 @@
       "false_positive_notes": "A clean transcript does not prove a proxy cannot alter another POP3 route.",
       "false_negative_notes": "Only the controlled POP3 command sequence is exercised.",
       "safety": "active-synthetic-starttls"
+    },
+    {
+      "name": "poodle-tls",
+      "positive": "Synthetic ServerHello negotiates SSLv3",
+      "negative": "Synthetic patched responder rejects the SSLv3 ClientHello",
+      "expected": "CR-TLS-POODLE-001=confirmed_vulnerable",
+      "false_positive_notes": "SSLv3 negotiation is a protocol posture signal; the fixture does not execute a CBC padding oracle.",
+      "false_negative_notes": "The responder does not model a complete TLS stack or application traffic.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "poodle-patched-tls",
+      "positive": "Synthetic patched responder rejects the SSLv3 ClientHello",
+      "negative": "Synthetic responder negotiates SSLv3",
+      "expected": "CR-TLS-POODLE-001=not_vulnerable",
+      "false_positive_notes": "Rejecting SSLv3 does not cover TLS POODLE or newer CBC oracle variants.",
+      "false_negative_notes": "Only the SSLv3 protocol negotiation path is exercised.",
+      "safety": "active-synthetic-wire"
     }
   ]
 }

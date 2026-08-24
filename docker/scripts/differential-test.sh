@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 48)' \
+jq -e '.version == "1" and (.fixtures | length == 50)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -98,9 +98,10 @@ scan_vulnerability_fixture() {
     local target=$1
     local artifact=$2
     local probe=$3
+    local port=${4:-443}
     local json="$results/$artifact.cipherrun.json"
     local exit_code=0
-    cipherrun --allow-private "$probe" --overwrite --json "$json" "$target:443" \
+    cipherrun --allow-private "$probe" --overwrite --json "$json" "$target:$port" \
         >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
     if (( exit_code > 1 )); then
         echo "CipherRun $probe probe failed for $target with exit code $exit_code" >&2
@@ -126,6 +127,8 @@ scan_vulnerability_fixture fallback-tls fallback --tls-fallback
 scan_vulnerability_fixture fallback-patched-tls fallback-patched --tls-fallback
 scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
+scan_vulnerability_fixture poodle-tls poodle --poodle 14443
+scan_vulnerability_fixture poodle-patched-tls poodle-patched --poodle 14443
 
 scan_starttls_injection_fixture() {
     local target=$1
@@ -234,6 +237,10 @@ for fixture in smtp imap pop3; do
     jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-STARTTLS-INJECTION-001" and .status == "not_vulnerable")' \
         "$results/${fixture}-injection-patched.cipherrun.json" >/dev/null
 done
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .status == "confirmed_vulnerable")' \
+    "$results/poodle.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-POODLE-001" and .status == "not_vulnerable")' \
+    "$results/poodle-patched.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RC4-001" and .status == "confirmed_vulnerable")' \
     "$results/weak-ciphers.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-NULL-CIPHER-001" and .status == "confirmed_vulnerable")' \

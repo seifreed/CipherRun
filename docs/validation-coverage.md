@@ -30,6 +30,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | CCS Injection | Active early-CCS probe | `ccs-tls` | `ccs-patched-tls` | CipherRun | Synthetic CCS transcript; no vulnerable OpenSSL implementation claim |
 | Ticketbleed | Active session-ticket probe | `ticketbleed-tls` | `ticketbleed-patched-tls` | CipherRun | Synthetic session-ID transcript; no F5 BIG-IP implementation claim |
 | ROBOT | Active RSA alert-oracle probe | `robot-tls` | `robot-patched-tls` | CipherRun | Synthetic RSA transcript; no vulnerable implementation or timing-oracle claim |
+| POODLE classic (SSLv3) | Protocol negotiation | `poodle-tls` | `poodle-patched-tls` | CipherRun | Synthetic SSLv3 transcript; no CBC padding oracle claim |
 | POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
 | Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | `fallback-tls` for SCSV | `fallback-patched-tls` | CipherRun | SCSV transcript only; renegotiation, early data, and GREASE still need dedicated handshakes |

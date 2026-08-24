@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|starttls-injection|starttls-injection-patched|poodle|poodle-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -356,6 +356,35 @@ threads = [
 for args in threads:
     threading.Thread(target=serve, args=args, daemon=True).start()
 threading.Event().wait()
+PY
+        ;;
+    poodle|poodle-patched)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+
+patched = sys.argv[1] == "poodle-patched"
+
+def response():
+    if patched:
+        return b"\x15\x03\x03\x00\x02\x02\x46"
+    body = b"\x03\x00" + (b"\xaa" * 32) + b"\x00\x00\x2f\x00\x00\x00"
+    message = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x00" + len(message).to_bytes(2, "big") + message
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 14443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                connection.recv(16384)
+                connection.sendall(response())
+            except (OSError, TimeoutError):
+                pass
 PY
         ;;
     weak-ciphers)

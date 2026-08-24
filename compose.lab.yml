@@ -68,6 +68,10 @@ services:
         condition: service_healthy
       starttls-injection-patched-tls:
         condition: service_healthy
+      poodle-tls:
+        condition: service_healthy
+      poodle-patched-tls:
+        condition: service_healthy
       weak-ciphers-tls:
         condition: service_healthy
       interop-cert:
@@ -503,6 +507,48 @@ services:
       - lab
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import socket; [socket.create_connection((\"127.0.0.1\", p), 2).close() for p in (25252, 21432, 21110)]'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  poodle-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "poodle"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",14443),2); s.close()'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  poodle-patched-tls:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["/scripts/fixture-server.sh", "poodle-patched"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop:
+      - ALL
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",14443),2); s.close()'"]
       interval: 2s
       timeout: 2s
       retries: 15
