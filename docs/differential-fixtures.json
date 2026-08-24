@@ -144,6 +144,132 @@
       "false_positive_notes": "The result proves the configured Caddy listener posture only.",
       "false_negative_notes": "Only the isolated container listener is exercised.",
       "safety": "interop-passive-negotiation"
+    },
+    {
+      "name": "smtp-starttls",
+      "positive": "SMTP advertises STARTTLS and accepts the upgrade command",
+      "negative": "SMTP greeting and EHLO omit STARTTLS",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves SMTP negotiation support only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model authentication, message delivery, or STARTTLS stripping in transit.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "imap-starttls",
+      "positive": "IMAP CAPABILITY advertises STARTTLS and accepts the tagged command",
+      "negative": "IMAP CAPABILITY omits STARTTLS",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves IMAP negotiation support only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model authentication, mailbox state, or STARTTLS stripping in transit.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "pop3-starttls",
+      "positive": "POP3 CAPA advertises STLS and accepts the command",
+      "negative": "POP3 CAPA omits STLS",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves POP3 negotiation support only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model authentication or STARTTLS stripping in transit.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "xmpp-starttls",
+      "positive": "XMPP stream features advertise STARTTLS and return proceed",
+      "negative": "XMPP stream features omit STARTTLS",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves XMPP negotiation support only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model SASL, stream restart, or STARTTLS stripping in transit.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "postgres-starttls",
+      "positive": "PostgreSQL SSLRequest receives S",
+      "negative": "PostgreSQL SSLRequest receives N",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves PostgreSQL SSL negotiation support only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model authentication, protocol startup, or database authorization.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "mysql-starttls",
+      "positive": "MySQL handshake advertises CLIENT_SSL and accepts the SSL request",
+      "negative": "MySQL handshake omits CLIENT_SSL",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves MySQL capability negotiation only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model authentication, SQL execution, or server version behavior.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "ldap-starttls",
+      "positive": "LDAP StartTLS extended request receives resultCode success",
+      "negative": "LDAP StartTLS extended request receives a non-success resultCode",
+      "expected": "starttls_supported=true",
+      "false_positive_notes": "The fixture proves LDAP extended-operation negotiation only; it does not complete a TLS handshake.",
+      "false_negative_notes": "The fixture does not model bind, directory ACLs, referrals, or downgrade attacks.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "smtp-no-starttls",
+      "positive": "SMTP negative control without STARTTLS capability",
+      "negative": "SMTP STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an absent capability.",
+      "false_negative_notes": "It does not model a proxy removing STARTTLS from a real server response.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "imap-no-starttls",
+      "positive": "IMAP negative control without STARTTLS capability",
+      "negative": "IMAP STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an absent capability.",
+      "false_negative_notes": "It does not model a proxy removing STARTTLS from a real server response.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "pop3-no-starttls",
+      "positive": "POP3 negative control without STLS capability",
+      "negative": "POP3 STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an absent capability.",
+      "false_negative_notes": "It does not model a proxy removing STLS from a real server response.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "xmpp-no-starttls",
+      "positive": "XMPP negative control without STARTTLS feature",
+      "negative": "XMPP STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an absent feature.",
+      "false_negative_notes": "It does not model a proxy removing STARTTLS from a real stream.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "postgres-no-starttls",
+      "positive": "PostgreSQL negative control returns N to SSLRequest",
+      "negative": "PostgreSQL STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an explicit N response.",
+      "false_negative_notes": "It does not model a proxy or pooler changing the response.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "mysql-no-starttls",
+      "positive": "MySQL negative control omits CLIENT_SSL",
+      "negative": "MySQL STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects an absent CLIENT_SSL capability.",
+      "false_negative_notes": "It does not model authentication or server-version quirks.",
+      "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "ldap-no-starttls",
+      "positive": "LDAP negative control returns a non-success resultCode",
+      "negative": "LDAP STARTTLS-positive fixture",
+      "expected": "starttls_supported=false",
+      "false_positive_notes": "A negative control only proves the client rejects a failed extended operation.",
+      "false_negative_notes": "It does not model directory policy or proxy behavior.",
+      "safety": "active-safe-negotiation"
     }
   ]
 }

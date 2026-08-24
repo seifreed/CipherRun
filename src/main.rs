@@ -87,6 +87,10 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         return Ok(CommandExit::success());
     }
 
+    if args.starttls.only {
+        return run_starttls_only(&args).await;
+    }
+
     // Handle --api-config-example (generate API config example and exit)
     if let Some(config_path) = &args.api_server.config_example {
         use cipherrun::api::ApiConfig;
@@ -177,6 +181,70 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
     info!("Executing command: {}", command.name());
     command.execute().await
+}
+
+async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
+    use cipherrun::starttls::StarttlsTester;
+    use cipherrun::utils::network::{Target, split_target_host_port};
+
+    let request = args.to_scan_request()?;
+    let protocol =
+        request
+            .starttls_protocol()
+            .ok_or_else(|| cipherrun::TlsError::InvalidInput {
+                message: "--starttls-only requires a STARTTLS protocol".to_string(),
+            })?;
+    let target_input =
+        request
+            .target
+            .as_deref()
+            .ok_or_else(|| cipherrun::TlsError::InvalidInput {
+                message: "--starttls-only requires a target".to_string(),
+            })?;
+    let (hostname, embedded_port) = split_target_host_port(target_input)?;
+    let port = request
+        .port
+        .or(embedded_port)
+        .or_else(|| request.starttls_port());
+    let target = if let Some(ip_override) = request.ip.as_deref() {
+        let ip = ip_override
+            .parse()
+            .map_err(|_| cipherrun::TlsError::InvalidInput {
+                message: format!("Invalid IP override: {ip_override}"),
+            })?;
+        Target::with_ips(hostname, port.unwrap_or(protocol.default_port()), vec![ip])?
+    } else {
+        Target::parse_with_port_override_and_private(
+            target_input,
+            port,
+            request.network.permits_private_resolution(),
+        )
+        .await?
+    };
+    request
+        .network
+        .validate_resolved_ips(&target.ip_addresses)?;
+
+    let result = StarttlsTester::new(target)
+        .with_server_mode(request.starttls_server_mode())
+        .test_protocol(protocol)
+        .await;
+    let encoded = if args.output.json_pretty {
+        serde_json::to_string_pretty(&result)?
+    } else {
+        serde_json::to_string(&result)?
+    };
+    if let Some(path) = &args.output.json {
+        std::fs::write(path, format!("{encoded}\n"))?;
+    } else {
+        println!("{encoded}");
+    }
+
+    Ok(if result.starttls_supported {
+        CommandExit::success()
+    } else {
+        CommandExit::failure(CommandExit::OPERATIONAL_FAILURE)
+    })
 }
 
 fn initialize_logging(args: &Args) -> cipherrun::Result<()> {

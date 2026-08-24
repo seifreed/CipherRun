@@ -54,6 +54,10 @@ services:
         condition: service_healthy
       caddy-interop:
         condition: service_healthy
+      starttls-interop:
+        condition: service_healthy
+      starttls-negative:
+        condition: service_healthy
 
   legacy-tls:
     image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
@@ -315,6 +319,44 @@ services:
     networks: [lab]
     healthcheck:
       test: ["CMD-SHELL", "caddy version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  starttls-interop:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["python3", "/scripts/starttls-fixture-server.py", "positive"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop: [ALL]
+    networks: [lab]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; [socket.create_connection((\"127.0.0.1\", p), 2).close() for p in (2525, 2143, 2110, 5222, 55432, 43306, 3389)]'"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  starttls-negative:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command: ["python3", "/scripts/starttls-fixture-server.py", "negative"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop: [ALL]
+    networks: [lab]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket; [socket.create_connection((\"127.0.0.1\", p), 2).close() for p in (2525, 2143, 2110, 5222, 55432, 43306, 3389)]'"]
       interval: 2s
       timeout: 3s
       retries: 20

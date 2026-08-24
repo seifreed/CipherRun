@@ -15,6 +15,10 @@ pub struct StarttlsArgs {
     #[arg(short = 't', long = "starttls", value_name = "PROTOCOL")]
     pub protocol: Option<String>,
 
+    /// Only negotiate STARTTLS and emit the protocol result; do not run a TLS scan.
+    #[arg(long = "starttls-only")]
+    pub only: bool,
+
     /// STARTTLS for SMTP (ports 25, 587, 465)
     #[arg(long = "starttls-smtp")]
     pub smtp: bool,

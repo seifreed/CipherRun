@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 16)' \
+jq -e '.version == "1" and (.fixtures | length == 30)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -65,6 +65,33 @@ scan_interop_fixture() {
 
 for target in nginx-interop apache-interop haproxy-interop envoy-interop caddy-interop; do
     scan_interop_fixture "$target"
+done
+
+scan_starttls_fixture() {
+    local target=$1
+    local protocol=$2
+    local port=$3
+    local artifact=$4
+    local json="$results/$artifact.cipherrun.json"
+    local exit_code=0
+    cipherrun --allow-private --starttls "$protocol" --starttls-only \
+        --overwrite --json "$json" "$target:$port" \
+        >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
+    if (( exit_code > 1 )); then
+        echo "CipherRun STARTTLS probe failed for $target:$port with exit code $exit_code" >&2
+        return "$exit_code"
+    fi
+    timeout 30 openssl s_client -starttls "$protocol" -connect "$target:$port" \
+        -servername fixture.local -brief </dev/null \
+        >"$results/$artifact.openssl.txt" 2>&1 || true
+}
+
+for fixture in \
+    "smtp smtp 2525" "imap imap 2143" "pop3 pop3 2110" \
+    "xmpp xmpp 5222" "postgres postgres 55432" "mysql mysql 43306" "ldap ldap 3389"; do
+    read -r name protocol port <<<"$fixture"
+    scan_starttls_fixture starttls-interop "$protocol" "$port" "${name}-starttls"
+    scan_starttls_fixture starttls-negative "$protocol" "$port" "${name}-no-starttls"
 done
 
 scan_vulnerability_fixture() {
@@ -130,6 +157,12 @@ for target in nginx-interop apache-interop haproxy-interop envoy-interop caddy-i
         "$results/$target.testssl.txt"
     awk '$1 == "TLS" && $2 == "1.1" && $3 == "not" { found=1 } END { exit !found }' \
         "$results/$target.testssl.txt"
+done
+for fixture in smtp imap pop3 xmpp postgres mysql ldap; do
+    jq -e '.starttls_supported == true' \
+        "$results/${fixture}-starttls.cipherrun.json" >/dev/null
+    jq -e '.starttls_supported == false' \
+        "$results/${fixture}-no-starttls.cipherrun.json" >/dev/null
 done
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BEAST-001" and .status == "confirmed_vulnerable")' \
     "$results/legacy-tls-beast.cipherrun.json" >/dev/null

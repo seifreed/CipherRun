@@ -57,6 +57,7 @@ COPY --from=app-builder /build/target/release/cipherrun /usr/local/bin/cipherrun
 COPY --from=tools-builder /tmp/sslscan/sslscan /usr/local/bin/sslscan
 COPY --from=tools-builder /tmp/testssl /opt/testssl.sh
 COPY docker/scripts/ /scripts/
+COPY docker/scripts/starttls-fixture-server.py /scripts/starttls-fixture-server.py
 COPY docs/differential-fixtures.json /usr/share/cipherrun/differential-fixtures.json
 
 RUN useradd --create-home --shell /bin/bash tester \
