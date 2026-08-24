@@ -115,6 +115,11 @@ intentionally excluded.
 Credentials assigned to the same `tenant_id` share the configured request quota;
 unscoped credentials remain isolated per key.
 
+Native HTTPS is available by setting `tls_cert_file` and `tls_key_file` to a
+certificate chain and private-key PEM file. The two paths must be configured
+together; otherwise the API remains HTTP for local development. TLS handshakes
+are completed before Axum receives a connection.
+
 `Dockerfile.lab` and `compose.lab.yml` are an explicit packet-capture laboratory with pinned sslscan/testssl.sh sources. It grants `NET_ADMIN` and `NET_RAW`; use it only on systems and targets you are authorized to test.
 
 ```bash

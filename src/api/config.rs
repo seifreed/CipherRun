@@ -64,6 +64,14 @@ pub struct ApiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webhook_signing_secret_file: Option<PathBuf>,
 
+    /// PEM certificate chain for native API HTTPS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_cert_file: Option<PathBuf>,
+
+    /// PEM private key for native API HTTPS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_key_file: Option<PathBuf>,
+
     /// Enable Swagger UI
     pub enable_swagger: bool,
 
@@ -183,6 +191,8 @@ impl Default for ApiConfig {
             job_storage_dir: None,
             job_retention_seconds: default_job_retention_seconds(),
             webhook_signing_secret_file: None,
+            tls_cert_file: None,
+            tls_key_file: None,
             enable_swagger: false,
             policy_dir: None,
         }
@@ -472,6 +482,11 @@ impl ApiConfig {
                     .to_string(),
             });
         }
+        if self.tls_cert_file.is_some() != self.tls_key_file.is_some() {
+            return Err(TlsError::ConfigError {
+                message: "tls_cert_file and tls_key_file must be configured together".to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -567,6 +582,18 @@ mod tests {
             .validate()
             .expect_err("CORS without an allowlist must fail");
         assert!(err.to_string().contains("allowed_origins"));
+    }
+
+    #[test]
+    fn test_tls_certificate_and_key_paths_must_match() {
+        let config = ApiConfig {
+            tls_cert_file: Some("server.crt".into()),
+            ..Default::default()
+        };
+        let err = config
+            .validate()
+            .expect_err("TLS requires both certificate and key");
+        assert!(err.to_string().contains("must be configured together"));
     }
 
     #[test]

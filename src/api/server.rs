@@ -12,9 +12,41 @@ use axum::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use tower::{BoxError, ServiceBuilder};
 use tower_http::compression::CompressionLayer;
 use tracing::info;
+
+struct TlsListener {
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = TlsStream<TcpStream>;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, address) = match self.listener.accept().await {
+                Ok(connection) => connection,
+                Err(error) => {
+                    tracing::warn!("TLS listener accept failed: {error}");
+                    continue;
+                }
+            };
+            match self.acceptor.accept(stream).await {
+                Ok(stream) => return (stream, address),
+                Err(error) => tracing::warn!(%address, "TLS handshake failed: {error}"),
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.listener.local_addr()
+    }
+}
 
 /// API Server
 pub struct ApiServer {
@@ -213,9 +245,14 @@ impl ApiServer {
 
         // Create listener
         let addr = canonical_target(&self.config.host, self.config.port);
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        let listener = TcpListener::bind(&addr).await?;
 
-        info!("CipherRun API server listening on {}", addr);
+        let tls_enabled = self.config.tls_cert_file.is_some();
+        info!(
+            "CipherRun API server listening on {} ({})",
+            addr,
+            if tls_enabled { "HTTPS" } else { "HTTP" }
+        );
         #[cfg(feature = "swagger")]
         if self.config.enable_swagger {
             info!(
@@ -225,8 +262,32 @@ impl ApiServer {
         }
         info!("Health check endpoint: http://{}/health", addr);
 
-        // Serve
-        axum::serve(listener, app).await?;
+        // Serve with native TLS when both certificate paths are configured.
+        if let (Some(cert_file), Some(key_file)) =
+            (&self.config.tls_cert_file, &self.config.tls_key_file)
+        {
+            let material =
+                crate::utils::mtls::MtlsConfig::from_separate_files(cert_file, key_file, None)
+                    .map_err(|error| crate::error::TlsError::ConfigError {
+                        message: format!("Failed to load API TLS material: {error}"),
+                    })?;
+            let tls_config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(material.cert_chain, material.private_key)
+                .map_err(|error| crate::error::TlsError::ConfigError {
+                    message: format!("Invalid API TLS material: {error}"),
+                })?;
+            axum::serve(
+                TlsListener {
+                    listener,
+                    acceptor: TlsAcceptor::from(Arc::new(tls_config)),
+                },
+                app,
+            )
+            .await?;
+        } else {
+            axum::serve(listener, app).await?;
+        }
 
         Ok(())
     }
