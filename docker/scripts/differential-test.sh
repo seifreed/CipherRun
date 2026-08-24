@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 11)' \
+jq -e '.version == "1" and (.fixtures | length == 16)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -45,6 +45,27 @@ scan_breach_fixture() {
 
 scan_breach_fixture breach-tls breach-tls
 scan_breach_fixture modern-tls modern-tls-breach
+
+scan_interop_fixture() {
+    local target=$1
+    local json="$results/$target.cipherrun.json"
+    local exit_code=0
+    cipherrun --allow-private --profile safe --overwrite --json "$json" "$target:443" \
+        >"$results/$target.cipherrun.txt" 2>&1 || exit_code=$?
+    if (( exit_code > 1 )); then
+        echo "CipherRun failed for $target with exit code $exit_code" >&2
+        return "$exit_code"
+    fi
+    sslscan --no-colour "$target:443" >"$results/$target.sslscan.txt" 2>&1 || true
+    timeout 180 testssl.sh --protocols --warnings off --color 0 "$target:443" \
+        >"$results/$target.testssl.txt" 2>&1 || true
+    echo | openssl s_client -connect "$target:443" -servername interop.local \
+        >"$results/$target.openssl.txt" 2>&1 || true
+}
+
+for target in nginx-interop apache-interop haproxy-interop envoy-interop caddy-interop; do
+    scan_interop_fixture "$target"
+done
 
 scan_vulnerability_fixture() {
     local target=$1
@@ -87,6 +108,29 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BREACH-001" and .statu
     "$results/breach-tls.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BREACH-001" and .status == "not_vulnerable")' \
     "$results/modern-tls-breach.cipherrun.json" >/dev/null
+
+for target in nginx-interop apache-interop haproxy-interop envoy-interop caddy-interop; do
+    jq -e '.protocols[] | select(.protocol == "TLS13" and .supported == true)' \
+        "$results/$target.cipherrun.json" >/dev/null
+    jq -e 'all(.protocols[]; .protocol != "TLS10" and .protocol != "TLS11" or .supported == false)' \
+        "$results/$target.cipherrun.json" >/dev/null
+    awk '$1 == "TLSv1.2" && $2 == "enabled" { found=1 } END { exit !found }' \
+        "$results/$target.sslscan.txt"
+    awk '$1 == "TLSv1.3" && $2 == "enabled" { found=1 } END { exit !found }' \
+        "$results/$target.sslscan.txt"
+    awk '$1 == "TLSv1.0" && $2 == "disabled" { found=1 } END { exit !found }' \
+        "$results/$target.sslscan.txt"
+    awk '$1 == "TLSv1.1" && $2 == "disabled" { found=1 } END { exit !found }' \
+        "$results/$target.sslscan.txt"
+    awk '$1 == "TLS" && $2 == "1.2" && $3 == "offered" { found=1 } END { exit !found }' \
+        "$results/$target.testssl.txt"
+    awk '$1 == "TLS" && $2 == "1.3" && $3 == "offered" { found=1 } END { exit !found }' \
+        "$results/$target.testssl.txt"
+    awk '$1 == "TLS" && $2 == "1" && $3 == "not" { found=1 } END { exit !found }' \
+        "$results/$target.testssl.txt"
+    awk '$1 == "TLS" && $2 == "1.1" && $3 == "not" { found=1 } END { exit !found }' \
+        "$results/$target.testssl.txt"
+done
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BEAST-001" and .status == "confirmed_vulnerable")' \
     "$results/legacy-tls-beast.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BEAST-001" and .status == "not_vulnerable")' \

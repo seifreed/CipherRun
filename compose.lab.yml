@@ -42,6 +42,18 @@ services:
         condition: service_healthy
       weak-ciphers-tls:
         condition: service_healthy
+      interop-cert:
+        condition: service_completed_successfully
+      nginx-interop:
+        condition: service_healthy
+      apache-interop:
+        condition: service_healthy
+      haproxy-interop:
+        condition: service_healthy
+      envoy-interop:
+        condition: service_healthy
+      caddy-interop:
+        condition: service_healthy
 
   legacy-tls:
     image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
@@ -190,6 +202,128 @@ services:
       timeout: 2s
       retries: 15
 
+  interop-cert:
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+      args:
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
+    command:
+      - /bin/bash
+      - -ceu
+      - |
+        openssl req -x509 -newkey rsa:2048 -nodes -days 2 -sha256 \
+          -subj "/CN=interop.local" -keyout /certs/key.pem -out /certs/cert.pem
+        chmod 644 /certs/key.pem
+        cat /certs/cert.pem /certs/key.pem > /certs/server.pem
+    user: "0:0"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    cap_drop: [ALL]
+    volumes:
+      - interop-certs:/certs
+    networks: [lab]
+
+  nginx-interop:
+    image: nginx:1.27-alpine
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,size=16m
+      - /var/run:rw,nosuid,size=16m
+    volumes:
+      - ./docker/interop/nginx.conf:/etc/nginx/nginx.conf:ro
+      - interop-certs:/certs:ro
+    networks: [lab]
+    depends_on:
+      interop-cert: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://127.0.0.1/ | grep -q nginx"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  apache-interop:
+    image: httpd:2.4-alpine
+    read_only: true
+    tmpfs:
+      - /usr/local/apache2/logs:rw,nosuid,size=16m
+      - /tmp:rw,nosuid,size=16m
+    cap_drop: [ALL]
+    volumes:
+      - ./docker/interop/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - interop-certs:/certs:ro
+    networks: [lab]
+    depends_on:
+      interop-cert: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://127.0.0.1/ | grep -q Apache"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  haproxy-interop:
+    image: haproxy:3.1-alpine
+    read_only: true
+    tmpfs:
+      - /var/lib/haproxy:rw,nosuid,size=16m
+      - /tmp:rw,nosuid,size=16m
+    cap_drop: [ALL]
+    volumes:
+      - ./docker/interop/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - interop-certs:/certs:ro
+    networks: [lab]
+    depends_on:
+      interop-cert: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://127.0.0.1/ | grep -q haproxy"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  envoy-interop:
+    image: envoyproxy/envoy:v1.31-latest
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    volumes:
+      - ./docker/interop/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - interop-certs:/certs:ro
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    networks: [lab]
+    depends_on:
+      interop-cert: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "envoy --version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  caddy-interop:
+    image: caddy:2.10.0-alpine
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m
+    volumes:
+      - ./docker/interop/Caddyfile:/etc/caddy/Caddyfile:ro
+      - interop-certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      interop-cert: { condition: service_completed_successfully }
+    networks: [lab]
+    healthcheck:
+      test: ["CMD-SHELL", "caddy version >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
 networks:
   lab:
     driver: bridge
+
+volumes:
+  interop-certs:
+  caddy-data:
+  caddy-config:

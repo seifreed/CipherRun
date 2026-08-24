@@ -99,6 +99,51 @@
       "false_positive_notes": "A clean modern fixture does not prove every backend in a load-balanced fleet is clean.",
       "false_negative_notes": "Only the configured endpoint and resolved address are tested.",
       "safety": "active-safe-negotiation"
+    },
+    {
+      "name": "nginx-interop",
+      "positive": "TLS 1.2 and TLS 1.3 through nginx",
+      "negative": "TLS 1.0 and TLS 1.1 disabled",
+      "expected": "TLS13=true;TLS10=false;TLS11=false",
+      "false_positive_notes": "The result proves the configured nginx listener posture only.",
+      "false_negative_notes": "Only the isolated container listener is exercised.",
+      "safety": "interop-passive-negotiation"
+    },
+    {
+      "name": "apache-interop",
+      "positive": "TLS 1.2 and TLS 1.3 through Apache httpd",
+      "negative": "TLS 1.0 and TLS 1.1 disabled",
+      "expected": "TLS13=true;TLS10=false;TLS11=false",
+      "false_positive_notes": "The result proves the configured Apache listener posture only.",
+      "false_negative_notes": "Only the isolated container listener is exercised.",
+      "safety": "interop-passive-negotiation"
+    },
+    {
+      "name": "haproxy-interop",
+      "positive": "TLS 1.2 and TLS 1.3 through HAProxy",
+      "negative": "TLS 1.0 and TLS 1.1 disabled",
+      "expected": "TLS13=true;TLS10=false;TLS11=false",
+      "false_positive_notes": "The result proves the configured HAProxy listener posture only.",
+      "false_negative_notes": "Only the isolated container listener is exercised.",
+      "safety": "interop-passive-negotiation"
+    },
+    {
+      "name": "envoy-interop",
+      "positive": "TLS 1.2 and TLS 1.3 through Envoy",
+      "negative": "TLS 1.0 and TLS 1.1 disabled",
+      "expected": "TLS13=true;TLS10=false;TLS11=false",
+      "false_positive_notes": "The result proves the configured Envoy listener posture only.",
+      "false_negative_notes": "Only the isolated container listener is exercised.",
+      "safety": "interop-passive-negotiation"
+    },
+    {
+      "name": "caddy-interop",
+      "positive": "TLS 1.2 and TLS 1.3 through Caddy",
+      "negative": "TLS 1.0 and TLS 1.1 disabled",
+      "expected": "TLS13=true;TLS10=false;TLS11=false",
+      "false_positive_notes": "The result proves the configured Caddy listener posture only.",
+      "false_negative_notes": "Only the isolated container listener is exercised.",
+      "safety": "interop-passive-negotiation"
     }
   ]
 }
