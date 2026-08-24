@@ -265,8 +265,8 @@ impl ApiServer {
             // Stats routes
             .route(
                 "/stats",
-                get(routes::stats::get_stats)
-                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+                get(routes::stats::get_stats_for_auth)
+                    .layer(axum_middleware::from_fn(middleware::require_user)),
             )
             .route("/metrics", get(routes::prometheus::metrics))
             // Health check
@@ -280,19 +280,21 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check))
             // Add OpenAPI/Swagger UI if enabled
             .merge(self.swagger_routes())
-            // Add rate limiting middleware (runs after auth due to reverse order)
+            // Add metrics inside authentication so scoped counters can see the
+            // AuthExtension inserted by the auth middleware.
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
-                middleware::rate_limit,
+                middleware::metrics,
             ))
-            // Add authentication middleware (runs first due to reverse order)
+            // Authentication runs before metrics; rate limiting then sees the
+            // same principal and tenant scope.
             .layer(axum_middleware::from_fn_with_state(
                 self.state.credential_store.clone(),
                 middleware::authenticate,
             ))
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
-                middleware::metrics,
+                middleware::rate_limit,
             ));
 
         // CORS is opt-in and only permits explicitly configured origins.

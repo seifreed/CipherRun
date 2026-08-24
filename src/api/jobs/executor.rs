@@ -262,7 +262,9 @@ impl ScanExecutor {
                                 // must count toward completed-scan stats just like the
                                 // normal success path.
                                 if let Some(stats) = &self.stats {
-                                    stats.write().await.record_completed_scan(duration_ms);
+                                    let mut stats = stats.write().await;
+                                    stats.record_completed_scan(duration_ms);
+                                    stats.record_completed_scan_for(&job.principal_id, duration_ms);
                                 }
                             }
                             Ok(Err(e)) => {
@@ -440,10 +442,14 @@ impl ScanExecutor {
             Ok(true) => {
                 if let Some(duration_ms) = completed_duration {
                     if let Some(stats) = &self.stats {
-                        stats.write().await.record_completed_scan(duration_ms);
+                        let mut stats = stats.write().await;
+                        stats.record_completed_scan(duration_ms);
+                        stats.record_completed_scan_for(&job.principal_id, duration_ms);
                     }
                 } else if failed && let Some(stats) = &self.stats {
-                    stats.write().await.record_failed_scan();
+                    let mut stats = stats.write().await;
+                    stats.record_failed_scan();
+                    stats.record_failed_scan_for(&job.principal_id);
                 }
             }
             Ok(false) => {

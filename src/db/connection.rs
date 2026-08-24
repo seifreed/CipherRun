@@ -434,6 +434,98 @@ impl DatabasePool {
         }
     }
 
+    pub async fn get_top_domains_for_owner(
+        &self,
+        limit: i64,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+    ) -> crate::Result<Vec<(String, i64, chrono::DateTime<chrono::Utc>)>> {
+        match self {
+            DatabasePool::Postgres(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT target_hostname, COUNT(*) AS scan_count, MAX(scan_timestamp) AS last_scan
+                    FROM scans
+                    WHERE scan_timestamp > NOW() - INTERVAL '30 days'
+                      AND principal_id = $1 AND tenant_id IS NOT DISTINCT FROM $2
+                    GROUP BY target_hostname ORDER BY scan_count DESC LIMIT $3
+                    "#,
+                )
+                .bind(principal_id)
+                .bind(tenant_id)
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!(
+                        "Failed to query owned top domains: {e}"
+                    ))
+                })?;
+                rows.into_iter()
+                    .map(|row| {
+                        let count: i64 = row.try_get("scan_count").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain count: {e}"
+                            ))
+                        })?;
+                        let domain = row.try_get("target_hostname").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain name: {e}"
+                            ))
+                        })?;
+                        let last_scan = row.try_get("last_scan").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain timestamp: {e}"
+                            ))
+                        })?;
+                        Ok((domain, count, last_scan))
+                    })
+                    .collect()
+            }
+            DatabasePool::Sqlite(pool) => {
+                let rows = sqlx::query(
+                    r#"
+                    SELECT target_hostname, COUNT(*) AS scan_count, MAX(scan_timestamp) AS last_scan
+                    FROM scans
+                    WHERE scan_timestamp > datetime('now', '-30 days')
+                      AND principal_id = ? AND tenant_id IS ?
+                    GROUP BY target_hostname ORDER BY scan_count DESC LIMIT ?
+                    "#,
+                )
+                .bind(principal_id)
+                .bind(tenant_id)
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    crate::TlsError::DatabaseError(format!(
+                        "Failed to query owned top domains: {e}"
+                    ))
+                })?;
+                rows.into_iter()
+                    .map(|row| {
+                        let count: i64 = row.try_get("scan_count").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain count: {e}"
+                            ))
+                        })?;
+                        let domain = row.try_get("target_hostname").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain name: {e}"
+                            ))
+                        })?;
+                        let last_scan = row.try_get("last_scan").map_err(|e| {
+                            crate::TlsError::DatabaseError(format!(
+                                "Invalid owned top domain timestamp: {e}"
+                            ))
+                        })?;
+                        Ok((domain, count, last_scan))
+                    })
+                    .collect()
+            }
+        }
+    }
+
     /// Get database type
     pub fn db_type(&self) -> DatabaseType {
         match self {

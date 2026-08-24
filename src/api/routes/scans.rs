@@ -142,7 +142,7 @@ pub async fn create_scan(
         final_target.clone(),
         options,
         request.webhook_url,
-        auth.principal_id,
+        auth.principal_id.clone(),
         auth.key_id,
         auth.tenant_id,
     );
@@ -151,7 +151,7 @@ pub async fn create_scan(
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
-    state.record_scan().await;
+    state.record_scan_for(&auth.principal_id).await;
     let queued_job = scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await?;
 
     Ok((

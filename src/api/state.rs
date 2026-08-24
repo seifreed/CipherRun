@@ -9,7 +9,7 @@ use crate::api::{
     ws::tickets::StreamTicketManager,
 };
 use crate::db::DatabasePool;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -27,6 +27,7 @@ const MAX_TIMESTAMPS: usize = 100_000;
 /// Maximum number of hourly stats entries
 const MAX_HOURLY_ENTRIES: usize = 10_000;
 const MAX_AUDIT_EVENTS: usize = 10_000;
+const MAX_PRINCIPAL_STATS: usize = 10_000;
 
 /// Shared application state
 pub struct AppState {
@@ -102,6 +103,23 @@ pub struct ApiStats {
 
     /// Bounded structured request audit trail kept for operational inspection.
     pub audit_events: VecDeque<AuditEvent>,
+
+    /// Per-principal counters used by user-scoped statistics responses.
+    pub principal_stats: HashMap<String, ScopedApiStats>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ScopedApiStats {
+    pub total_requests: u64,
+    pub total_scans: u64,
+    pub completed_scans: u64,
+    pub failed_scans: u64,
+    pub total_scan_duration_ms: u64,
+    pub requests_last_hour: VecDeque<(Instant, u64)>,
+    pub request_timestamps: VecDeque<Instant>,
+    pub total_response_time_ms: u64,
+    pub total_responses: u64,
+    pub scan_timestamps: VecDeque<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +184,103 @@ impl ApiStats {
             let excess = self.audit_events.len() - MAX_AUDIT_EVENTS;
             self.audit_events.drain(0..excess);
         }
+    }
+
+    fn principal_mut(&mut self, principal_id: &str) -> Option<&mut ScopedApiStats> {
+        if principal_id.is_empty() {
+            return None;
+        }
+        if !self.principal_stats.contains_key(principal_id) {
+            if self.principal_stats.len() >= MAX_PRINCIPAL_STATS {
+                // ponytail: bounded map drops new principals at the ceiling; replace with
+                // an evicting LRU only if deployments exceed 10k active principals.
+                return None;
+            }
+            self.principal_stats
+                .insert(principal_id.to_string(), ScopedApiStats::default());
+        }
+        self.principal_stats.get_mut(principal_id)
+    }
+
+    pub fn increment_requests_for(&mut self, principal_id: &str) {
+        let Some(stats) = self.principal_mut(principal_id) else {
+            return;
+        };
+        stats.total_requests = stats.total_requests.saturating_add(1);
+        let now = Instant::now();
+        stats.requests_last_hour.push_back((now, 1));
+        stats.request_timestamps.push_back(now);
+        if let Some(cutoff) = now.checked_sub(crate::constants::STATS_HOURLY_WINDOW) {
+            stats
+                .requests_last_hour
+                .retain(|(timestamp, _)| *timestamp > cutoff);
+        }
+        stats
+            .request_timestamps
+            .retain(|timestamp| now.duration_since(*timestamp).as_secs() <= 24 * 60 * 60);
+        while stats.requests_last_hour.len() > MAX_HOURLY_ENTRIES {
+            stats.requests_last_hour.pop_front();
+        }
+        while stats.request_timestamps.len() > MAX_TIMESTAMPS {
+            stats.request_timestamps.pop_front();
+        }
+    }
+
+    pub fn record_response_for(&mut self, principal_id: &str, response_time_ms: u64) {
+        let Some(stats) = self.principal_mut(principal_id) else {
+            return;
+        };
+        stats.total_response_time_ms = stats
+            .total_response_time_ms
+            .saturating_add(response_time_ms);
+        stats.total_responses = stats.total_responses.saturating_add(1);
+    }
+
+    pub fn increment_scans_for(&mut self, principal_id: &str) {
+        let Some(stats) = self.principal_mut(principal_id) else {
+            return;
+        };
+        stats.total_scans = stats.total_scans.saturating_add(1);
+        stats.scan_timestamps.push_back(Instant::now());
+        while stats.scan_timestamps.len() > MAX_TIMESTAMPS {
+            stats.scan_timestamps.pop_front();
+        }
+    }
+
+    pub fn record_completed_scan_for(&mut self, principal_id: &str, duration_ms: u64) {
+        let Some(stats) = self.principal_mut(principal_id) else {
+            return;
+        };
+        stats.completed_scans = stats.completed_scans.saturating_add(1);
+        stats.total_scan_duration_ms = stats.total_scan_duration_ms.saturating_add(duration_ms);
+    }
+
+    pub fn record_failed_scan_for(&mut self, principal_id: &str) {
+        if let Some(stats) = self.principal_mut(principal_id) {
+            stats.failed_scans = stats.failed_scans.saturating_add(1);
+        }
+    }
+
+    pub fn scoped_snapshot(&self, principal_id: &str) -> Self {
+        let Some(scoped) = self.principal_stats.get(principal_id) else {
+            return Self::default();
+        };
+        let mut snapshot = Self {
+            total_requests: scoped.total_requests,
+            total_scans: scoped.total_scans,
+            completed_scans: scoped.completed_scans,
+            failed_scans: scoped.failed_scans,
+            total_scan_duration_ms: scoped.total_scan_duration_ms,
+            requests_last_hour: scoped.requests_last_hour.clone(),
+            request_timestamps: scoped.request_timestamps.clone(),
+            total_response_time_ms: scoped.total_response_time_ms,
+            total_responses: scoped.total_responses,
+            scan_timestamps: scoped.scan_timestamps.clone(),
+            audit_events: VecDeque::new(),
+            principal_stats: HashMap::new(),
+        };
+        snapshot.enforce_bounds();
+        snapshot
     }
 
     /// Get average scan duration
@@ -420,9 +535,25 @@ impl AppState {
         stats.increment_requests();
     }
 
+    pub async fn record_request_for(&self, principal_id: Option<&str>) {
+        let mut stats = self.stats.write().await;
+        stats.increment_requests();
+        if let Some(principal_id) = principal_id {
+            stats.increment_requests_for(principal_id);
+        }
+    }
+
     pub async fn record_response(&self, response_time_ms: u64) {
         let mut stats = self.stats.write().await;
         stats.record_response(response_time_ms);
+    }
+
+    pub async fn record_response_for(&self, principal_id: Option<&str>, response_time_ms: u64) {
+        let mut stats = self.stats.write().await;
+        stats.record_response(response_time_ms);
+        if let Some(principal_id) = principal_id {
+            stats.record_response_for(principal_id, response_time_ms);
+        }
     }
 
     /// Record new scan
@@ -431,10 +562,22 @@ impl AppState {
         stats.increment_scans();
     }
 
+    pub async fn record_scan_for(&self, principal_id: &str) {
+        let mut stats = self.stats.write().await;
+        stats.increment_scans();
+        stats.increment_scans_for(principal_id);
+    }
+
     /// Record completed scan
     pub async fn record_completed(&self, duration_ms: u64) {
         let mut stats = self.stats.write().await;
         stats.record_completed_scan(duration_ms);
+    }
+
+    pub async fn record_completed_for(&self, principal_id: &str, duration_ms: u64) {
+        let mut stats = self.stats.write().await;
+        stats.record_completed_scan(duration_ms);
+        stats.record_completed_scan_for(principal_id, duration_ms);
     }
 
     /// Record failed scan
@@ -443,9 +586,19 @@ impl AppState {
         stats.record_failed_scan();
     }
 
+    pub async fn record_failed_for(&self, principal_id: &str) {
+        let mut stats = self.stats.write().await;
+        stats.record_failed_scan();
+        stats.record_failed_scan_for(principal_id);
+    }
+
     /// Get statistics snapshot
     pub async fn get_stats(&self) -> ApiStats {
         self.stats.read().await.clone()
+    }
+
+    pub async fn get_stats_for(&self, principal_id: &str) -> ApiStats {
+        self.stats.read().await.scoped_snapshot(principal_id)
     }
 }
 
@@ -597,6 +750,24 @@ mod tests {
         assert_eq!(stats.avg_scan_duration(), 0.0);
         assert_eq!(stats.scans_last_24h(), 0);
         assert_eq!(stats.scans_last_7d(), 0);
+    }
+
+    #[test]
+    fn scoped_stats_do_not_leak_between_principals() {
+        let mut stats = ApiStats::default();
+        stats.increment_requests_for("alice");
+        stats.increment_scans_for("alice");
+        stats.record_completed_scan_for("alice", 120);
+        stats.increment_scans_for("bob");
+
+        let alice = stats.scoped_snapshot("alice");
+        let bob = stats.scoped_snapshot("bob");
+        assert_eq!(alice.total_requests, 1);
+        assert_eq!(alice.total_scans, 1);
+        assert_eq!(alice.completed_scans, 1);
+        assert_eq!(bob.total_requests, 0);
+        assert_eq!(bob.total_scans, 1);
+        assert_eq!(bob.completed_scans, 0);
     }
 
     fn assert_state_config_rejected(config: ApiConfig, expected_message: &str) {

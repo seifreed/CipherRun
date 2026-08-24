@@ -1,6 +1,8 @@
 // Statistics Routes
 
 use crate::api::{
+    config::Permission,
+    middleware::AuthExtension,
     models::error::ApiError,
     models::response::{ApiUsageStats, DomainStats, StatsResponse},
     presenters::stats::{StatsParams, present_stats_response},
@@ -27,7 +29,28 @@ use std::sync::Arc;
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<StatsResponse>, ApiError> {
-    let stats = state.get_stats().await;
+    get_stats_for_auth(
+        State(state),
+        axum::Extension(AuthExtension {
+            permission: Permission::Admin,
+            key_id: String::new(),
+            principal_id: String::new(),
+            tenant_id: None,
+        }),
+    )
+    .await
+}
+
+pub async fn get_stats_for_auth(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<AuthExtension>,
+) -> Result<Json<StatsResponse>, ApiError> {
+    let is_admin = auth.permission == Permission::Admin;
+    let stats = if is_admin {
+        state.get_stats().await
+    } else {
+        state.get_stats_for(&auth.principal_id).await
+    };
 
     // Calculate average scan duration
     let avg_scan_duration_seconds = stats.avg_scan_duration() / 1000.0;
@@ -35,9 +58,14 @@ pub async fn get_stats(
     // Get top domains from database if available
     let top_domains = if let Some(db) = &state.db_pool {
         // Query top 10 domains from database
-        get_top_domains_from_db(db, 10)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to load top domains: {}", e)))?
+        get_top_domains_from_db(
+            db,
+            10,
+            (!is_admin).then_some(auth.principal_id.as_str()),
+            (!is_admin).then_some(auth.tenant_id.as_deref()).flatten(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to load top domains: {}", e)))?
     } else {
         vec![] // No database configured
     };
@@ -68,8 +96,16 @@ pub async fn get_stats(
 async fn get_top_domains_from_db(
     db: &crate::db::connection::DatabasePool,
     limit: i64,
+    principal_id: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> crate::Result<Vec<DomainStats>> {
-    let rows = db.get_top_domains(limit).await?;
+    let rows = match principal_id {
+        Some(principal_id) => {
+            db.get_top_domains_for_owner(limit, principal_id, tenant_id)
+                .await?
+        }
+        None => db.get_top_domains(limit).await?,
+    };
     rows.into_iter()
         .map(|(domain, count, last_scan)| top_domain_row_to_stats(domain, count, last_scan))
         .collect::<crate::Result<Vec<_>>>()
@@ -98,6 +134,8 @@ fn top_domain_row_to_stats(
 mod tests {
     use super::*;
     use crate::api::config::ApiConfig;
+    use crate::api::config::Permission;
+    use crate::api::middleware::AuthExtension;
     use crate::api::state::AppState;
     use crate::api::test_support::build_test_state;
     use crate::db::{DatabaseConfig, DatabasePool, create_unique_test_db_path, run_migrations};
@@ -170,6 +208,51 @@ mod tests {
         assert!(response.top_domains.len() >= 2);
         assert_eq!(response.top_domains[0].domain, "alpha.example");
         assert_eq!(response.top_domains[0].scan_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_user_stats_scope_top_domains_and_counters() {
+        let state = build_state_with_db().await;
+        let pool = state.db_pool.as_ref().unwrap().clone();
+        let sqlite = match pool.as_ref() {
+            DatabasePool::Sqlite(sqlite) => sqlite,
+            DatabasePool::Postgres(_) => panic!("expected sqlite pool"),
+        };
+        let now = Utc::now();
+        for (domain, principal) in [("owned.example", "alice"), ("other.example", "bob")] {
+            sqlx::query(
+                "INSERT INTO scans (target_hostname, target_port, scan_timestamp, principal_id) VALUES (?, ?, ?, ?)",
+            )
+            .bind(domain)
+            .bind(443_i32)
+            .bind(now)
+            .bind(principal)
+            .execute(sqlite)
+            .await
+            .expect("owned scan should insert");
+        }
+        {
+            let mut stats = state.stats.write().await;
+            stats.increment_scans_for("alice");
+            stats.record_completed_scan_for("alice", 100);
+        }
+
+        let response = get_stats_for_auth(
+            State(state),
+            axum::Extension(AuthExtension {
+                permission: Permission::User,
+                key_id: "alice-key".to_string(),
+                principal_id: "alice".to_string(),
+                tenant_id: None,
+            }),
+        )
+        .await
+        .expect("user stats should load")
+        .0;
+        assert_eq!(response.total_scans, 1);
+        assert_eq!(response.completed_scans, 1);
+        assert_eq!(response.top_domains.len(), 1);
+        assert_eq!(response.top_domains[0].domain, "owned.example");
     }
 
     #[tokio::test]

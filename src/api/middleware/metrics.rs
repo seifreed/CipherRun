@@ -1,4 +1,4 @@
-use crate::api::middleware::proxy::client_ip;
+use crate::api::middleware::{AuthExtension, proxy::client_ip};
 use crate::api::state::{AppState, AuditEvent};
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
 use std::sync::Arc;
@@ -15,10 +15,16 @@ pub async fn metrics(
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
     let client_ip = client_ip(&request, &state).map(|ip| ip.to_string());
-    state.record_request().await;
+    let principal_id = request
+        .extensions()
+        .get::<AuthExtension>()
+        .map(|auth| auth.principal_id.clone());
+    state.record_request_for(principal_id.as_deref()).await;
     let mut response = next.run(request).await;
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    state.record_response(duration_ms).await;
+    state
+        .record_response_for(principal_id.as_deref(), duration_ms)
+        .await;
     let status = response.status().as_u16();
     state.stats.write().await.record_audit(AuditEvent {
         request_id: request_id.clone(),
