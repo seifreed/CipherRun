@@ -77,6 +77,22 @@ fn builds_protocol_filter_from_flags() {
 }
 
 #[test]
+fn builds_quic_protocol_filter_from_explicit_flag() {
+    let request = ScanRequest {
+        scan: ScanRequestScan {
+            proto: ScanRequestProto {
+                quic: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(request.protocols_to_test(), Some(vec![Protocol::QUIC]));
+}
+
+#[test]
 fn starttls_protocol_supports_telnet() {
     let request = ScanRequest {
         target: Some("mail.example.com".to_string()),

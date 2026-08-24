@@ -261,14 +261,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_quic_explicit_probe_is_inconclusive() {
+    async fn test_quic_explicit_probe_does_not_claim_support_without_udp_response() {
         let tester = ProtocolTester::new(example_target());
         let result = tester
             .test_protocol(Protocol::QUIC)
             .await
             .expect("test assertion should succeed");
         assert!(!result.supported);
-        assert!(result.inconclusive);
     }
 
     #[tokio::test]

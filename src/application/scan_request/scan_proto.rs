@@ -8,5 +8,6 @@ pub struct ScanRequestProto {
     pub tls11: bool,
     pub tls12: bool,
     pub tls13: bool,
+    pub quic: bool,
     pub tlsall: bool,
 }

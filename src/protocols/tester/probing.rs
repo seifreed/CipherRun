@@ -3,6 +3,7 @@ use crate::Result;
 use crate::constants::TLS_RECORD_HEADER_SIZE;
 use crate::protocols::handshake::ClientHelloBuilder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 mod legacy_tls;
@@ -532,8 +533,75 @@ impl ProtocolTester {
 
     pub(super) async fn test_quic_on_ip(
         &self,
-        _addr: std::net::SocketAddr,
+        addr: std::net::SocketAddr,
     ) -> Result<ProtocolProbeOutcome> {
+        let bind_addr = if addr.is_ipv6() {
+            std::net::SocketAddr::from(([0u16; 8], 0))
+        } else {
+            std::net::SocketAddr::from(([0, 0, 0, 0], 0))
+        };
+        let socket = match UdpSocket::bind(bind_addr).await {
+            Ok(socket) => socket,
+            Err(_) => return Ok(ProtocolProbeOutcome::Inconclusive),
+        };
+        if socket.connect(addr).await.is_err() {
+            return Ok(ProtocolProbeOutcome::Inconclusive);
+        }
+
+        // A version-zero long-header packet is the standard QUIC discovery
+        // probe: a QUIC listener answers with a Version Negotiation packet.
+        // It does not complete a handshake or send application data.
+        let packet = quic_version_probe();
+        if socket.send(&packet).await.is_err() {
+            return Ok(ProtocolProbeOutcome::Inconclusive);
+        }
+
+        let mut response = [0u8; 2048];
+        match timeout(self.read_timeout, socket.recv(&mut response)).await {
+            Ok(Ok(length)) => classify_quic_response(&response[..length]),
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                Ok(ProtocolProbeOutcome::NotSupported)
+            }
+            Ok(Err(_)) | Err(_) => Ok(ProtocolProbeOutcome::Inconclusive),
+        }
+    }
+}
+
+fn quic_version_probe() -> [u8; 22] {
+    // Long header (0xc0), version 0, 8-byte destination and source IDs.
+    [
+        0xc0, 0x00, 0x00, 0x00, 0x00, 8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 8, 0x99,
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ]
+}
+
+fn classify_quic_response(response: &[u8]) -> Result<ProtocolProbeOutcome> {
+    if response.len() < 7 || response[0] & 0x80 == 0 {
+        return Ok(ProtocolProbeOutcome::Inconclusive);
+    }
+    let version = u32::from_be_bytes([response[1], response[2], response[3], response[4]]);
+    if version != 0 {
+        return Ok(ProtocolProbeOutcome::Supported);
+    }
+
+    let dcid_len = usize::from(response[5]);
+    let scid_len_offset = 6usize.saturating_add(dcid_len);
+    let Some(&scid_len) = response.get(scid_len_offset) else {
+        return Ok(ProtocolProbeOutcome::Inconclusive);
+    };
+    let versions_offset = scid_len_offset
+        .saturating_add(1)
+        .saturating_add(usize::from(scid_len));
+    if versions_offset > response.len() {
+        return Ok(ProtocolProbeOutcome::Inconclusive);
+    }
+    let versions = &response[versions_offset..];
+    if versions
+        .chunks_exact(4)
+        .any(|item| item == [0, 0, 0, 1] || item == [0, 0, 0, 2])
+    {
+        Ok(ProtocolProbeOutcome::Supported)
+    } else {
         Ok(ProtocolProbeOutcome::Inconclusive)
     }
 }
@@ -748,6 +816,25 @@ mod legacy_probe_tests {
     fn test_legacy_empty_response_is_inconclusive() {
         assert_eq!(
             legacy_tls::classify_response(&[], Protocol::TLS10),
+            ProtocolProbeOutcome::Inconclusive
+        );
+    }
+
+    #[test]
+    fn quic_version_negotiation_response_proves_listener_support() {
+        let response = [
+            0xc0, 0x00, 0x00, 0x00, 0x00, 1, 0xaa, 1, 0xbb, 0x00, 0x00, 0x00, 0x01,
+        ];
+        assert_eq!(
+            classify_quic_response(&response).expect("response should parse"),
+            ProtocolProbeOutcome::Supported
+        );
+    }
+
+    #[test]
+    fn quic_malformed_response_is_inconclusive() {
+        assert_eq!(
+            classify_quic_response(&[0xc0, 0, 0, 0, 0, 8]).expect("response should classify"),
             ProtocolProbeOutcome::Inconclusive
         );
     }

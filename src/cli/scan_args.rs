@@ -154,6 +154,10 @@ pub struct ScanArgs {
     #[arg(long = "tls13")]
     pub tls13: bool,
 
+    /// Probe QUIC/UDP version negotiation on the target port
+    #[arg(long = "quic")]
+    pub quic: bool,
+
     /// Test all TLS protocols (skip SSLv2/SSLv3)
     #[arg(long = "tlsall")]
     pub tlsall: bool,
@@ -288,6 +292,7 @@ mod tests {
         assert!(!args.tls11);
         assert!(!args.tls12);
         assert!(!args.tls13);
+        assert!(!args.quic);
         assert!(!args.tlsall);
         assert!(!args.show_sigs);
         assert!(!args.show_groups);

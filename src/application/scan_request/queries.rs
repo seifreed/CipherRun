@@ -13,6 +13,7 @@ impl ScanRequest {
             (self.scan.proto.tls11, Protocol::TLS11),
             (self.scan.proto.tls12, Protocol::TLS12),
             (self.scan.proto.tls13, Protocol::TLS13),
+            (self.scan.proto.quic, Protocol::QUIC),
         ];
 
         let selected: Vec<Protocol> = flags

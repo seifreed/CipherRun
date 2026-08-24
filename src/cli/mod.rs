@@ -464,6 +464,7 @@ impl Args {
                 },
                 proto: crate::application::scan_request::ScanRequestProto {
                     enabled: self.scan.protocols
+                        || self.scan.quic
                         || safe_profile
                         || self.starttls.starttls_protocol().is_some(),
                     ssl2: self.scan.ssl2,
@@ -472,6 +473,7 @@ impl Args {
                     tls11: self.scan.tls11,
                     tls12: self.scan.tls12,
                     tls13: self.scan.tls13,
+                    quic: self.scan.quic,
                     tlsall: self.scan.tlsall,
                 },
                 ciphers: crate::application::scan_request::ScanRequestCiphers {

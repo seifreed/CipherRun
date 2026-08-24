@@ -17,6 +17,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | TLS 1.1 legacy negotiation | Configuration inference | `legacy11-tls` | `modern-tls` | All four | Protocol posture only; no exploit claim |
 | TLS 1.2 CBC / Lucky13 prerequisites | Configuration inference | `weak-tls` | `modern-tls` | All four | Prerequisites only; no exploit claim |
 | TLS 1.3 availability | Protocol negotiation | `modern-tls` | `weak-tls` | All four | Negotiation coverage only |
+| QUIC listener discovery | UDP Version Negotiation probe | Explicit `--quic` target | Closed/filtered UDP port | CipherRun | Proves a QUIC listener response only; HTTP/3 application behavior requires a separate HTTP/3 client |
 | BEAST | Active/configuration probe | `legacy-tls-beast` | `modern-tls-beast` | CipherRun | TLS 1.0 CBC posture signal; no browser exploit claim |
 | SWEET32 | Wire-level cipher probe | `sweet32-tls` | `modern-tls-sweet32` | CipherRun | Synthetic 3DES ServerHello; no birthday attack claim |
 | FREAK, LOGJAM, RC4, NULL | Wire-level cipher probe | `weak-ciphers-tls` | `modern-tls-weak-ciphers` | CipherRun | Synthetic legacy ServerHello classification; no exploit claim |
