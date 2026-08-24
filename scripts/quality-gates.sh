@@ -4,12 +4,14 @@ set -euo pipefail
 cargo fmt --all --check
 scripts/check-core-contract-sync.sh
 scripts/check-protocol-contract-sync.sh
+scripts/check-policy-contract-sync.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 cargo audit
 cargo deny check
 cargo package -p cipherrun-core --locked --allow-dirty
+cargo package -p cipherrun-policy --locked --allow-dirty
 cargo package -p cipherrun-protocol --locked --allow-dirty
 cargo package -p cipherrun --locked --allow-dirty
 cargo install --path . --locked --root target/install-smoke --force

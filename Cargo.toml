@@ -33,7 +33,11 @@ include = [
 ]
 
 [workspace]
-members = ["crates/cipherrun-core", "crates/cipherrun-protocol"]
+members = [
+    "crates/cipherrun-core",
+    "crates/cipherrun-policy",
+    "crates/cipherrun-protocol",
+]
 resolver = "2"
 
 [lints.rust]

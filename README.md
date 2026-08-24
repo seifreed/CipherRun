@@ -70,6 +70,9 @@ It also publishes `cipherrun-protocol`, which exposes the dependency-light
 TLS/SSL protocol version and negotiation-result contracts independently of the
 scanner implementation.
 
+The `cipherrun-policy` crate provides the versioned policy-definition contracts
+without pulling in the evaluator, database, or API server.
+
 ### Using Cargo
 
 ```bash
