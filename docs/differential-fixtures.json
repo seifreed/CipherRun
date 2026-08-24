@@ -101,6 +101,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "heartbleed-tls",
+      "positive": "Synthetic ServerHello accepts heartbeat and echoes an oversized payload",
+      "negative": "Synthetic ServerHello without heartbeat support",
+      "expected": "CR-TLS-HEARTBLEED-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates heartbeat response classification only; it is not a vulnerable OpenSSL implementation.",
+      "false_negative_notes": "The responder does not model TLS key material, memory layout, or a complete handshake.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "heartbleed-patched-tls",
+      "positive": "Synthetic ServerHello omits heartbeat support",
+      "negative": "Synthetic ServerHello accepts heartbeat and echoes an oversized payload",
+      "expected": "CR-TLS-HEARTBLEED-001=not_vulnerable",
+      "false_positive_notes": "A server that rejects heartbeat is clean for this probe path only.",
+      "false_negative_notes": "The fixture cannot establish whether a real implementation mishandles malformed heartbeat messages.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",

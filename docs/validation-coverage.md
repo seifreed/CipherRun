@@ -26,7 +26,8 @@ false-positive/false-negative notes, and safety classification for every fixture
 | SWEET32 | Wire-level cipher probe | `sweet32-tls` | `modern-tls-sweet32` | CipherRun | Synthetic 3DES ServerHello; no birthday attack claim |
 | FREAK, LOGJAM, RC4, NULL | Wire-level cipher probe | `weak-ciphers-tls` | `modern-tls-weak-ciphers` | CipherRun | Synthetic legacy ServerHello classification; no exploit claim |
 | CRIME | TLS ServerHello compression negotiation | `crime-tls` | `crime-patched-tls` | CipherRun | Synthetic DEFLATE/null negotiation only; no secret-recovery attack claim |
-| Heartbleed, CCS Injection, Ticketbleed, ROBOT, POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
+| Heartbleed | Active heartbeat probe | `heartbleed-tls` | `heartbleed-patched-tls` | CipherRun | Synthetic heartbeat transcript; no vulnerable OpenSSL implementation or memory-layout claim |
+| CCS Injection, Ticketbleed, ROBOT, POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
 | Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | Partial | `modern-tls` | Not yet complete | Needs dedicated handshake fixtures |
 | STARTTLS injection, Opossum | Active STARTTLS probe | Not yet isolated | Not yet isolated | Not yet complete | Needs protocol-specific mail fixtures |

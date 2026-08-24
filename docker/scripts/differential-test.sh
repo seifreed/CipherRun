@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 32)' \
+jq -e '.version == "1" and (.fixtures | length == 34)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -114,6 +114,8 @@ scan_vulnerability_fixture sweet32-tls sweet32 --sweet32
 scan_vulnerability_fixture modern-tls modern-tls-sweet32 --sweet32
 scan_vulnerability_fixture crime-tls crime --crime
 scan_vulnerability_fixture crime-patched-tls crime-patched --crime
+scan_vulnerability_fixture heartbleed-tls heartbleed --heartbleed
+scan_vulnerability_fixture heartbleed-patched-tls heartbleed-patched --heartbleed
 scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
 
@@ -178,6 +180,10 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-CRIME-001" and .status
     "$results/crime.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-CRIME-001" and .status == "not_vulnerable")' \
     "$results/crime-patched.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-HEARTBLEED-001" and .status == "confirmed_vulnerable")' \
+    "$results/heartbleed.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-HEARTBLEED-001" and .status == "not_vulnerable")' \
+    "$results/heartbleed-patched.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RC4-001" and .status == "confirmed_vulnerable")' \
     "$results/weak-ciphers.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-NULL-CIPHER-001" and .status == "confirmed_vulnerable")' \
