@@ -36,6 +36,24 @@
       "false_positive_notes": "TLS 1.3 support is a protocol posture observation only.",
       "false_negative_notes": "A TLS 1.3 failure may reflect client crypto-provider constraints.",
       "safety": "passive-negotiation"
+    },
+    {
+      "name": "breach-tls",
+      "positive": "Synthetic HTTPS reflection with compression prerequisites",
+      "negative": "modern-tls HTTPS response without compression or sensitive reflection",
+      "expected": "CR-TLS-BREACH-001=potential_exposure",
+      "false_positive_notes": "The fixture intentionally combines compression, reflection, and cookie markers; the result is potential exposure, not demonstrated exploitation.",
+      "false_negative_notes": "The heuristic reads the controlled GET responses only and cannot model application routing, browser behavior, or secret entropy.",
+      "safety": "active-safe-synthetic"
+    },
+    {
+      "name": "modern-tls-breach",
+      "positive": "No BREACH prerequisites observed",
+      "negative": "breach-tls synthetic reflection fixture",
+      "expected": "CR-TLS-BREACH-001=not_vulnerable",
+      "false_positive_notes": "A clean modern fixture does not prove every application route is safe.",
+      "false_negative_notes": "Only GET / is tested and no real application secrets are accessed.",
+      "safety": "active-safe-synthetic"
     }
   ]
 }

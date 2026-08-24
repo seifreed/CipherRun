@@ -19,7 +19,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | TLS 1.3 availability | Protocol negotiation | `modern-tls` | `weak-tls` | All four | Negotiation coverage only |
 | BEAST, CRIME, SWEET32, FREAK, LOGJAM, RC4, NULL | Protocol negotiation | Not yet isolated | `modern-tls` | Not yet complete | Requires one controlled weak configuration per check |
 | Heartbleed, CCS Injection, Ticketbleed, ROBOT, POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
-| BREACH | HTTP heuristic | Not yet isolated | Not yet isolated | N/A | Requires controlled reflection and compression routes |
+| BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
 | Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | Partial | `modern-tls` | Not yet complete | Needs dedicated handshake fixtures |
 | STARTTLS injection, Opossum | Active STARTTLS probe | Not yet isolated | Not yet isolated | Not yet complete | Needs protocol-specific mail fixtures |
 | Winshock | Platform inference | N/A | N/A | N/A | Cannot be confirmed by a generic remote TLS endpoint |

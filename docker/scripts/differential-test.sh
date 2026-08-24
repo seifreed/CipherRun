@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 4)' \
+jq -e '.version == "1" and (.fixtures | length == 6)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -30,6 +30,22 @@ scan_fixture legacy11-tls
 scan_fixture weak-tls
 scan_fixture modern-tls
 
+scan_breach_fixture() {
+    local target=$1
+    local artifact=$2
+    local json="$results/$artifact.cipherrun.json"
+    local exit_code=0
+    cipherrun --allow-private --breach --overwrite --json "$json" "$target:443" \
+        >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
+    if (( exit_code > 1 )); then
+        echo "CipherRun BREACH probe failed for $target with exit code $exit_code" >&2
+        return "$exit_code"
+    fi
+}
+
+scan_breach_fixture breach-tls breach-tls
+scan_breach_fixture modern-tls modern-tls-breach
+
 jq -e '.protocols[] | select(.protocol == "TLS10" and .supported == true)' \
     "$results/legacy-tls.cipherrun.json" >/dev/null
 jq -e 'all(.protocols[]; .protocol != "TLS12" or .supported == false)' \
@@ -46,6 +62,10 @@ jq -e '.protocols[] | select(.protocol == "TLS13" and .supported == true)' \
     "$results/modern-tls.cipherrun.json" >/dev/null
 jq -e 'all(.protocols[]; .protocol != "TLS12" or .supported == false)' \
     "$results/modern-tls.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BREACH-001" and .status == "potential_exposure")' \
+    "$results/breach-tls.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-BREACH-001" and .status == "not_vulnerable")' \
+    "$results/modern-tls-breach.cipherrun.json" >/dev/null
 
 awk '$1 == "TLSv1.0" && $2 == "enabled" { found=1 } END { exit !found }' \
     "$results/legacy-tls.sslscan.txt"
