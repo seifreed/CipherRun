@@ -7,6 +7,7 @@ ARG CIPHERRUN_VERSION=0.4.0
 FROM ${RUST_IMAGE} AS builder
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo ./.cargo
 COPY src ./src
 COPY data ./data
 COPY migrations ./migrations
