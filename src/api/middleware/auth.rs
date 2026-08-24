@@ -1,7 +1,7 @@
 // Authentication Middleware
 
 use crate::api::{
-    config::{ApiConfig, Permission},
+    config::{ApiCredentialStore, Permission},
     models::error::ApiError,
 };
 use axum::{
@@ -92,7 +92,7 @@ fn api_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError>
 
 /// Authentication middleware
 pub async fn authenticate(
-    State(config): State<Arc<ApiConfig>>,
+    State(credentials): State<Arc<ApiCredentialStore>>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
@@ -153,8 +153,9 @@ pub async fn authenticate(
     };
 
     // Validate API key
-    let authenticated = config
+    let authenticated = credentials
         .authenticate_key(&api_key)
+        .await
         .ok_or_else(|| ApiError::Unauthorized("Invalid API key".to_string()))?;
 
     let auth_ext = AuthExtension {

@@ -409,6 +409,7 @@ mod tests {
         );
 
         Arc::new(AppState {
+            credential_store: crate::api::config::ApiCredentialStore::new(&config),
             config,
             job_queue,
             progress_tx: executor.progress_broadcaster(),
@@ -777,7 +778,7 @@ mod tests {
         let app = Router::new()
             .route("/api/v1/scan/{id}/stream", get(websocket_handler))
             .layer(axum_middleware::from_fn_with_state(
-                state.config.clone(),
+                state.credential_store.clone(),
                 crate::api::middleware::authenticate,
             ))
             .with_state(state);

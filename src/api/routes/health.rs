@@ -190,6 +190,7 @@ mod tests {
         let progress_tx: broadcast::Sender<ProgressMessage> = executor.progress_broadcaster();
 
         let state = Arc::new(AppState {
+            credential_store: crate::api::config::ApiCredentialStore::new(&config),
             config,
             job_queue,
             executor,

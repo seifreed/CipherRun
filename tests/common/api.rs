@@ -83,6 +83,22 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
             "/scan/{id}/stream-ticket",
             post(routes::scans::create_stream_ticket),
         )
+        .route(
+            "/credentials",
+            get(routes::credentials::list_credentials)
+                .post(routes::credentials::create_credential)
+                .layer(axum_middleware::from_fn(middleware::require_admin)),
+        )
+        .route(
+            "/credentials/{key_id}/rotate",
+            post(routes::credentials::rotate_credential)
+                .layer(axum_middleware::from_fn(middleware::require_admin)),
+        )
+        .route(
+            "/credentials/{key_id}/revoke",
+            post(routes::credentials::revoke_credential)
+                .layer(axum_middleware::from_fn(middleware::require_admin)),
+        )
         .route("/health", get(routes::health::health_check))
         .route("/stats", get(routes::stats::get_stats))
         .route("/metrics", get(routes::prometheus::metrics));
@@ -95,7 +111,7 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
             middleware::rate_limit,
         ))
         .layer(axum_middleware::from_fn_with_state(
-            Arc::new(config.clone()),
+            state.credential_store.clone(),
             middleware::authenticate,
         ))
         .layer(axum_middleware::from_fn_with_state(

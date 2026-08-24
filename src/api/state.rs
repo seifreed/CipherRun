@@ -33,6 +33,9 @@ pub struct AppState {
     /// API configuration
     pub config: Arc<ApiConfig>,
 
+    /// Runtime credential registry used by authentication and admin rotation.
+    pub credential_store: Arc<crate::api::config::ApiCredentialStore>,
+
     /// Job queue
     pub job_queue: Arc<dyn JobQueue>,
 
@@ -257,6 +260,7 @@ impl AppState {
             .map(load_webhook_signing_secret)
             .transpose()?;
 
+        let credential_store = crate::api::config::ApiCredentialStore::new(&config);
         let config = Arc::new(config);
         let stats = Arc::new(tokio::sync::RwLock::new(ApiStats::default()));
 
@@ -297,6 +301,7 @@ impl AppState {
 
         Ok(Self {
             config,
+            credential_store,
             job_queue,
             executor,
             progress_tx,

@@ -2,6 +2,7 @@
 
 pub mod certificates;
 pub mod compliance;
+pub mod credentials;
 pub mod health;
 pub mod history;
 pub mod policies;

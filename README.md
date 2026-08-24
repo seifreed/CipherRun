@@ -93,6 +93,13 @@ places the one-time plaintext token in `api.token`; both files are created with
 owner-only permissions and existing files are never overwritten. Move the token
 to your secret manager and remove the local token file after enrollment.
 
+Administrators can rotate or revoke credentials without restarting the API:
+`GET /api/v1/credentials`, `POST /api/v1/credentials`,
+`POST /api/v1/credentials/{key_id}/rotate`, and
+`POST /api/v1/credentials/{key_id}/revoke`. Create and rotate responses contain
+the new plaintext secret once; list and revoke responses contain metadata only.
+The last active administrator credential cannot be revoked.
+
 ### CT Discovery Monitoring
 
 CT streaming can feed the existing monitoring scheduler, scanner, and alert

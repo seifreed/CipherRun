@@ -26,6 +26,10 @@ use utoipa::{
         routes::scans::cancel_scan,
         routes::scans::websocket_handler,
         routes::scans::create_stream_ticket,
+        routes::credentials::list_credentials,
+        routes::credentials::create_credential,
+        routes::credentials::rotate_credential,
+        routes::credentials::revoke_credential,
         routes::certificates::list_certificates,
         routes::certificates::get_certificate,
         routes::compliance::check_compliance,
@@ -42,6 +46,8 @@ use utoipa::{
             ScanRequest,
             ScanOptions,
             PolicyRequest,
+            routes::credentials::CreateCredentialRequest,
+            routes::credentials::RotateCredentialRequest,
 
             // Response models
             ScanResponse,
@@ -50,6 +56,8 @@ use utoipa::{
             StatsResponse,
             CertificateListResponse,
             StreamTicketResponse,
+            routes::credentials::CredentialView,
+            routes::credentials::CredentialSecretResponse,
 
             // Error model
             ApiErrorResponse,
@@ -58,6 +66,7 @@ use utoipa::{
     modifiers(&SecurityAddon),
     tags(
         (name = "scans", description = "Scan management endpoints"),
+        (name = "credentials", description = "Administrator credential lifecycle"),
         (name = "certificates", description = "Certificate inventory management"),
         (name = "compliance", description = "Compliance checking"),
         (name = "policies", description = "Policy management and evaluation"),

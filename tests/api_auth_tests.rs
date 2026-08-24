@@ -201,3 +201,58 @@ async fn test_auth_readonly_key_can_read_stats_returns_200() {
         common::api::send_get_json(&app, "/api/v1/stats", Some("test-readonly-key")).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_admin_can_create_rotate_and_revoke_credential() {
+    let app = common::api::test_api_router();
+    let payload = serde_json::json!({
+        "key_id": "runtime-key",
+        "principal_id": "runtime-principal",
+        "tenant_id": "tenant-a",
+        "permission": "User"
+    });
+    let (status, created) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials",
+        Some("test-admin-key"),
+        Some(payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let secret = created["secret"].as_str().expect("secret is returned once");
+    assert!(created["credential"]["secret_hash"].is_null());
+
+    let (old_status, _) = common::api::send_get_json(&app, "/api/v1/stats", Some(secret)).await;
+    assert_eq!(old_status, StatusCode::OK);
+
+    let (rotate_status, rotated) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials/runtime-key/rotate",
+        Some("test-admin-key"),
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(rotate_status, StatusCode::OK);
+    let rotated_secret = rotated["secret"].as_str().expect("rotated secret returned");
+    let (old_after_rotate, _) =
+        common::api::send_get_json(&app, "/api/v1/stats", Some(secret)).await;
+    let (new_after_rotate, _) =
+        common::api::send_get_json(&app, "/api/v1/stats", Some(rotated_secret)).await;
+    assert_eq!(old_after_rotate, StatusCode::UNAUTHORIZED);
+    assert_eq!(new_after_rotate, StatusCode::OK);
+
+    let (revoke_status, _) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials/runtime-key/revoke",
+        Some("test-admin-key"),
+        None,
+    )
+    .await;
+    assert_eq!(revoke_status, StatusCode::OK);
+    let (revoked_status, _) =
+        common::api::send_get_json(&app, "/api/v1/stats", Some(rotated_secret)).await;
+    assert_eq!(revoked_status, StatusCode::UNAUTHORIZED);
+}

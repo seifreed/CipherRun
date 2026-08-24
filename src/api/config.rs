@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
+use tokio::sync::RwLock;
 
 const MAX_API_CONFIG_BYTES: u64 = 1024 * 1024;
 
@@ -102,7 +104,7 @@ pub struct ApiConfig {
     pub policy_dir: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum Permission {
     /// Full access - can create, read, update, delete
@@ -145,6 +147,97 @@ pub struct ApiCredential {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default = "default_true")]
     pub active: bool,
+}
+
+/// Runtime credential registry. The file-backed [`ApiConfig`] remains the
+/// bootstrap source; this registry permits revocation and rotation without a
+/// process restart.
+pub struct ApiCredentialStore {
+    config: RwLock<ApiConfig>,
+}
+
+impl ApiCredentialStore {
+    pub fn new(config: &ApiConfig) -> Arc<Self> {
+        Arc::new(Self {
+            config: RwLock::new(config.clone()),
+        })
+    }
+
+    pub async fn authenticate_key(&self, key: &str) -> Option<AuthenticatedKey> {
+        self.config.read().await.authenticate_key(key)
+    }
+
+    pub async fn list(&self) -> Vec<ApiCredential> {
+        self.config.read().await.credentials.clone()
+    }
+
+    pub async fn insert(&self, credential: ApiCredential) -> Result<()> {
+        let mut config = self.config.write().await;
+        if config
+            .credentials
+            .iter()
+            .any(|item| item.key_id == credential.key_id)
+        {
+            return Err(TlsError::ConfigError {
+                message: format!("duplicate credential key_id: {}", credential.key_id),
+            });
+        }
+        config.credentials.push(credential);
+        config.validate()?;
+        Ok(())
+    }
+
+    pub async fn rotate(
+        &self,
+        key_id: &str,
+        secret: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<ApiCredential> {
+        let mut config = self.config.write().await;
+        let credential = config
+            .credentials
+            .iter_mut()
+            .find(|item| item.key_id == key_id)
+            .ok_or_else(|| TlsError::InvalidInput {
+                message: format!("unknown credential key_id: {key_id}"),
+            })?;
+        credential.secret_hash = hash_secret(secret);
+        credential.created_at = chrono::Utc::now();
+        credential.expires_at = expires_at;
+        credential.active = true;
+        if credential
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= credential.created_at)
+        {
+            return Err(TlsError::InvalidInput {
+                message: "expires_at must be after the rotation time".to_string(),
+            });
+        }
+        Ok(credential.clone())
+    }
+
+    pub async fn revoke(&self, key_id: &str) -> Result<ApiCredential> {
+        let mut config = self.config.write().await;
+        let active_admins = config
+            .credentials
+            .iter()
+            .filter(|item| item.active && item.permission == Permission::Admin)
+            .count();
+        let credential = config
+            .credentials
+            .iter_mut()
+            .find(|item| item.key_id == key_id)
+            .ok_or_else(|| TlsError::InvalidInput {
+                message: format!("unknown credential key_id: {key_id}"),
+            })?;
+        if credential.permission == Permission::Admin && credential.active && active_admins <= 1 {
+            return Err(TlsError::ConfigError {
+                message: "cannot revoke the last active administrator credential".to_string(),
+            });
+        }
+        credential.active = false;
+        Ok(credential.clone())
+    }
 }
 
 const fn default_true() -> bool {
@@ -237,7 +330,7 @@ impl Default for ApiConfig {
 /// Generate a cryptographically secure random API key
 ///
 /// SECURITY: Uses system random number generator for unpredictable keys
-fn generate_secure_api_key() -> String {
+pub(crate) fn generate_secure_api_key() -> String {
     use rand::RngExt;
 
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
@@ -830,5 +923,36 @@ enable_swagger = true
         };
 
         assert!(!err.to_string().contains("Invalid config file path"));
+    }
+
+    #[tokio::test]
+    async fn runtime_store_rotates_and_revokes_without_restart() {
+        let config = ApiConfig::default();
+        let store = ApiCredentialStore::new(&config);
+        let credential = ApiCredential::from_secret(
+            "runtime-key".to_string(),
+            "old-secret",
+            "runtime-principal".to_string(),
+            Some("tenant".to_string()),
+            Permission::User,
+        );
+        store
+            .insert(credential)
+            .await
+            .expect("insert should succeed");
+        assert!(store.authenticate_key("old-secret").await.is_some());
+
+        store
+            .rotate("runtime-key", "new-secret", None)
+            .await
+            .expect("rotate should succeed");
+        assert!(store.authenticate_key("old-secret").await.is_none());
+        assert!(store.authenticate_key("new-secret").await.is_some());
+
+        store
+            .revoke("runtime-key")
+            .await
+            .expect("revoke should succeed");
+        assert!(store.authenticate_key("new-secret").await.is_none());
     }
 }

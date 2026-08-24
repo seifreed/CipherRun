@@ -207,6 +207,24 @@ impl ApiServer {
                 "/scan/{id}/stream-ticket",
                 post(routes::scans::create_stream_ticket),
             )
+            // Credential lifecycle is restricted to administrators and never
+            // returns a stored hash or an existing secret.
+            .route(
+                "/credentials",
+                get(routes::credentials::list_credentials)
+                    .post(routes::credentials::create_credential)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+            )
+            .route(
+                "/credentials/{key_id}/rotate",
+                post(routes::credentials::rotate_credential)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+            )
+            .route(
+                "/credentials/{key_id}/revoke",
+                post(routes::credentials::revoke_credential)
+                    .layer(axum_middleware::from_fn(middleware::require_admin)),
+            )
             // Certificate routes
             .route(
                 "/certificates",
@@ -266,7 +284,7 @@ impl ApiServer {
             ))
             // Add authentication middleware (runs first due to reverse order)
             .layer(axum_middleware::from_fn_with_state(
-                Arc::new(self.config.clone()),
+                self.state.credential_store.clone(),
                 middleware::authenticate,
             ))
             .layer(axum_middleware::from_fn_with_state(

@@ -13,6 +13,7 @@ pub(crate) fn build_test_state() -> Arc<AppState> {
     let progress_tx = executor.progress_broadcaster();
 
     Arc::new(AppState {
+        credential_store: crate::api::config::ApiCredentialStore::new(&config),
         config,
         job_queue,
         executor,
