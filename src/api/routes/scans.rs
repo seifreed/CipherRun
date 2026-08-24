@@ -26,7 +26,9 @@ use std::sync::Arc;
 use tracing::info;
 
 fn authorize_scan(job: &ScanJob, auth: &AuthExtension) -> Result<(), ApiError> {
-    if auth.permission == Permission::Admin || job.principal_id == auth.principal_id {
+    if auth.permission == Permission::Admin
+        || (job.principal_id == auth.principal_id && job.tenant_id == auth.tenant_id)
+    {
         Ok(())
     } else {
         Err(ApiError::NotFound("Scan not found".to_string()))
@@ -427,6 +429,34 @@ mod tests {
             principal_id: "test-principal".to_string(),
             tenant_id: None,
         })
+    }
+
+    #[test]
+    fn scan_ownership_requires_matching_tenant() {
+        let job = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            ScanOptions::full(),
+            None,
+            "principal".to_string(),
+            "key".to_string(),
+            Some("tenant-a".to_string()),
+        );
+        let same_tenant = AuthExtension {
+            permission: Permission::User,
+            key_id: "key-2".to_string(),
+            principal_id: "principal".to_string(),
+            tenant_id: Some("tenant-a".to_string()),
+        };
+        assert!(authorize_scan(&job, &same_tenant).is_ok());
+
+        let other_tenant = AuthExtension {
+            tenant_id: Some("tenant-b".to_string()),
+            ..same_tenant
+        };
+        assert!(matches!(
+            authorize_scan(&job, &other_tenant),
+            Err(ApiError::NotFound(_))
+        ));
     }
 
     fn valid_hostname_253() -> String {
