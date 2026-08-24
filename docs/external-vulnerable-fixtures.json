@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "name": "openssl-1-0-1c",
+      "image": "docker.io/vulhub/openssl@sha256:3cf76769b6e33f45479e8bacd70d7c5c2bd8b8c4d5428ae3f613b1145a4a1c47",
+      "version": "OpenSSL 1.0.1c",
+      "expected": "TLSv1 handshake succeeds with AES128-SHA",
+      "transcript": "results/external-fixture/openssl-1-0-1c-tls1.txt",
+      "false_positive_notes": "The pinned version and legacy handshake prove fixture identity and reachability, not that a remote vulnerability probe will confirm Heartbleed.",
+      "false_negative_notes": "The bundled nginx configuration and client/provider policy can prevent a raw vulnerability probe from completing even though the implementation is old.",
+      "safety": "active-safe-legacy-negotiation"
+    },
+    {
+      "name": "openssl-1-1-1m-patched",
+      "image": "docker.io/vulhub/openssl@sha256:dffde83f29dc4a70e183ca7bf374f6a153839eda3a406fd5e2d41e953f72b978",
+      "version": "OpenSSL 1.1.1m",
+      "expected": "TLSv1.2 handshake succeeds",
+      "transcript": "results/external-fixture/openssl-1-1-1m-tls12.txt",
+      "false_positive_notes": "A successful TLS 1.2 control handshake does not prove that every historical vulnerability is patched in every deployment.",
+      "false_negative_notes": "This control does not exercise the vulnerable TLS 1.0 nginx path or application-specific configuration.",
+      "safety": "active-safe-modern-negotiation"
+    }
+  ]
+}

@@ -55,7 +55,7 @@ lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with fou
 	@status=0; $(COMPOSE) run --rm $(SERVICE) /scripts/differential-test.sh || status=$$?; \
 		$(COMPOSE) down --remove-orphans; exit $$status
 
-external-fixture: ## Validate the pinned real OpenSSL 1.0.1c vulnerable implementation
+external-fixture: ## Validate pinned vulnerable and patched OpenSSL implementations
 	scripts/validate-external-vulnerable-fixture.sh
 
 batch: ## Run batch test on multiple domains
