@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|weak-ciphers}
+profile=${1:?usage: fixture-server.sh legacy|legacy11|weak|modern|breach|sweet32|crime|crime-patched|heartbleed|heartbleed-patched|ccs|ccs-patched|ticketbleed|ticketbleed-patched|robot|robot-patched|fallback|fallback-patched|weak-ciphers}
 workdir=/tmp/cipherrun-fixture
 mkdir -p "$workdir"
 
@@ -282,6 +282,41 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
                 client_data = connection.recv(16384)
                 code = alert_code(client_data)
                 connection.sendall(bytes.fromhex(f"150303000202{code:02x}"))
+            except (OSError, TimeoutError):
+                pass
+PY
+        ;;
+    fallback|fallback-patched)
+        exec python3 - "${profile}" <<'PY'
+import socket
+import sys
+
+patched = sys.argv[1] == "fallback-patched"
+
+def server_hello(client_data):
+    # Minimal TLS 1.2 ServerHello accepted by the raw protocol probes.
+    version = client_data[9:11] if len(client_data) >= 11 else b"\x03\x03"
+    body = version + (b"\xaa" * 32) + b"\x00\xc0\x2f\x00\x00\x00"
+    message = b"\x02" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x03" + len(message).to_bytes(2, "big") + message
+
+def response(client_data):
+    has_scsv = b"\x56\x00" in client_data
+    if patched and has_scsv:
+        return b"\x15\x03\x03\x00\x02\x02\x56"
+    return server_hello(client_data)
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 443))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(3)
+            try:
+                client_data = connection.recv(16384)
+                connection.sendall(response(client_data))
             except (OSError, TimeoutError):
                 pass
 PY

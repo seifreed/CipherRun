@@ -173,6 +173,24 @@
       "safety": "active-synthetic-wire"
     },
     {
+      "name": "fallback-tls",
+      "positive": "Synthetic ServerHello accepts a TLS_FALLBACK_SCSV ClientHello",
+      "negative": "Synthetic ServerHello accepts the same fallback without rejecting SCSV",
+      "expected": "CR-TLS-FALLBACK-SCSV-001=confirmed_vulnerable",
+      "false_positive_notes": "The fixture validates downgrade-alert classification only; it does not execute a POODLE downgrade or attack.",
+      "false_negative_notes": "The responder does not model a complete TLS implementation or protocol-specific downgrade state.",
+      "safety": "active-synthetic-wire"
+    },
+    {
+      "name": "fallback-patched-tls",
+      "positive": "Synthetic ServerHello rejects TLS_FALLBACK_SCSV with alert 0x56",
+      "negative": "Synthetic ServerHello accepts a fallback ClientHello",
+      "expected": "CR-TLS-FALLBACK-SCSV-001=not_vulnerable",
+      "false_positive_notes": "A correct SCSV alert proves only this negotiation path is protected.",
+      "false_negative_notes": "Only the TLS_FALLBACK_SCSV response is exercised; other downgrade controls require separate handshakes.",
+      "safety": "active-synthetic-wire"
+    },
+    {
       "name": "weak-ciphers-tls",
       "positive": "Synthetic ServerHello responses for registered RC4, NULL, RSA_EXPORT, and DH_EXPORT wire IDs",
       "negative": "Any non-legacy cipher probe receives a TLS alert",

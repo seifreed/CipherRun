@@ -4,7 +4,7 @@ set -euo pipefail
 results=${RESULTS_DIR:-/results}/differential
 mkdir -p "$results"
 cp /usr/share/cipherrun/differential-fixtures.json "$results/fixture-metadata.json"
-jq -e '.version == "1" and (.fixtures | length == 40)' \
+jq -e '.version == "1" and (.fixtures | length == 42)' \
     "$results/fixture-metadata.json" >/dev/null
 
 scan_fixture() {
@@ -122,6 +122,8 @@ scan_vulnerability_fixture ticketbleed-tls ticketbleed --ticketbleed
 scan_vulnerability_fixture ticketbleed-patched-tls ticketbleed-patched --ticketbleed
 scan_vulnerability_fixture robot-tls robot --robot
 scan_vulnerability_fixture robot-patched-tls robot-patched --robot
+scan_vulnerability_fixture fallback-tls fallback --tls-fallback
+scan_vulnerability_fixture fallback-patched-tls fallback-patched --tls-fallback
 scan_vulnerability_fixture weak-ciphers-tls weak-ciphers --vulnerable
 scan_vulnerability_fixture modern-tls modern-tls-weak-ciphers --vulnerable
 
@@ -202,6 +204,10 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-ROBOT-001" and .status
     "$results/robot.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-ROBOT-001" and .status == "not_vulnerable")' \
     "$results/robot-patched.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and .status == "confirmed_vulnerable")' \
+    "$results/fallback.cipherrun.json" >/dev/null
+jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-FALLBACK-SCSV-001" and .status == "not_vulnerable")' \
+    "$results/fallback-patched.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-RC4-001" and .status == "confirmed_vulnerable")' \
     "$results/weak-ciphers.cipherrun.json" >/dev/null
 jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-NULL-CIPHER-001" and .status == "confirmed_vulnerable")' \

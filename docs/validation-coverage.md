@@ -32,7 +32,7 @@ false-positive/false-negative notes, and safety classification for every fixture
 | ROBOT | Active RSA alert-oracle probe | `robot-tls` | `robot-patched-tls` | CipherRun | Synthetic RSA transcript; no vulnerable implementation or timing-oracle claim |
 | POODLE variants, OpenSSL 0-Length, CVE-2016-2107 | Active probe | Not yet isolated | `modern-tls` | Not yet complete | Requires pinned vulnerable and patched implementations |
 | BREACH | HTTP heuristic | `breach-tls` | `modern-tls` | CipherRun | Synthetic prerequisites only; no practical exploit demonstrated |
-| Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | Partial | `modern-tls` | Not yet complete | Needs dedicated handshake fixtures |
+| Renegotiation, fallback SCSV, early data, GREASE | Negotiation/configuration | `fallback-tls` for SCSV | `fallback-patched-tls` | CipherRun | SCSV transcript only; renegotiation, early data, and GREASE still need dedicated handshakes |
 | STARTTLS injection, Opossum | Active STARTTLS probe | Not yet isolated | Not yet isolated | Not yet complete | Needs protocol-specific mail fixtures |
 | Winshock | Platform inference | N/A | N/A | N/A | Cannot be confirmed by a generic remote TLS endpoint |
 
