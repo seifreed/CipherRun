@@ -9,6 +9,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo ./.cargo
 COPY src ./src
+COPY crates ./crates
 COPY data ./data
 COPY migrations ./migrations
 COPY benches ./benches

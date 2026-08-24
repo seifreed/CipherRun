@@ -12,8 +12,10 @@ documentation = "https://docs.rs/cipherrun"
 readme = "README.md"
 keywords = ["security", "tls", "ssl", "scanner", "cryptography"]
 categories = ["command-line-utilities", "cryptography", "network-programming"]
+
 include = [
     "src/**/*",
+    "crates/**/*",
     "data/**/*.json",
     "data/**/*.yaml",
     "data/**/*.yml",
@@ -29,6 +31,11 @@ include = [
     "README.md",
     "SECURITY.md",
 ]
+
+[workspace]
+members = ["crates/cipherrun-core"]
+resolver = "2"
+
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

@@ -1,0 +1,11 @@
+[package]
+name = "cipherrun-core"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Stable finding contracts for CipherRun"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/seifreed/cipherrun"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
