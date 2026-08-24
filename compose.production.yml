@@ -1,11 +1,11 @@
 services:
   cipherrun:
-    image: cipherrun:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command:
       - --serve
       - --api-config

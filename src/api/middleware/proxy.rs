@@ -9,9 +9,7 @@ pub fn client_ip<B>(request: &Request<B>, state: &Arc<AppState>) -> Option<IpAdd
         .extensions()
         .get::<ConnectInfo<PeerAddr>>()
         .map(|ConnectInfo(PeerAddr(address))| address.ip());
-    let Some(peer) = peer else {
-        return None;
-    };
+    let peer = peer?;
     if !state
         .config
         .trusted_proxy_cidrs
@@ -55,8 +53,10 @@ mod tests {
 
     #[test]
     fn accepts_forwarded_address_from_trusted_proxy() {
-        let mut config = ApiConfig::default();
-        config.trusted_proxy_cidrs = vec!["192.0.2.0/24".parse().unwrap()];
+        let config = ApiConfig {
+            trusted_proxy_cidrs: vec!["192.0.2.0/24".parse().unwrap()],
+            ..Default::default()
+        };
         let state = Arc::new(AppState::new(config).unwrap());
         let mut request = Request::builder()
             .header("x-forwarded-for", "198.51.100.8, 192.0.2.10")

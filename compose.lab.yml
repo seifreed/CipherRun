@@ -1,12 +1,12 @@
 # SECURITY WARNING: grants packet-capture capabilities. Use only for authorized testing.
 services:
   cipherrun-lab:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile.lab
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     init: true
     stdin_open: true
     tty: true
@@ -38,12 +38,12 @@ services:
         condition: service_healthy
 
   legacy-tls:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile.lab
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command: ["/scripts/fixture-server.sh", "legacy"]
     read_only: true
     tmpfs:
@@ -59,12 +59,12 @@ services:
       retries: 15
 
   legacy11-tls:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile.lab
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command: ["/scripts/fixture-server.sh", "legacy11"]
     read_only: true
     tmpfs:
@@ -80,12 +80,12 @@ services:
       retries: 15
 
   weak-tls:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile.lab
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command: ["/scripts/fixture-server.sh", "weak"]
     read_only: true
     tmpfs:
@@ -101,12 +101,12 @@ services:
       retries: 15
 
   modern-tls:
-    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.3.2}
+    image: cipherrun-lab:${CIPHERRUN_VERSION:-0.4.0}
     build:
       context: .
       dockerfile: Dockerfile.lab
       args:
-        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.3.2}
+        CIPHERRUN_VERSION: ${CIPHERRUN_VERSION:-0.4.0}
     command: ["/scripts/fixture-server.sh", "modern"]
     read_only: true
     tmpfs:

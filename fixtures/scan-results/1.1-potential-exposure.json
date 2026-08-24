@@ -21,7 +21,7 @@
         "observed": "HTTP compression and reflection prerequisites observed on GET /.",
         "expected_result": "No vulnerable behavior or exposure prerequisites observed.",
         "attempts": null,
-        "probe_version": "0.3.2",
+        "probe_version": "0.4.0",
         "limitations": [
           "Observed prerequisites do not demonstrate practical exploitability."
         ],
@@ -43,9 +43,9 @@
   "rating": null,
   "advanced": null,
   "schema_version": "1.1",
-  "scanner_version": "0.3.2",
-  "ruleset_version": "0.3.2",
-  "data_version": "0.3.2",
+  "scanner_version": "0.4.0",
+  "ruleset_version": "0.4.0",
+  "data_version": "0.4.0",
   "pre_handshake_used": false,
   "scanned_ips": [],
   "sni_used": "example.com",
