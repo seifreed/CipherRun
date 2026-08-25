@@ -997,7 +997,7 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_tls13_mtls_connector_error_is_propagated() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("test listener should bind");
@@ -1029,7 +1029,7 @@ mod legacy_probe_tests {
 
     #[tokio::test]
     async fn test_tls13_transport_anomaly_is_inconclusive() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("test listener should bind");

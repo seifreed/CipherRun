@@ -376,7 +376,7 @@ mod tests {
     }
 
     async fn spawn_fragmented_https_server() -> u16 {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 

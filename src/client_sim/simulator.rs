@@ -609,7 +609,7 @@ mod tests {
     fn test_extract_key_exchange_tls13_uses_curve() {
         let curves = vec!["x25519".to_string()];
         let kex = ClientSimulator::extract_key_exchange(
-            &rustls::crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256,
+            &crate::utils::rustls_provider::cipher_suite::TLS13_AES_128_GCM_SHA256,
             &curves,
         );
         assert_eq!(kex.as_deref(), Some("ECDH x25519"));
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn test_extract_key_exchange_tls13_defaults_curve() {
         let kex = ClientSimulator::extract_key_exchange(
-            &rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+            &crate::utils::rustls_provider::cipher_suite::TLS13_AES_256_GCM_SHA384,
             &[],
         );
         assert_eq!(kex.as_deref(), Some("ECDH x25519"));
@@ -640,7 +640,7 @@ mod tests {
     fn test_extract_key_exchange_tls12_ecdhe() {
         let curves = vec!["secp256r1".to_string()];
         let kex = ClientSimulator::extract_key_exchange(
-            &rustls::crypto::ring::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            &crate::utils::rustls_provider::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
             &curves,
         );
         assert_eq!(kex.as_deref(), Some("ECDH secp256r1"));
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_extract_certificate_info_ecdsa() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
         let info = ClientSimulator::extract_certificate_info(&cert_der).unwrap();
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_build_client_config_success() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let simulator = sample_simulator();
         let profile = sample_profile(Some("tls1_3"));
         let config = simulator.build_client_config(&profile).unwrap();
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_build_client_config_accepts_hex_protocol_versions() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let simulator = sample_simulator();
         let profile = sample_profile(Some("0x0304"));
 
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_build_client_config_honors_profile_sni_setting() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let simulator = sample_simulator();
         let mut profile = sample_profile(Some("tls1_3"));
         profile.uses_sni = false;

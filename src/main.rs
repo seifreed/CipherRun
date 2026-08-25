@@ -46,13 +46,11 @@ async fn main() -> ExitCode {
 
 async fn run_cli() -> cipherrun::Result<CommandExit> {
     // Install rustls crypto provider (required for rustls 0.23+)
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .map_err(|_| {
-            cipherrun::TlsError::Other(
-                "Failed to install rustls crypto provider (already installed?)".to_string(),
-            )
-        })?;
+    cipherrun::utils::rustls_provider::install_default().map_err(|_| {
+        cipherrun::TlsError::Other(
+            "Failed to install rustls crypto provider (already installed?)".to_string(),
+        )
+    })?;
 
     let raw_arg_count = std::env::args_os().count();
 

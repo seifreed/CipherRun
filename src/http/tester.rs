@@ -397,7 +397,7 @@ mod tests {
     }
 
     async fn spawn_https_server_bytes(response: Vec<u8>) -> u16 {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 

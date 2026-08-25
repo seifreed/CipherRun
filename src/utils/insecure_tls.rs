@@ -26,7 +26,7 @@ use std::sync::Arc;
 /// this from every config builder so the library is self-contained.
 /// `install_default()` is idempotent — a no-op once a provider is installed.
 pub(crate) fn ensure_ring_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = super::rustls_provider::install_default();
 }
 
 pub fn insecure_client_config() -> ClientConfig {
@@ -108,9 +108,19 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        #[cfg(feature = "rustls")]
+        {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+
+        #[cfg(not(feature = "rustls"))]
+        {
+            rustls::crypto::aws_lc_rs::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
     }
 }
 
@@ -144,7 +154,7 @@ mod tests {
     fn builds_client_config() {
         // The process-level crypto provider is installed by the binary at
         // startup; install it here so the config builder has one in tests.
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::utils::rustls_provider::install_default();
         let _config = insecure_client_config();
     }
 

@@ -49,7 +49,22 @@ resolver = "2"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [features]
-default = ["api", "email", "monitoring", "pqc", "db-sqlite", "db-postgres"]
+default = [
+    "api",
+    "email",
+    "monitoring",
+    "pqc",
+    "db-sqlite",
+    "db-postgres",
+    "rustls",
+    "openssl-legacy",
+]
+# Select the ring provider for the full build. Reduced builds use rustls'
+# default aws-lc-rs provider so the scanner remains usable without this flag.
+rustls = ["rustls/ring"]
+# Use the reproducible vendored OpenSSL build for legacy probes. Reduced builds
+# can use the system OpenSSL installation instead.
+openssl-legacy = ["openssl/vendored"]
 api = [
     "dep:axum",
     "dep:tower",
@@ -80,11 +95,11 @@ tokio = { version = "1.52", features = ["full"] }
 async-trait = "0.1"
 
 # TLS implementations
-rustls = { version = "0.23.39", features = ["ring"] }
+rustls = { version = "0.23.39" }
 rustls-pki-types = "1.10"
 tokio-rustls = { version = "0.26", features = ["early-data"] }
 webpki-roots = "1.0.7"
-openssl = { version = "0.10.80", features = ["vendored"] }
+openssl = { version = "0.10.80", default-features = false }
 
 # Networking
 hickory-resolver = "0.26"

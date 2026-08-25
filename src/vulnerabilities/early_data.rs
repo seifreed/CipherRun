@@ -307,32 +307,41 @@ impl<'a> EarlyDataTester<'a> {
         config: &Arc<ClientConfig>,
         domain: rustls::pki_types::ServerName<'static>,
     ) -> EarlyDataSupportStatus {
-        use tokio::io::AsyncWriteExt;
+        #[cfg(not(feature = "rustls"))]
+        {
+            let _ = (addr, config, domain);
+            return EarlyDataSupportStatus::Inconclusive;
+        }
 
-        let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
-            Ok(s) => s,
-            Err(_) => return EarlyDataSupportStatus::Inconclusive,
-        };
-        let connector = tokio_rustls::TlsConnector::from(config.clone()).early_data(true);
-        let request = self.minimal_http_request();
+        #[cfg(feature = "rustls")]
+        {
+            use tokio::io::AsyncWriteExt;
 
-        let accepted = timeout(TLS_HANDSHAKE_TIMEOUT, async {
-            let mut tls = connector.connect(domain, stream).await?;
-            // With early data enabled and a resumable ticket, this write is sent
-            // as 0-RTT data before the handshake completes.
-            tls.write_all(request.as_bytes()).await?;
-            // flush() drives the handshake to completion (tokio-rustls finishes
-            // the handshake on the write path while early data is buffered), so
-            // 0-RTT acceptance is decided once it returns — no read required.
-            tls.flush().await?;
-            Ok::<bool, std::io::Error>(tls.get_ref().1.is_early_data_accepted())
-        })
-        .await;
+            let stream = match self.starttls_connect(addr, TLS_HANDSHAKE_TIMEOUT).await {
+                Ok(s) => s,
+                Err(_) => return EarlyDataSupportStatus::Inconclusive,
+            };
+            let connector = tokio_rustls::TlsConnector::from(config.clone()).early_data(true);
+            let request = self.minimal_http_request();
 
-        match accepted {
-            Ok(Ok(true)) => EarlyDataSupportStatus::Supported,
-            Ok(Ok(false)) => EarlyDataSupportStatus::NotSupported,
-            _ => EarlyDataSupportStatus::Inconclusive,
+            let accepted = timeout(TLS_HANDSHAKE_TIMEOUT, async {
+                let mut tls = connector.connect(domain, stream).await?;
+                // With early data enabled and a resumable ticket, this write is sent
+                // as 0-RTT data before the handshake completes.
+                tls.write_all(request.as_bytes()).await?;
+                // flush() drives the handshake to completion (tokio-rustls finishes
+                // the handshake on the write path while early data is buffered), so
+                // 0-RTT acceptance is decided once it returns — no read required.
+                tls.flush().await?;
+                Ok::<bool, std::io::Error>(tls.get_ref().1.is_early_data_accepted())
+            })
+            .await;
+
+            match accepted {
+                Ok(Ok(true)) => EarlyDataSupportStatus::Supported,
+                Ok(Ok(false)) => EarlyDataSupportStatus::NotSupported,
+                _ => EarlyDataSupportStatus::Inconclusive,
+            }
         }
     }
 

@@ -106,6 +106,11 @@ The reduced feature matrix is checked in CI with `--no-default-features`,
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.
 
+TLS provider selection is explicit as well. The default build enables
+`rustls` (the ring provider) and `openssl-legacy` (the reproducible vendored
+OpenSSL build). Reduced builds may omit either feature: rustls then uses its
+default aws-lc-rs provider, while OpenSSL resolves against the system library.
+
 ### Using Cargo
 
 ```bash

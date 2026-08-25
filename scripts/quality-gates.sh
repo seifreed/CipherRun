@@ -31,6 +31,8 @@ cargo check --no-default-features --locked
 cargo check --no-default-features --features api --locked
 cargo check --no-default-features --features monitoring --locked
 cargo check --no-default-features --features "ct,pqc" --locked
+cargo check --no-default-features --features rustls --locked
+cargo check --no-default-features --features openssl-legacy --locked
 cargo check --no-default-features --features db-sqlite --locked
 cargo check --no-default-features --features db-postgres --locked
 cargo check --all-features --locked
