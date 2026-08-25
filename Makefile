@@ -64,7 +64,8 @@ lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with six
 			test -s "results/differential/$$target.tls-scanner.txt" || status=$$?; \
 			test -s "results/differential/$$target.tls-scanner.exit" || status=$$?; \
 		done; \
-		$(COMPOSE) down --remove-orphans; exit $$status
+		$(COMPOSE) down --remove-orphans; \
+		if [ $$status -eq 0 ]; then scripts/validate-differential-evidence.sh docs/differential-fixtures.json results/differential; else exit $$status; fi
 
 external-fixture: ## Validate pinned vulnerable and patched OpenSSL implementations
 	cargo build --locked --bin cipherrun

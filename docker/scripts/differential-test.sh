@@ -159,6 +159,37 @@ for fixture in "smtp 25252" "imap 21432" "pop3 21110"; do
     scan_starttls_injection_fixture starttls-injection-patched-tls "$port" "${protocol}-injection-patched"
 done
 
+# Keep one deterministic evidence name per manifest fixture. Vulnerability
+# probes use short artifact names internally; aliases make every published
+# fixture expose the same JSON/transcript contract to the host validator.
+alias_fixture_artifact() {
+    local fixture=$1
+    local artifact=$2
+    cp "$results/$artifact.cipherrun.json" "$results/$fixture.cipherrun.json"
+    cp "$results/$artifact.cipherrun.txt" "$results/$fixture.cipherrun.txt"
+}
+
+for alias in \
+    "sweet32-tls sweet32" \
+    "crime-tls crime" "crime-patched-tls crime-patched" \
+    "heartbleed-tls heartbleed" "heartbleed-patched-tls heartbleed-patched" \
+    "ccs-tls ccs" "ccs-patched-tls ccs-patched" \
+    "ticketbleed-tls ticketbleed" "ticketbleed-patched-tls ticketbleed-patched" \
+    "robot-tls robot" "robot-patched-tls robot-patched" \
+    "fallback-tls fallback" "fallback-patched-tls fallback-patched" \
+    "renegotiation-insecure-tls renegotiation-insecure" \
+    "renegotiation-secure-tls renegotiation-secure" \
+    "weak-ciphers-tls weak-ciphers" \
+    "poodle-tls poodle" "poodle-patched-tls poodle-patched" \
+    "poodle-variant-vulnerable-tls poodle-variant-vulnerable" \
+    "poodle-variant-patched-tls poodle-variant-patched" \
+    "grease-intolerant-tls grease-intolerant" \
+    "grease-tolerant-tls grease-tolerant" \
+    "early-data-tls early-data" "early-data-patched-tls early-data-patched"; do
+    read -r fixture artifact <<<"$alias"
+    alias_fixture_artifact "$fixture" "$artifact"
+done
+
 jq -e '.protocols[] | select(.protocol == "TLS10" and .supported == true)' \
     "$results/legacy-tls.cipherrun.json" >/dev/null
 jq -e 'all(.protocols[]; .protocol != "TLS12" or .supported == false)' \

@@ -38,7 +38,10 @@ false-positive/false-negative notes, and safety classification for every fixture
 | Opossum (CVE-2022-0778) | Isolated certificate-parser timeout harness | `make opossum-fixture` with pinned OpenSSL 1.1.1m and crafted DER certificate | `cipherrun-lab:0.4.0` OpenSSL 3.x control | OpenSSL parser harness + CipherRun limitation check | The local harness proves the vulnerable parser boundary; CipherRun's remote probe remains inconclusive because it uses rustls and cannot attest another process's OpenSSL parser |
 | Winshock | Platform inference | N/A | N/A | N/A | Cannot be confirmed by a generic remote TLS endpoint |
 
-The release criterion is intentionally not marked complete yet: every published probe
-must gain a positive fixture, a negative fixture, an expected result, a captured
-transcript, false-positive/false-negative notes, and a safety classification before
-the matrix can claim full validation.
+The release criterion is enforced by `scripts/validate-differential-evidence.sh`.
+`make lab-validate` fails unless all 58 published fixtures have a positive and
+negative description, an expected result, false-positive/false-negative notes,
+an explicit safety classification, a structured result, and a non-empty captured
+CipherRun transcript at `results/differential/<fixture>.cipherrun.txt`. These
+artifacts validate the detector contract; synthetic and isolated fixtures still
+do not claim implementation-level exploitation of a historical CVE.
