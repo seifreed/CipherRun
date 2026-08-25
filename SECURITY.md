@@ -31,3 +31,6 @@ should wait until a fix is available or the coordinated date is reached.
 Good-faith research that avoids privacy violations, service disruption, data
 destruction, and access beyond what is necessary to demonstrate the issue is
 welcome. This policy does not authorize testing third-party systems.
+
+The current external-audit status and reproducible evidence checklist are
+tracked in [`docs/security-audit.md`](docs/security-audit.md).

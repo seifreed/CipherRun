@@ -365,6 +365,10 @@ or Caddy. It never changes a running service, and it deliberately leaves
 inconclusive or potential findings visible for operator review. Existing output
 files are protected unless `--overwrite` is supplied.
 
+External audit status and the exact pre-audit evidence commands are tracked in
+[`docs/security-audit.md`](docs/security-audit.md); the checklist is not a
+substitute for an independent audit.
+
 ---
 
 ## QA
