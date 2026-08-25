@@ -54,6 +54,7 @@ jobs:
           fi
 
           scripts/validate-rule-pack-provenance.sh "${RUNNER_TEMP}/rule-pack-manifest.json"
+          scripts/validate-trust-store-provenance.sh "$manifest"
 
       - name: Open provenance update pull request
         shell: bash
