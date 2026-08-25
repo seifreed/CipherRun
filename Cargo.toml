@@ -263,6 +263,10 @@ name = "api_production_server_tests"
 required-features = ["api"]
 
 [[test]]
+name = "api_ownership_e2e_tests"
+required-features = ["api"]
+
+[[test]]
 name = "api_models_response"
 required-features = ["api"]
 

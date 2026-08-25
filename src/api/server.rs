@@ -195,8 +195,11 @@ impl ApiServer {
         })
     }
 
-    /// Build the router
-    fn build_router(&self) -> Result<Router> {
+    /// Build the authenticated application router without binding a listener.
+    ///
+    /// This is useful for embedded deployments and integration tests that need
+    /// to exercise the same middleware and route graph as [`Self::run`].
+    pub fn router(&self) -> Result<Router> {
         // Create API routes
         let api_routes = Router::new()
             // Scan routes — create/cancel are write actions and require at least
@@ -387,7 +390,7 @@ impl ApiServer {
         }
 
         // Build router
-        let app = self.build_router()?;
+        let app = self.router()?;
 
         // Create listener
         let addr = canonical_target(&self.config.host, self.config.port);
@@ -506,7 +509,7 @@ mod tests {
     async fn test_router_build() {
         let config = ApiConfig::default();
         let server = ApiServer::new(config).expect("test assertion should succeed");
-        let _router = server.build_router().expect("router should build");
+        let _router = server.router().expect("router should build");
         // Just verify it builds without panicking
     }
 
@@ -519,7 +522,7 @@ mod tests {
         };
         let app = ApiServer::new(config)
             .expect("server should build")
-            .build_router()
+            .router()
             .expect("router should build");
         let response = app
             .oneshot(
@@ -553,7 +556,7 @@ mod tests {
 
         let app = ApiServer::new(config)
             .expect("server should build")
-            .build_router()
+            .router()
             .expect("router should build");
         let response = app
             .oneshot(
@@ -580,7 +583,7 @@ mod tests {
 
         let app = ApiServer::new(config)
             .expect("server should build")
-            .build_router()
+            .router()
             .expect("router should build");
         let response = app
             .oneshot(
