@@ -6,6 +6,10 @@ All notable changes to CipherRun are documented here. The format follows
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.4.0] - 2026-08-25
+
 ### Added
 
 - Explicit finding statuses, detection methods, confidence levels, and stable finding IDs.
@@ -52,30 +56,6 @@ All notable changes to CipherRun are documented here. The format follows
 ### Changed
 
 - Potential BREACH, weak ROBOT, and partial Lucky13 results are distinct from confirmed vulnerabilities.
-
-## [0.4.0] - 2026-08-24
-
-### Added
-
-- Rust 1.88 minimum-version and beta checks in CI.
-- Version metadata for the scan result JSON contract.
-- Explicit CORS origin allowlists.
-- Security and coordinated disclosure policy.
-- Shared CI and release quality gates for formatting, linting, tests, documentation,
-  dependency policy, packaging, installation, and the production container.
-- Separate hardened production and packet-capture laboratory container images.
-
-### Changed
-
-- API server startup now requires an explicit credentials file.
-- Generated API configurations use owner-only permissions on Unix and are not overwritten.
-- Query-string API keys are limited to WebSocket stream endpoints and deprecated.
-- Swagger UI is disabled by default and only advertised when served.
-- BREACH prerequisites are reported as potential exposure, not confirmed exploitation.
-- Compliance reports state that they assess mapped TLS controls, not certification or full regulatory compliance.
-- Updated `h2` to 0.4.16 to address RUSTSEC-2026-0258.
-- The production container now uses a non-root distroless runtime with no shell or Linux capabilities.
-- This release contains breaking public Rust API changes; downstream integrations should follow the migration notes in the API and JSON schema documentation.
 
 ## [0.3.1] - 2026-08-13
 

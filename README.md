@@ -119,11 +119,20 @@ cargo install cipherrun
 
 ### Releases
 
-Pushing a tag matching the package version, such as `v0.4.0`, runs the release workflow. It publishes `cipherrun-core` and then `cipherrun` to crates.io, and attaches platform packages for Linux, Windows, and macOS on x64 and ARM64, together with SHA-256 checksums. The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN`.
-The same release job generates `cipherrun.rb` and `cipherrun.json` assets from
-those checksums for Homebrew and Scoop consumption. It also publishes the versioned production
-image to GHCR and signs it keylessly with Sigstore. The local signing helper is
-`scripts/sign-container.sh`.
+Pushing a tag matching the package version, such as `v0.4.0`, runs the release
+workflow. It builds platform packages for Linux, Windows, and macOS on x64 and
+ARM64, together with SHA-256 checksums, package-manager manifests, and an SBOM.
+The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN` for
+crates.io publication. The production container and provenance attestations are
+separate release outputs and must be verified on the individual GitHub release
+before being advertised as published.
+
+The 0.4 migration steps are in [docs/migration-0.4.0.md](docs/migration-0.4.0.md),
+the supported platforms and versions are in [docs/support-matrix.md](docs/support-matrix.md),
+and automation compatibility rules are in [docs/stability-policy.md](docs/stability-policy.md).
+The release job generates `cipherrun.rb` and `cipherrun.json` assets from the
+checksums for Homebrew and Scoop consumption. The local container signing helper
+is `scripts/sign-container.sh`.
 
 The OpenAPI contract can be exported and used to regenerate the Python client:
 
