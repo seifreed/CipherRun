@@ -31,7 +31,7 @@ case "$profile" in
         ;;
     early-data|early-data-patched)
         if [[ "$profile" == "early-data" ]]; then
-            exec openssl s_server -quiet -www -accept 14455 \
+            exec openssl s_server -quiet -accept 14455 \
                 -cert "$workdir/cert.pem" -key "$workdir/key.pem" \
                 -tls1_3 -early_data -max_early_data 16384
         fi
