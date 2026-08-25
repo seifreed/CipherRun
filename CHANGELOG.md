@@ -4,21 +4,6 @@ All notable changes to CipherRun are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Production-router HTTP integration coverage for certificate, history, and
-  statistics tenant ownership.
-- Scheduled, reviewable provenance refreshes for trust stores and fingerprints.
-
-### Changed
-
-- Release images are attested and signed by immutable digest, with the digest
-  published alongside the release assets.
-- CI cancels superseded runs on the same branch so release validation is not
-  delayed by stale jobs.
-
 ## [0.4.0] - 2026-08-25
 
 ### Added
@@ -61,6 +46,16 @@ All notable changes to CipherRun are documented here. The format follows
 - Forwarded client addresses are trusted only from configured proxy CIDRs.
 - Certificate inventory, history, and statistics routes enforce authenticated
   principal and tenant ownership; administrators retain global visibility.
+- Production-router HTTP integration coverage exercises those ownership rules
+  through the same middleware and route graph used by the server listener.
+- Scheduled, reviewable provenance refreshes cover trust stores and
+  fingerprints, with checked-in manifests and digest/count integrity gates.
+- RFC 9345 delegated-credential captures validate the wire structure and
+  verify supported delegation signatures against the end-entity certificate.
+- Release images are attested and signed by immutable digest, with the digest
+  published alongside the release assets.
+- CI cancels superseded runs on the same branch so release validation is not
+  delayed by stale jobs.
 
 ### Changed
 
