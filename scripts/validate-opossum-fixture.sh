@@ -10,6 +10,7 @@ trap 'rm -f "$certificate"' EXIT
 mkdir -p "$output_dir"
 
 base64 --decode "$fixture" >"$certificate"
+chmod 0644 "$certificate"
 test "$(shasum -a 256 "$certificate" | awk '{print $1}')" = \
     "ba2b227b073dbd61c2d9547e81955d310520d9b5891f4b3feb136e9674c8551f"
 
