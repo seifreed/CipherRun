@@ -190,6 +190,15 @@ for alias in \
     alias_fixture_artifact "$fixture" "$artifact"
 done
 
+# Some probes intentionally emit only JSON. Keep a truthful transcript artifact
+# so the evidence validator can distinguish "no text emitted" from "not run".
+for transcript in "$results"/*.cipherrun.txt; do
+    if [[ ! -s "$transcript" ]]; then
+        printf 'CipherRun emitted no textual output; see the structured JSON artifact.\n' \
+            >"$transcript"
+    fi
+done
+
 jq -e '.protocols[] | select(.protocol == "TLS10" and .supported == true)' \
     "$results/legacy-tls.cipherrun.json" >/dev/null
 jq -e 'all(.protocols[]; .protocol != "TLS12" or .supported == false)' \
