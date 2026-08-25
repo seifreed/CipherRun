@@ -95,6 +95,9 @@ the `ct` feature because CT discovery feeds the monitor sink.
 The standalone PQC configuration scanners and roadmap are enabled by the
 `pqc` feature; readiness scoring remains part of the core scan-result contract.
 
+The reduced feature matrix is checked in CI with `--no-default-features`,
+`monitoring`, `ct,pqc`, and `--all-features` builds.
+
 ### Using Cargo
 
 ```bash
