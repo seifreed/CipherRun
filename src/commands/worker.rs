@@ -3,7 +3,9 @@
 use super::{Command, CommandExit};
 use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
+#[cfg(feature = "api")]
 use std::sync::Arc;
+#[cfg(feature = "api")]
 use tracing::{info, warn};
 
 /// Processes jobs from the shared SQL queue without starting an HTTP server.
@@ -20,6 +22,7 @@ impl WorkerCommand {
 /// Run the standalone database-backed worker with explicit API and database
 /// configuration. The dedicated worker crate delegates to this function so
 /// queue, lease, retry, and webhook behavior remain single-sourced.
+#[cfg(feature = "api")]
 pub async fn run_worker(args: &Args) -> Result<()> {
     let api_config_path =
         args.api_server
@@ -85,6 +88,13 @@ pub async fn run_worker(args: &Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(not(feature = "api"))]
+pub async fn run_worker(_args: &Args) -> Result<()> {
+    Err(TlsError::ConfigError {
+        message: "worker support requires the `api` feature".to_string(),
+    })
 }
 
 #[async_trait]

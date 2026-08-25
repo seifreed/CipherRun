@@ -7,6 +7,7 @@
 //! It provides extensive testing capabilities for TLS/SSL protocols, ciphers,
 //! vulnerabilities, and certificate validation.
 
+#[cfg(feature = "api")]
 pub mod api;
 pub mod application;
 pub mod certificates;

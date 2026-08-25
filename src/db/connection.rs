@@ -746,6 +746,7 @@ impl BindValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres"))]
     use std::path::PathBuf;
 
     #[test]

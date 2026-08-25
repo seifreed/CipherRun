@@ -92,11 +92,16 @@ Certificate Transparency streaming is enabled by default and can be removed
 from a reduced build with `--no-default-features`; `monitoring` depends on
 the `ct` feature because CT discovery feeds the monitor sink.
 
+The HTTP API stack is enabled by the `api` feature (included by default). A
+reduced CLI/library build can disable it with `--no-default-features`; API
+server and OpenAPI commands then return an explicit configuration error and
+the Axum/Tower/utoipa dependencies are omitted.
+
 The standalone PQC configuration scanners and roadmap are enabled by the
 `pqc` feature; readiness scoring remains part of the core scan-result contract.
 
 The reduced feature matrix is checked in CI with `--no-default-features`,
-`monitoring`, `ct,pqc`, and `--all-features` builds.
+`monitoring`, `ct,pqc`, both database backends, and `--all-features` builds.
 
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.

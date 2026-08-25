@@ -9,7 +9,37 @@ mod router;
 // Individual command implementations
 mod analytics;
 mod anycast_scan;
+#[cfg(feature = "api")]
 mod api_server;
+#[cfg(not(feature = "api"))]
+mod api_server_disabled {
+    use super::{Command, CommandExit};
+    use async_trait::async_trait;
+
+    pub struct ApiServerCommand {
+        args: crate::Args,
+    }
+
+    impl ApiServerCommand {
+        pub fn new(args: crate::Args) -> Self {
+            Self { args }
+        }
+    }
+
+    #[async_trait]
+    impl Command for ApiServerCommand {
+        async fn execute(&self) -> crate::Result<CommandExit> {
+            let _ = &self.args;
+            Err(crate::TlsError::ConfigError {
+                message: "API server support requires the `api` feature".to_string(),
+            })
+        }
+
+        fn name(&self) -> &'static str {
+            "ApiServerCommand"
+        }
+    }
+}
 #[cfg(feature = "ct")]
 mod ct_logs;
 mod database;
@@ -38,7 +68,10 @@ pub use router::CommandRouter;
 // Re-export individual commands for testing purposes
 pub use analytics::AnalyticsCommand;
 pub use anycast_scan::AnycastScanCommand;
+#[cfg(feature = "api")]
 pub use api_server::ApiServerCommand;
+#[cfg(not(feature = "api"))]
+pub use api_server_disabled::ApiServerCommand;
 #[cfg(feature = "ct")]
 pub use ct_logs::CtLogsCommand;
 #[cfg(not(feature = "ct"))]

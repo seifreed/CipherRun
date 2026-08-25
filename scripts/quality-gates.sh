@@ -28,6 +28,7 @@ cargo install --path . --locked --root target/install-smoke --force
 # Keep the declared MSRV and the two supported feature surfaces executable.
 cargo +1.88 check --all-targets --locked
 cargo check --no-default-features --locked
+cargo check --no-default-features --features api --locked
 cargo check --no-default-features --features monitoring --locked
 cargo check --no-default-features --features "ct,pqc" --locked
 cargo check --no-default-features --features db-sqlite --locked

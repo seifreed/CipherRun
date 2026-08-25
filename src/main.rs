@@ -93,14 +93,25 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
     // Handle --api-config-example (generate API config example and exit)
     if let Some(config_path) = &args.api_server.config_example {
-        use cipherrun::api::ApiConfig;
-        let token_path = ApiConfig::create_example(config_path)?;
-        println!(
-            "✓ Example API configuration saved to: {}",
-            config_path.display()
-        );
-        println!("✓ Bootstrap token saved to: {}", token_path.display());
-        return Ok(CommandExit::success());
+        #[cfg(feature = "api")]
+        {
+            use cipherrun::api::ApiConfig;
+            let token_path = ApiConfig::create_example(config_path)?;
+            println!(
+                "✓ Example API configuration saved to: {}",
+                config_path.display()
+            );
+            println!("✓ Bootstrap token saved to: {}", token_path.display());
+            return Ok(CommandExit::success());
+        }
+
+        #[cfg(not(feature = "api"))]
+        {
+            let _ = config_path;
+            return Err(cipherrun::TlsError::ConfigError {
+                message: "API configuration requires the `api` feature".to_string(),
+            });
+        }
     }
 
     // Handle --list-compliance (list available frameworks and exit)
