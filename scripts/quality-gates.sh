@@ -30,6 +30,8 @@ cargo +1.88 check --all-targets --locked
 cargo check --no-default-features --locked
 cargo check --no-default-features --features monitoring --locked
 cargo check --no-default-features --features "ct,pqc" --locked
+cargo check --no-default-features --features db-sqlite --locked
+cargo check --no-default-features --features db-postgres --locked
 cargo check --all-features --locked
 
 # The release workflow installs cargo-semver-checks. Local runs remain usable

@@ -238,6 +238,19 @@ pub enum DatabasePool {
 impl DatabasePool {
     /// Create a new database pool from configuration
     pub async fn new(config: &DatabaseConfig) -> crate::Result<Self> {
+        #[cfg(not(feature = "db-postgres"))]
+        if matches!(config.db_type, DatabaseType::Postgres) {
+            return Err(crate::TlsError::ConfigError {
+                message: "PostgreSQL support requires the `db-postgres` feature".to_string(),
+            });
+        }
+        #[cfg(not(feature = "db-sqlite"))]
+        if matches!(config.db_type, DatabaseType::Sqlite) {
+            return Err(crate::TlsError::ConfigError {
+                message: "SQLite support requires the `db-sqlite` feature".to_string(),
+            });
+        }
+
         let pool = match config.db_type {
             DatabaseType::Postgres => {
                 let connection_string = config.connection_string()?;
@@ -821,6 +834,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
     async fn test_sqlite_pool_creation() {
         let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
         let pool = DatabasePool::new(&config)
@@ -832,6 +846,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "db-postgres")]
     async fn test_postgres_pool_rejects_zero_max_connections_before_connecting() {
         let mut config = DatabaseConfig::postgres(
             "127.0.0.1".to_string(),

@@ -98,6 +98,9 @@ The standalone PQC configuration scanners and roadmap are enabled by the
 The reduced feature matrix is checked in CI with `--no-default-features`,
 `monitoring`, `ct,pqc`, and `--all-features` builds.
 
+Database backends are explicit features: `db-sqlite` and `db-postgres` are
+enabled by default, and a disabled backend is rejected before opening a pool.
+
 ### Using Cargo
 
 ```bash
