@@ -53,7 +53,8 @@ test-domain: ## Test specific domain (usage: make test-domain DOMAIN=example.com
 
 
 lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with six TLS scanners
-	@status=0; $(COMPOSE) run --rm $(SERVICE) /scripts/differential-test.sh || status=$$?; \
+	@mkdir -p captures results; \
+	status=0; $(COMPOSE) run --rm $(SERVICE) /scripts/differential-test.sh || status=$$?; \
 		$(COMPOSE) run --rm sslyze-lab || status=$$?; \
 		$(COMPOSE) run --rm tls-scanner-lab || status=$$?; \
 		for target in legacy-tls legacy11-tls weak-tls modern-tls; do \
