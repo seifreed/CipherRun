@@ -80,6 +80,7 @@ jobs:
         run: make lab-validate
 
       - name: Run isolated Opossum parser fixture
+        if: always()
         run: make opossum-fixture
 
       - name: Upload Opossum parser transcripts
