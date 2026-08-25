@@ -92,6 +92,7 @@ impl ClientHelloCapture {
     }
 
     /// Parse ClientHello from raw TLS record
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut cursor = 0;
 
@@ -382,6 +383,7 @@ impl ClientHelloCapture {
     }
 
     /// Parse supported groups extension data
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     fn parse_supported_groups(data: &[u8]) -> Result<Vec<u16>> {
         let list_len = Self::read_u16_at(data, 0, "Supported groups length")? as usize;
 

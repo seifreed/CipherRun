@@ -582,6 +582,7 @@ fn quic_version_probe() -> [u8; 22] {
     ]
 }
 
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 fn classify_quic_response(response: &[u8]) -> Result<ProtocolProbeOutcome> {
     if response.len() < 7 || response[0] & 0x80 == 0 {
         return Ok(ProtocolProbeOutcome::Inconclusive);

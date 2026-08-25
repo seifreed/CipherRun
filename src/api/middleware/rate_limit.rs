@@ -301,6 +301,7 @@ fn quota_scope(auth: &AuthExtension) -> String {
 }
 
 /// Rate limiting middleware function
+#[allow(clippy::result_large_err)]
 pub async fn rate_limit(
     State(state): State<Arc<AppState>>,
     req: Request,
