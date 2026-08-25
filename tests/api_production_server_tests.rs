@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use cipherrun::api::contract::JobBackend;
-use cipherrun::api::{ApiConfig, ApiServer};
 use cipherrun::api::jobs::{RetryDisposition, ScanJob};
+use cipherrun::api::{ApiConfig, ApiServer};
 use cipherrun::db::{DatabaseConfig, DatabasePool};
 
 async fn sqlite_pool(path: &std::path::Path) -> Arc<DatabasePool> {
@@ -55,7 +55,10 @@ async fn production_server_restart_recovery_retry_dead_letter_cancel_and_tenant_
             .await
             .expect("job should dequeue")
             .expect("recoverable job should be claimed");
-        assert_eq!(claimed.status, cipherrun::api::models::response::ScanStatus::Running);
+        assert_eq!(
+            claimed.status,
+            cipherrun::api::models::response::ScanStatus::Running
+        );
         assert_eq!(claimed.tenant_id.as_deref(), Some("tenant-a"));
 
         let mut dead_letter = ScanJob::new_owned(
@@ -96,10 +99,12 @@ async fn production_server_restart_recovery_retry_dead_letter_cancel_and_tenant_
             .enqueue(cancelled)
             .await
             .expect("cancelled job should enqueue");
-        assert!(queue
-            .cancel_job(&cancelled_id)
-            .await
-            .expect("cancellation should persist"));
+        assert!(
+            queue
+                .cancel_job(&cancelled_id)
+                .await
+                .expect("cancellation should persist")
+        );
 
         let mut tenant_b = ScanJob::new_owned(
             "tenant-b.example:443".to_string(),
@@ -167,10 +172,12 @@ async fn production_server_restart_recovery_retry_dead_letter_cancel_and_tenant_
     );
     let mut completed_copy = cancelled.clone();
     completed_copy.mark_completed(Default::default());
-    assert!(!queue
-        .update_job_preserving_cancelled(&completed_copy)
-        .await
-        .expect("cancelled update race should be handled"));
+    assert!(
+        !queue
+            .update_job_preserving_cancelled(&completed_copy)
+            .await
+            .expect("cancelled update race should be handled")
+    );
 
     let tenant_b = queue
         .get_job(&tenant_b_id)
