@@ -67,7 +67,7 @@ sha256_file() {
 
 source_url() {
     case "$1" in
-        Mozilla) echo "https://ccadb-public.secure.force.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Websites" ;;
+        Mozilla) echo "https://curl.se/ca/cacert.pem" ;;
         Apple) echo "https://support.apple.com/en-us/HT213464" ;;
         Android) echo "https://android.googlesource.com/platform/system/ca-certificates/+/refs/heads/master/files" ;;
         Java) echo "local Java cacerts keystore (JAVA_HOME or platform default)" ;;
@@ -79,7 +79,7 @@ source_url() {
 
 source_method() {
     case "$1" in
-        Mozilla) echo "remote_pem_download" ;;
+        Mozilla) echo "remote_mozilla_derived_pem" ;;
         Apple) echo "local_system_bundle_export" ;;
         Android) echo "mozilla_baseline_or_aosp_export" ;;
         Java) echo "local_keytool_export" ;;
@@ -147,7 +147,9 @@ download() {
 update_mozilla() {
     log_info "Updating Mozilla NSS trust store..."
 
-    local url="https://ccadb-public.secure.force.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Websites"
+    # curl.se publishes the current Mozilla-derived bundle as PEM and keeps
+    # the source metadata in the file header for reproducible review.
+    local url="https://curl.se/ca/cacert.pem"
     local output="${DATA_DIR}/Mozilla.pem"
 
     download "${url}" "${TEMP_DIR}/mozilla.pem"
