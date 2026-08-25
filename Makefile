@@ -54,7 +54,7 @@ test-domain: ## Test specific domain (usage: make test-domain DOMAIN=example.com
 
 lab-validate: build ## Validate controlled TLS 1.0/1.1/1.2/1.3 fixtures with six TLS scanners
 	@mkdir -p captures results/differential; chmod 0777 captures results results/differential; \
-		status=0; record_status() { rc=$$1; (( rc == 0 || rc == 4 )) || status=$$rc; }; \
+		status=0; record_status() { rc=$$1; if [ "$$rc" -ne 0 ] && [ "$$rc" -ne 4 ]; then status=$$rc; fi; }; \
 		$(COMPOSE) run --rm $(SERVICE) /scripts/differential-test.sh || record_status $$?; \
 		$(COMPOSE) run --rm sslyze-lab || record_status $$?; \
 		$(COMPOSE) run --rm tls-scanner-lab || record_status $$?; \
