@@ -10,7 +10,7 @@
 # validation system.
 #
 # Usage:
-#   ./scripts/update-trust-stores.sh [mozilla|apple|android|java|windows|all]
+#   ./scripts/update-trust-stores.sh [mozilla|apple|android|java|windows|all|manifest]
 #
 # Requirements:
 #   - curl or wget
@@ -357,9 +357,12 @@ main() {
             echo
             update_windows
             ;;
+        manifest)
+            log_info "Generating a provenance manifest from the checked-in stores"
+            ;;
         *)
             log_error "Unknown trust store: ${target}"
-            echo "Usage: $0 [mozilla|apple|android|java|windows|all]"
+            echo "Usage: $0 [mozilla|apple|android|java|windows|all|manifest]"
             exit 1
             ;;
     esac

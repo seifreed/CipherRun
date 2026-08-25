@@ -6,6 +6,8 @@ as versioned input data rather than anonymous generated files.
 ## Trust stores
 
 Run `scripts/update-trust-stores.sh [mozilla|apple|android|java|windows|all]`.
+Use the `manifest` target to record provenance for the checked-in baseline
+without downloading a platform store.
 The script writes `data/trust-stores-manifest.json` (or the path supplied by
 `CIPHERRUN_TRUST_MANIFEST`) with the update target, repository revision, source
 URL or local source description, certificate count, and SHA-256 for every
