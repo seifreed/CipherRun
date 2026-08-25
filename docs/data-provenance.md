@@ -12,6 +12,11 @@ URL or local source description, certificate count, and SHA-256 for every
 available PEM store, plus the extraction method. Baseline copies are recorded
 as such by their method and must not be presented as native platform exports.
 
+`.github/workflows/data-provenance.yml` runs the Mozilla refresh weekly and
+opens a pull request only when tracked data changes. Other trust stores can be
+selected with `workflow_dispatch`; the large Debian fingerprint corpus is
+explicitly opt-in because rebuilding it downloads roughly 1 GB of source data.
+
 ## Fingerprints
 
 `scripts/gen_debian_blacklist.sh` records the exact upstream Git revision,
