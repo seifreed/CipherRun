@@ -96,7 +96,7 @@ impl ClientProfile {
         let (family, suffix) = self
             .short_id
             .split_once('_')
-            .map_or((self.short_id.as_str(), ""), |parts| parts);
+            .unwrap_or((self.short_id.as_str(), ""));
         let version = ClientDatabase::leading_version(suffix);
         let legacy_protocol = self
             .highest_protocol
