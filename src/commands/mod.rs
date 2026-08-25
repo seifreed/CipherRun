@@ -17,6 +17,7 @@ mod mass_scan;
 #[cfg(feature = "monitoring")]
 mod monitor;
 mod mx_test;
+#[cfg(feature = "pqc")]
 mod pqc_scan;
 mod remediation;
 mod scan;
@@ -97,7 +98,40 @@ impl Command for MonitorCommand {
     }
 }
 pub use mx_test::MxTestCommand;
+#[cfg(feature = "pqc")]
 pub use pqc_scan::PqcScanCommand;
+#[cfg(not(feature = "pqc"))]
+pub struct PqcScanCommand {
+    args: crate::Args,
+}
+
+#[cfg(not(feature = "pqc"))]
+impl PqcScanCommand {
+    pub fn new(
+        _ssh_path: Option<std::path::PathBuf>,
+        _vpn_path: Option<std::path::PathBuf>,
+        _code_path: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            args: crate::Args::default(),
+        }
+    }
+}
+
+#[cfg(not(feature = "pqc"))]
+#[async_trait::async_trait]
+impl Command for PqcScanCommand {
+    async fn execute(&self) -> crate::Result<CommandExit> {
+        let _ = &self.args;
+        Err(crate::TlsError::ConfigError {
+            message: "PQC configuration scanners require the `pqc` feature".to_string(),
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "PqcScanCommand"
+    }
+}
 pub use remediation::RemediationCommand;
 pub use scan::ScanCommand;
 pub use scan_diff::ScanDiffCommand;

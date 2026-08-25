@@ -5,7 +5,9 @@
 // and PQC algorithm benchmarking.
 
 pub mod readiness;
+#[cfg(feature = "pqc")]
 pub mod roadmap;
+#[cfg(feature = "pqc")]
 pub mod scanners;
 
 pub use readiness::{PqcLevel, PqcReadinessAssessment, PqcReadinessScorer};

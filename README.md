@@ -92,6 +92,9 @@ Certificate Transparency streaming is enabled by default and can be removed
 from a reduced build with `--no-default-features`; `monitoring` depends on
 the `ct` feature because CT discovery feeds the monitor sink.
 
+The standalone PQC configuration scanners and roadmap are enabled by the
+`pqc` feature; readiness scoring remains part of the core scan-result contract.
+
 ### Using Cargo
 
 ```bash
