@@ -3,6 +3,12 @@
 CipherRun recognizes the RFC 9345 delegated-credentials contract without
 claiming false wire-level support.
 
+When a caller supplies a captured `CertificateEntry` extension, the pure
+`analyze_delegated_credential_entry` parser validates the RFC 9345 length
+fields, `valid_time`, signature scheme, public-key vector, and signature
+vector. It reports `observed` or `invalid` structure without treating that as
+cryptographic verification.
+
 `CertificateAdvancedTester::test_delegated_credentials()` checks the
 end-entity certificate for the RFC 9345 `DelegationUsage` extension
 (`1.3.6.1.4.1.44363.44`) and reports extension type `34`. The result remains
@@ -15,5 +21,7 @@ Therefore:
 - `certificate_allows_delegation` is a prerequisite signal only.
 - `credential_observed: false` is not proof that the peer lacks delegated
   credentials.
+- A structurally `observed` entry still requires signature and certificate-key
+  binding verification before it can be treated as trusted.
 - Full positive/negative wire validation requires a TLS backend that exposes
   CertificateEntry extensions and dedicated RFC 9345 fixtures.
