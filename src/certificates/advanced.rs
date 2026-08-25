@@ -3,6 +3,9 @@
 
 use crate::Result;
 use crate::utils::network::Target;
+use openssl::hash::MessageDigest;
+use openssl::rsa::Padding;
+use openssl::sign::{RsaPssSaltlen, Verifier};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
@@ -60,9 +63,13 @@ pub struct DelegatedCredentialAnalysis {
     #[serde(default)]
     pub signature_scheme: Option<u16>,
     #[serde(default)]
+    pub credential_signature_scheme: Option<u16>,
+    #[serde(default)]
     pub public_key_length: Option<usize>,
     #[serde(default)]
     pub signature_length: Option<usize>,
+    #[serde(default)]
+    pub signature_verified: Option<bool>,
     pub status: String,
     pub details: String,
     pub limitations: Vec<String>,
@@ -70,7 +77,10 @@ pub struct DelegatedCredentialAnalysis {
 
 struct DelegatedCredentialFields {
     valid_time_seconds: u32,
+    credential_signature_scheme: u16,
     signature_scheme: u16,
+    credential_end: usize,
+    signature: Vec<u8>,
     public_key_length: usize,
     signature_length: usize,
 }
@@ -78,7 +88,7 @@ struct DelegatedCredentialFields {
 fn parse_delegated_credential_extension(
     extension: &[u8],
 ) -> std::result::Result<DelegatedCredentialFields, String> {
-    if extension.len() < 10 {
+    if extension.len() < 15 {
         return Err("delegated credential is shorter than its fixed-width fields".to_string());
     }
 
@@ -91,24 +101,27 @@ fn parse_delegated_credential_extension(
         return Err("delegated credential valid_time must be greater than zero".to_string());
     }
 
-    let signature_scheme = u16::from_be_bytes(
+    let credential_signature_scheme = u16::from_be_bytes(
         extension[4..6]
             .try_into()
             .map_err(|_| "invalid signature scheme field")?,
     );
-    let public_key_length = usize::from(u16::from_be_bytes(
-        extension[6..8]
-            .try_into()
-            .map_err(|_| "invalid public-key length field")?,
-    ));
+    // RFC 9345 encodes ASN1_subjectPublicKeyInfo as opaque<1..2^24-1>,
+    // therefore its vector length is three bytes, not two.
+    let public_key_length = (usize::from(extension[6]) << 16)
+        | (usize::from(extension[7]) << 8)
+        | usize::from(extension[8]);
     if public_key_length == 0 {
         return Err("delegated credential public key must not be empty".to_string());
     }
 
-    let public_key_end = 8usize
+    let public_key_end = 9usize
         .checked_add(public_key_length)
         .ok_or_else(|| "delegated credential public-key length overflows".to_string())?;
-    let signature_length_start = public_key_end;
+    let signature_scheme_end = public_key_end
+        .checked_add(2)
+        .ok_or_else(|| "delegated credential signature scheme overflows".to_string())?;
+    let signature_length_start = signature_scheme_end;
     let signature_length_end = signature_length_start
         .checked_add(2)
         .ok_or_else(|| "delegated credential signature length overflows".to_string())?;
@@ -116,6 +129,11 @@ fn parse_delegated_credential_extension(
         return Err("delegated credential is truncated before signature length".to_string());
     }
 
+    let signature_scheme = u16::from_be_bytes(
+        extension[public_key_end..signature_scheme_end]
+            .try_into()
+            .map_err(|_| "invalid delegated signature scheme field")?,
+    );
     let signature_length = usize::from(u16::from_be_bytes(
         extension[signature_length_start..signature_length_end]
             .try_into()
@@ -136,10 +154,66 @@ fn parse_delegated_credential_extension(
 
     Ok(DelegatedCredentialFields {
         valid_time_seconds,
+        credential_signature_scheme,
         signature_scheme,
+        credential_end: public_key_end,
+        signature: extension[signature_length_end..signature_end].to_vec(),
         public_key_length,
         signature_length,
     })
+}
+
+/// The RFC 9345 context string depends on which side presents the credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelegatedCredentialRole {
+    Server,
+    Client,
+}
+
+impl DelegatedCredentialRole {
+    fn context(self) -> &'static [u8] {
+        match self {
+            Self::Server => b"TLS, server delegated credentials",
+            Self::Client => b"TLS, client delegated credentials",
+        }
+    }
+}
+
+fn digest_for_signature_scheme(scheme: u16) -> Option<MessageDigest> {
+    match scheme {
+        0x0401 | 0x0403 | 0x0804 | 0x0809 => Some(MessageDigest::sha256()),
+        0x0501 | 0x0503 | 0x0805 | 0x080a => Some(MessageDigest::sha384()),
+        0x0601 | 0x0603 | 0x0806 | 0x080b => Some(MessageDigest::sha512()),
+        _ => None,
+    }
+}
+
+fn verify_delegated_credential_signature(
+    certificate_der: &[u8],
+    fields: &DelegatedCredentialFields,
+    role: DelegatedCredentialRole,
+    extension: &[u8],
+) -> Result<Option<bool>> {
+    let Some(digest) = digest_for_signature_scheme(fields.signature_scheme) else {
+        return Ok(None);
+    };
+    let certificate = X509::from_der(certificate_der)?;
+    let public_key = certificate.public_key()?;
+    let mut verifier = Verifier::new(digest, &public_key)?;
+
+    if matches!(fields.signature_scheme, 0x0804..=0x080b) {
+        verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+        verifier.set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)?;
+    }
+
+    let mut signed = vec![0x20; 64];
+    signed.extend_from_slice(role.context());
+    signed.push(0);
+    signed.extend_from_slice(certificate_der);
+    signed.extend_from_slice(&extension[..fields.credential_end]);
+    signed.extend_from_slice(&fields.signature_scheme.to_be_bytes());
+    verifier.update(&signed)?;
+    Ok(Some(verifier.verify(&fields.signature)?))
 }
 
 /// Inspect the end-entity certificate prerequisite for delegated credentials.
@@ -170,8 +244,10 @@ pub fn analyze_delegated_credential_certificate(
         structurally_valid: false,
         valid_time_seconds: None,
         signature_scheme: None,
+        credential_signature_scheme: None,
         public_key_length: None,
         signature_length: None,
+        signature_verified: None,
         status: "not_observed".to_string(),
         details: if certificate_allows_delegation {
             "The certificate authorizes delegated credentials, but no CertificateEntry credential was exposed by the TLS API".to_string()
@@ -192,6 +268,21 @@ pub fn analyze_delegated_credential_entry(
     certificate_der: &[u8],
     extension: &[u8],
 ) -> Result<DelegatedCredentialAnalysis> {
+    analyze_delegated_credential_entry_with_role(
+        certificate_der,
+        extension,
+        DelegatedCredentialRole::Server,
+    )
+}
+
+/// Analyze and, when the signature scheme is supported by OpenSSL, verify a
+/// captured RFC 9345 delegated credential. The default entry point assumes a
+/// server credential; clients must select [`DelegatedCredentialRole::Client`].
+pub fn analyze_delegated_credential_entry_with_role(
+    certificate_der: &[u8],
+    extension: &[u8],
+    role: DelegatedCredentialRole,
+) -> Result<DelegatedCredentialAnalysis> {
     let mut analysis = analyze_delegated_credential_certificate(certificate_der)?;
     analysis.credential_observed = true;
 
@@ -200,13 +291,41 @@ pub fn analyze_delegated_credential_entry(
             analysis.structurally_valid = true;
             analysis.valid_time_seconds = Some(fields.valid_time_seconds);
             analysis.signature_scheme = Some(fields.signature_scheme);
+            analysis.credential_signature_scheme = Some(fields.credential_signature_scheme);
             analysis.public_key_length = Some(fields.public_key_length);
             analysis.signature_length = Some(fields.signature_length);
-            analysis.status = "observed".to_string();
-            analysis.details = format!(
-                "RFC 9345 delegated credential structure observed (valid_time={}s, signature_scheme=0x{:04x})",
-                fields.valid_time_seconds, fields.signature_scheme
-            );
+            match verify_delegated_credential_signature(certificate_der, &fields, role, extension)?
+            {
+                Some(true) => {
+                    analysis.signature_verified = Some(true);
+                    analysis.status = "verified".to_string();
+                    analysis.details = format!(
+                        "RFC 9345 delegated credential verified (valid_time={}s, credential_signature_scheme=0x{:04x}, signature_scheme=0x{:04x})",
+                        fields.valid_time_seconds,
+                        fields.credential_signature_scheme,
+                        fields.signature_scheme
+                    );
+                }
+                Some(false) => {
+                    analysis.signature_verified = Some(false);
+                    analysis.status = "invalid".to_string();
+                    analysis.details =
+                        "RFC 9345 delegated credential signature verification failed".to_string();
+                }
+                None => {
+                    analysis.status = "observed".to_string();
+                    analysis.details = format!(
+                        "RFC 9345 delegated credential structure observed (valid_time={}s, credential_signature_scheme=0x{:04x}, signature_scheme=0x{:04x})",
+                        fields.valid_time_seconds,
+                        fields.credential_signature_scheme,
+                        fields.signature_scheme
+                    );
+                    analysis.limitations.push(format!(
+                        "Signature scheme 0x{:04x} is not supported by the offline verifier",
+                        fields.signature_scheme
+                    ));
+                }
+            }
         }
         Err(error) => {
             analysis.status = "invalid".to_string();
@@ -712,6 +831,7 @@ mod tests {
     use openssl::hash::MessageDigest;
     use openssl::pkey::PKey;
     use openssl::rsa::Rsa;
+    use openssl::sign::Signer;
     use openssl::x509::extension::SubjectAlternativeName;
     use openssl::x509::{X509Builder, X509NameBuilder};
 
@@ -925,8 +1045,9 @@ mod tests {
 
         let extension = [
             0, 0, 0, 60, // valid_time
-            0x04, 0x03, // ecdsa_secp256r1_sha256
-            0, 3, 1, 2, 3, // public key opaque vector
+            0x04, 0x03, // ecdsa_secp256r1_sha256 credential key
+            0, 0, 3, 1, 2, 3, // public key opaque vector (three-byte length)
+            0x99, 0x99, // unsupported delegation signature scheme
             0, 2, 4, 5, // signature opaque vector
         ];
         let analysis =
@@ -936,9 +1057,11 @@ mod tests {
         assert!(analysis.structurally_valid);
         assert_eq!(analysis.status, "observed");
         assert_eq!(analysis.valid_time_seconds, Some(60));
-        assert_eq!(analysis.signature_scheme, Some(0x0403));
+        assert_eq!(analysis.credential_signature_scheme, Some(0x0403));
+        assert_eq!(analysis.signature_scheme, Some(0x9999));
         assert_eq!(analysis.public_key_length, Some(3));
         assert_eq!(analysis.signature_length, Some(2));
+        assert_eq!(analysis.signature_verified, None);
     }
 
     #[test]
@@ -963,12 +1086,103 @@ mod tests {
 
         let analysis = analyze_delegated_credential_entry(
             &builder.build().to_der().unwrap(),
-            &[0, 0, 0, 60, 0x04, 0x03, 0, 1, 1, 0, 1, 2, 9],
+            &[0, 0, 0, 60, 0x04, 0x03, 0, 0, 1, 1, 0, 1, 2, 9],
         )
         .expect("certificate should parse");
         assert!(analysis.credential_observed);
         assert!(!analysis.structurally_valid);
         assert_eq!(analysis.status, "invalid");
+    }
+
+    #[test]
+    fn delegated_credential_entry_verifies_rfc9345_signature() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "delegated-credential.example")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let certificate = builder.build().to_der().unwrap();
+        let delegated_public_key = pkey.public_key_to_der().unwrap();
+        let mut credential = vec![0, 0, 0, 60, 0x04, 0x01];
+        credential.extend_from_slice(&[
+            0,
+            ((delegated_public_key.len() >> 8) & 0xff) as u8,
+            (delegated_public_key.len() & 0xff) as u8,
+        ]);
+        credential.extend_from_slice(&delegated_public_key);
+        let delegation_algorithm = [0x04, 0x01];
+
+        let mut signed = vec![0x20; 64];
+        signed.extend_from_slice(b"TLS, server delegated credentials");
+        signed.push(0);
+        signed.extend_from_slice(&certificate);
+        signed.extend_from_slice(&credential);
+        signed.extend_from_slice(&delegation_algorithm);
+        let mut signer = Signer::new(MessageDigest::sha256(), &pkey).unwrap();
+        signer.update(&signed).unwrap();
+        let signature = signer.sign_to_vec().unwrap();
+
+        let mut extension = credential;
+        extension.extend_from_slice(&delegation_algorithm);
+        extension.extend_from_slice(&(signature.len() as u16).to_be_bytes());
+        extension.extend_from_slice(&signature);
+
+        let analysis = analyze_delegated_credential_entry(&certificate, &extension)
+            .expect("delegated credential should parse");
+        assert!(analysis.structurally_valid);
+        assert_eq!(analysis.status, "verified");
+        assert_eq!(analysis.signature_verified, Some(true));
+        assert_eq!(analysis.credential_signature_scheme, Some(0x0401));
+        assert_eq!(analysis.signature_scheme, Some(0x0401));
+    }
+
+    #[test]
+    fn delegated_credential_entry_rejects_bad_signature() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "delegated-credential.example")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let certificate = builder.build().to_der().unwrap();
+        let delegated_public_key = pkey.public_key_to_der().unwrap();
+        let mut extension = vec![0, 0, 0, 60, 0x04, 0x01];
+        extension.extend_from_slice(&[
+            0,
+            ((delegated_public_key.len() >> 8) & 0xff) as u8,
+            (delegated_public_key.len() & 0xff) as u8,
+        ]);
+        extension.extend_from_slice(&delegated_public_key);
+        extension.extend_from_slice(&[0x04, 0x01, 0, 2, 0xaa, 0xbb]);
+
+        let analysis = analyze_delegated_credential_entry(&certificate, &extension)
+            .expect("delegated credential should parse");
+        assert!(analysis.structurally_valid);
+        assert_eq!(analysis.status, "invalid");
+        assert_eq!(analysis.signature_verified, Some(false));
     }
 
     #[test]
