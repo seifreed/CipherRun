@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "script_version": "1",
-  "updated_target": "manifest",
-  "generated_at": "2026-08-25T23:13:02Z",
-  "repository_revision": "f2f845873b68c99b93349c7965ff7018f68fe8b1",
+  "updated_target": "mozilla",
+  "generated_at": "2026-08-25T23:13:37Z",
+  "repository_revision": "7f17ca6c7a116d6041eba705675cdc249f351741",
   "stores": {
-    "Mozilla": {"path": "data/Mozilla.pem", "sha256": "50a6277ec69113f00c5fd45f09e8b97a4b3e32daa35d3a95ab30137a55386cef", "certificate_count": 150, "source": "https://curl.se/ca/cacert.pem", "method": "remote_mozilla_derived_pem"},
+    "Mozilla": {"path": "data/Mozilla.pem", "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9", "certificate_count": 121, "source": "https://curl.se/ca/cacert.pem", "method": "remote_mozilla_derived_pem"},
     "Apple": {"path": "data/Apple.pem", "sha256": "2db2490ebe7cef949addd87b7259aa3831affdda17f31daf6686e6a3771f7d03", "certificate_count": 154, "source": "https://support.apple.com/en-us/HT213464", "method": "local_system_bundle_export"},
     "Android": {"path": "data/Android.pem", "sha256": "3ec9a06e65fe55489f4a3bb60b421bcb2654996cedddf62b0cdd17c5c29be6fc", "certificate_count": 150, "source": "https://android.googlesource.com/platform/system/ca-certificates/+/refs/heads/master/files", "method": "mozilla_baseline_or_aosp_export"},
     "Linux": {"path": "data/Linux.pem", "sha256": "3ec9a06e65fe55489f4a3bb60b421bcb2654996cedddf62b0cdd17c5c29be6fc", "certificate_count": 150, "source": "local distribution trust store", "method": "bundled_distribution_store"},
