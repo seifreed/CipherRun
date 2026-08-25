@@ -88,6 +88,10 @@ contracts without pulling in Axum, SQLx, or the scan executor.
 The `cipherrun-worker` crate is a standalone worker binary that reuses the
 main package's durable queue and scan executor.
 
+Certificate Transparency streaming is enabled by default and can be removed
+from a reduced build with `--no-default-features`; `monitoring` depends on
+the `ct` feature because CT discovery feeds the monitor sink.
+
 ### Using Cargo
 
 ```bash

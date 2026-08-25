@@ -10,6 +10,7 @@ mod router;
 mod analytics;
 mod anycast_scan;
 mod api_server;
+#[cfg(feature = "ct")]
 mod ct_logs;
 mod database;
 mod mass_scan;
@@ -37,7 +38,34 @@ pub use router::CommandRouter;
 pub use analytics::AnalyticsCommand;
 pub use anycast_scan::AnycastScanCommand;
 pub use api_server::ApiServerCommand;
+#[cfg(feature = "ct")]
 pub use ct_logs::CtLogsCommand;
+#[cfg(not(feature = "ct"))]
+pub struct CtLogsCommand {
+    args: crate::Args,
+}
+
+#[cfg(not(feature = "ct"))]
+impl CtLogsCommand {
+    pub fn new(args: crate::Args) -> Self {
+        Self { args }
+    }
+}
+
+#[cfg(not(feature = "ct"))]
+#[async_trait::async_trait]
+impl Command for CtLogsCommand {
+    async fn execute(&self) -> crate::Result<CommandExit> {
+        let _ = &self.args;
+        Err(crate::TlsError::ConfigError {
+            message: "CT log streaming requires the `ct` feature".to_string(),
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "CtLogsCommand"
+    }
+}
 pub use database::DatabaseCommand;
 pub use mass_scan::MassScanCommand;
 #[cfg(feature = "monitoring")]

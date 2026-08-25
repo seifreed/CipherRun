@@ -16,6 +16,7 @@ pub mod client_sim;
 pub mod commands;
 pub mod compliance;
 pub mod constants;
+#[cfg(feature = "ct")]
 pub mod ct_logs;
 pub mod data;
 pub mod db;

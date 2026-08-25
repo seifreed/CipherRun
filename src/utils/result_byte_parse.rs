@@ -34,6 +34,7 @@ pub(crate) fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<u
     Ok(((high as usize) << 16) | ((mid as usize) << 8) | low as usize)
 }
 
+#[cfg(feature = "ct")]
 pub(crate) fn read_u64_at(data: &[u8], offset: usize, context: &str) -> Result<u64> {
     let end = offset
         .checked_add(8)
@@ -58,7 +59,7 @@ pub(crate) fn slice_range<'a>(
         .ok_or_else(|| parse_error(context, "truncated"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ct"))]
 mod tests {
     use super::*;
 
