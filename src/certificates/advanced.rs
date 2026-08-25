@@ -8,6 +8,11 @@ use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
+/// RFC 9345 delegated credentials are sent in CertificateEntry extension 34.
+pub const DELEGATED_CREDENTIAL_EXTENSION_TYPE: u16 = 34;
+/// RFC 9345 DelegationUsage certificate-extension OID.
+pub const DELEGATION_USAGE_OID: &str = "1.3.6.1.4.1.44363.44";
+
 /// Multiple certificates analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultipleCertificatesAnalysis {
@@ -39,6 +44,56 @@ pub struct CertificateCompressionAnalysis {
     pub details: String,
     #[serde(default)]
     pub inconclusive: bool,
+}
+
+/// Evidence available for RFC 9345 delegated credentials.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DelegatedCredentialAnalysis {
+    pub extension_type: u16,
+    pub delegation_usage_oid: String,
+    pub certificate_allows_delegation: bool,
+    pub credential_observed: bool,
+    pub status: String,
+    pub details: String,
+    pub limitations: Vec<String>,
+}
+
+/// Inspect the end-entity certificate prerequisite for delegated credentials.
+///
+/// The delegated credential itself is a TLS `CertificateEntry` extension, not
+/// an X.509 extension. Current rustls/OpenSSL handshake APIs expose the peer
+/// certificate but not those opaque CertificateEntry extensions, so this
+/// function deliberately reports `not_observed` instead of claiming support.
+pub fn analyze_delegated_credential_certificate(
+    certificate_der: &[u8],
+) -> Result<DelegatedCredentialAnalysis> {
+    let (_, certificate) =
+        x509_parser::parse_x509_certificate(certificate_der).map_err(|error| {
+            crate::error::TlsError::ParseError {
+                message: format!("Invalid delegated-credential certificate: {error}"),
+            }
+        })?;
+    let certificate_allows_delegation = certificate
+        .extensions()
+        .iter()
+        .any(|extension| extension.oid.to_id_string() == DELEGATION_USAGE_OID);
+
+    Ok(DelegatedCredentialAnalysis {
+        extension_type: DELEGATED_CREDENTIAL_EXTENSION_TYPE,
+        delegation_usage_oid: DELEGATION_USAGE_OID.to_string(),
+        certificate_allows_delegation,
+        credential_observed: false,
+        status: "not_observed".to_string(),
+        details: if certificate_allows_delegation {
+            "The certificate authorizes delegated credentials, but no CertificateEntry credential was exposed by the TLS API".to_string()
+        } else {
+            "The end-entity certificate does not contain the RFC 9345 DelegationUsage extension".to_string()
+        },
+        limitations: vec![
+            "CertificateEntry extension 34 is not exposed by the current rustls/OpenSSL handshake APIs".to_string(),
+            "A not_observed result is not evidence that the peer does or does not implement RFC 9345".to_string(),
+        ],
+    })
 }
 
 /// Cipher order enforcement analysis
@@ -140,7 +195,21 @@ impl CertificateAdvancedTester {
         })
     }
 
+    /// Check delegated-credential authorization on the peer certificate.
+    pub async fn test_delegated_credentials(&self) -> Result<DelegatedCredentialAnalysis> {
+        let certificate = self
+            .get_peer_certificate(Some(&self.target.hostname))
+            .await?;
+        let der = certificate.to_der()?;
+        analyze_delegated_credential_certificate(&der)
+    }
+
     async fn get_certificate(&self, sni_hostname: Option<&str>) -> Result<CertificateInfo> {
+        let cert = self.get_peer_certificate(sni_hostname).await?;
+        extract_certificate_info(&cert)
+    }
+
+    async fn get_peer_certificate(&self, sni_hostname: Option<&str>) -> Result<X509> {
         let addr = self
             .target
             .socket_addrs()
@@ -156,7 +225,7 @@ impl CertificateAdvancedTester {
 
         let (hostname_to_use, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
-        tokio::task::spawn_blocking(move || -> Result<CertificateInfo> {
+        tokio::task::spawn_blocking(move || -> Result<X509> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // The scanner must retrieve and inspect certificates from hosts whose
             // certificates are expired/self-signed/untrusted — exactly the cases a
@@ -175,7 +244,7 @@ impl CertificateAdvancedTester {
                 .peer_certificate()
                 .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
 
-            extract_certificate_info(&cert)
+            Ok(cert)
         })
         .await
         .map_err(|e| crate::TlsError::Other(format!("certificate task failed: {}", e)))?
@@ -671,6 +740,42 @@ mod tests {
         );
         assert_eq!(decoded.original_size, analysis.original_size);
         assert_eq!(decoded.compressed_size, analysis.compressed_size);
+    }
+
+    #[test]
+    fn delegated_credential_analysis_is_explicitly_inconclusive_without_entry_extensions() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "delegated-credential.example")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+
+        let analysis = analyze_delegated_credential_certificate(&builder.build().to_der().unwrap())
+            .expect("certificate should parse");
+        assert_eq!(analysis.extension_type, DELEGATED_CREDENTIAL_EXTENSION_TYPE);
+        assert!(!analysis.certificate_allows_delegation);
+        assert!(!analysis.credential_observed);
+        assert_eq!(analysis.status, "not_observed");
+        assert!(
+            analysis
+                .limitations
+                .iter()
+                .any(|limitation| limitation.contains("CertificateEntry extension 34"))
+        );
     }
 
     #[test]
