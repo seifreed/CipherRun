@@ -42,5 +42,6 @@ cargo check --all-features --locked
 # The release workflow installs cargo-semver-checks. Local runs remain usable
 # without downloading another tool.
 if command -v cargo-semver-checks >/dev/null 2>&1; then
+    rm -rf target/package
     cargo semver-checks check-release
 fi
