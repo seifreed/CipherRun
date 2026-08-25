@@ -38,6 +38,7 @@ impl DatabaseJobQueue {
             "CREATE TABLE IF NOT EXISTS {TABLE} (\
              id TEXT PRIMARY KEY, status TEXT NOT NULL, queued_at TIMESTAMP NOT NULL,\
              job_json TEXT NOT NULL, principal_id TEXT NOT NULL DEFAULT '',\
+             tenant_id TEXT NOT NULL DEFAULT '',\
              idempotency_key TEXT, request_fingerprint TEXT, lease_until TIMESTAMP,\
              attempts INTEGER NOT NULL DEFAULT 0)"
         );
@@ -45,15 +46,37 @@ impl DatabaseJobQueue {
             "CREATE TABLE IF NOT EXISTS {TABLE} (\
              id TEXT PRIMARY KEY, status TEXT NOT NULL, queued_at TIMESTAMPTZ NOT NULL,\
              job_json TEXT NOT NULL, principal_id TEXT NOT NULL DEFAULT '',\
+             tenant_id TEXT NOT NULL DEFAULT '',\
              idempotency_key TEXT, request_fingerprint TEXT, lease_until TIMESTAMPTZ,\
              attempts INTEGER NOT NULL DEFAULT 0)"
         );
         match self.pool.as_ref() {
             DatabasePool::Sqlite(pool) => {
                 sqlx::query(&sqlite).execute(pool).await.map_err(db_error)?;
+                let columns = sqlx::query("PRAGMA table_info(cipherrun_jobs)")
+                    .fetch_all(pool)
+                    .await
+                    .map_err(db_error)?;
+                let has_tenant = columns.iter().any(|row| {
+                    row.try_get::<String, _>("name")
+                        .map(|name| name == "tenant_id")
+                        .unwrap_or(false)
+                });
+                if !has_tenant {
+                    sqlx::query(
+                        "ALTER TABLE cipherrun_jobs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''",
+                    )
+                    .execute(pool)
+                    .await
+                    .map_err(db_error)?;
+                }
+                sqlx::query("DROP INDEX IF EXISTS idx_cipherrun_jobs_idempotency")
+                    .execute(pool)
+                    .await
+                    .map_err(db_error)?;
                 sqlx::query(&format!(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE}_idempotency \
-                     ON {TABLE}(principal_id, idempotency_key)"
+                     ON {TABLE}(tenant_id, principal_id, idempotency_key)"
                 ))
                 .execute(pool)
                 .await
@@ -65,8 +88,18 @@ impl DatabaseJobQueue {
                     .await
                     .map_err(db_error)?;
                 sqlx::query(&format!(
+                    "ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT ''"
+                ))
+                .execute(pool)
+                .await
+                .map_err(db_error)?;
+                sqlx::query(&format!("DROP INDEX IF EXISTS idx_{TABLE}_idempotency"))
+                    .execute(pool)
+                    .await
+                    .map_err(db_error)?;
+                sqlx::query(&format!(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE}_idempotency \
-                     ON {TABLE}(principal_id, idempotency_key)"
+                     ON {TABLE}(tenant_id, principal_id, idempotency_key)"
                 ))
                 .execute(pool)
                 .await
@@ -243,12 +276,14 @@ impl JobQueue for DatabaseJobQueue {
         }
         if let Some(key) = job.idempotency_key.as_deref() {
             let query = format!(
-                "SELECT id, request_fingerprint FROM {TABLE} WHERE principal_id = {} AND idempotency_key = {}",
+                "SELECT id, request_fingerprint FROM {TABLE} WHERE tenant_id = {} AND principal_id = {} AND idempotency_key = {}",
                 placeholder(self.pool.as_ref(), 1),
-                placeholder(self.pool.as_ref(), 2)
+                placeholder(self.pool.as_ref(), 2),
+                placeholder(self.pool.as_ref(), 3)
             );
             let existing: Option<(String, Option<String>)> = match self.pool.as_ref() {
                 DatabasePool::Sqlite(pool) => sqlx::query(&query)
+                    .bind(job.tenant_id.as_deref().unwrap_or(""))
                     .bind(&job.principal_id)
                     .bind(key)
                     .fetch_optional(pool)
@@ -262,6 +297,7 @@ impl JobQueue for DatabaseJobQueue {
                     })
                     .transpose()?,
                 DatabasePool::Postgres(pool) => sqlx::query(&query)
+                    .bind(job.tenant_id.as_deref().unwrap_or(""))
                     .bind(&job.principal_id)
                     .bind(key)
                     .fetch_optional(pool)
@@ -288,15 +324,16 @@ impl JobQueue for DatabaseJobQueue {
 
         let json = serde_json::to_string(&job)?;
         let query = format!(
-            "INSERT INTO {TABLE} (id,status,queued_at,job_json,principal_id,idempotency_key,request_fingerprint,lease_until,attempts) \
-             VALUES ({},{},{},{},{},{},{},NULL,0) ON CONFLICT DO NOTHING",
+            "INSERT INTO {TABLE} (id,status,queued_at,job_json,principal_id,tenant_id,idempotency_key,request_fingerprint,lease_until,attempts) \
+             VALUES ({},{},{},{},{},{},{},{},NULL,0) ON CONFLICT DO NOTHING",
             placeholder(self.pool.as_ref(), 1),
             placeholder(self.pool.as_ref(), 2),
             placeholder(self.pool.as_ref(), 3),
             placeholder(self.pool.as_ref(), 4),
             placeholder(self.pool.as_ref(), 5),
             placeholder(self.pool.as_ref(), 6),
-            placeholder(self.pool.as_ref(), 7)
+            placeholder(self.pool.as_ref(), 7),
+            placeholder(self.pool.as_ref(), 8)
         );
         let rows_affected = match self.pool.as_ref() {
             DatabasePool::Sqlite(pool) => sqlx::query(&query)
@@ -305,6 +342,7 @@ impl JobQueue for DatabaseJobQueue {
                 .bind(job.queued_at)
                 .bind(json)
                 .bind(&job.principal_id)
+                .bind(job.tenant_id.as_deref().unwrap_or(""))
                 .bind(&job.idempotency_key)
                 .bind(&job.request_fingerprint)
                 .execute(pool)
@@ -316,6 +354,7 @@ impl JobQueue for DatabaseJobQueue {
                 .bind(job.queued_at)
                 .bind(json)
                 .bind(&job.principal_id)
+                .bind(job.tenant_id.as_deref().unwrap_or(""))
                 .bind(&job.idempotency_key)
                 .bind(&job.request_fingerprint)
                 .execute(pool)
@@ -678,5 +717,47 @@ mod tests {
         let recovered_job = recovered.get_job(&id).await.unwrap().unwrap();
         assert_eq!(recovered_job.status, ScanStatus::Queued);
         assert!(recovered_job.started_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn sqlite_idempotency_is_scoped_by_tenant_and_principal() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool, 10, None);
+
+        let mut tenant_a = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            Default::default(),
+            None,
+            "shared-principal".to_string(),
+            "key-a".to_string(),
+            Some("tenant-a".to_string()),
+        );
+        tenant_a.idempotency_key = Some("same-request".to_string());
+        tenant_a.request_fingerprint = Some("fingerprint".to_string());
+        let first_id = queue.enqueue(tenant_a.clone()).await.unwrap();
+
+        let replay_id = queue.enqueue(tenant_a).await.unwrap();
+        assert_eq!(replay_id, first_id);
+
+        let mut tenant_b = ScanJob::new_owned(
+            "example.com:443".to_string(),
+            Default::default(),
+            None,
+            "shared-principal".to_string(),
+            "key-b".to_string(),
+            Some("tenant-b".to_string()),
+        );
+        tenant_b.idempotency_key = Some("same-request".to_string());
+        tenant_b.request_fingerprint = Some("fingerprint".to_string());
+        let second_id = queue.enqueue(tenant_b).await.unwrap();
+        assert_ne!(second_id, first_id);
+
+        let persisted = queue.get_job(&second_id).await.unwrap().unwrap();
+        assert_eq!(persisted.tenant_id.as_deref(), Some("tenant-b"));
     }
 }

@@ -48,10 +48,8 @@ No unreleased changes.
 - Scheduled Kani formal verification for the existing proof harnesses.
 - Native HTTPS responses now include a one-year HSTS policy.
 - Forwarded client addresses are trusted only from configured proxy CIDRs.
-- Certificate inventory routes are restricted to administrator credentials until
-  persisted certificate records carry tenant ownership.
-- Global history and statistics routes are restricted to administrator credentials
-  until persisted analytics records carry tenant ownership.
+- Certificate inventory, history, and statistics routes enforce authenticated
+  principal and tenant ownership; administrators retain global visibility.
 
 ### Changed
 
