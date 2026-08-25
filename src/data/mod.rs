@@ -8,7 +8,10 @@ pub mod curves;
 // Re-export commonly used types, statics, and accessor functions
 pub use ca_stores::{CA_STORES, CACertificate, CAStore, CAStores, ca_stores};
 pub use cipher_mapping::{CIPHER_DB, CipherDatabase, cipher_db};
-pub use client_data::{CLIENT_DB, ClientDatabase, ClientProfile, client_db};
+pub use client_data::{
+    CLIENT_COMPATIBILITY_PROFILE_SCHEMA_VERSION, CLIENT_DB, ClientCompatibilityProfile,
+    ClientDatabase, ClientProfile, client_db,
+};
 pub use curves::{CURVES_DB, CurvesDatabase, EllipticCurve, curves_db};
 
 #[cfg(test)]

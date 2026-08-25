@@ -353,6 +353,10 @@ Remote timing probes follow the published [timing methodology](docs/timing-metho
 including sample counts, descriptive statistics, confidence intervals, thresholds,
 and the conditions that produce an inconclusive verdict.
 
+Client simulations expose a versioned compatibility contract with explicit
+rustls and metadata-only limitations; see
+[client compatibility profiles](docs/client-compatibility-profiles.md).
+
 `remediate` generates configuration snippets for nginx, Apache, HAProxy, Envoy,
 or Caddy. It never changes a running service, and it deliberately leaves
 inconclusive or potential findings visible for operator review. Existing output

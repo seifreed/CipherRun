@@ -4,6 +4,9 @@ use crate::{Result, TlsError};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Version of the machine-readable compatibility-profile contract.
+pub const CLIENT_COMPATIBILITY_PROFILE_SCHEMA_VERSION: &str = "1.0";
+
 /// Get the global client database
 ///
 /// Returns the database if already initialized, or initializes it on first call.
@@ -66,6 +69,70 @@ pub struct ClientProfile {
     pub requires_sha2: bool,
     /// Currently maintained/used
     pub current: bool,
+}
+
+/// Stable metadata describing how a bundled client profile can be exercised.
+///
+/// The source database contains historical ClientHello metadata, while the
+/// runtime simulator uses a rustls-generated ClientHello. Keeping this
+/// distinction explicit prevents a profile from being mistaken for a byte-
+/// exact browser emulation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ClientCompatibilityProfile {
+    pub schema_version: String,
+    pub id: String,
+    pub family: String,
+    pub version: Option<u32>,
+    pub display_name: String,
+    pub lifecycle: String,
+    pub simulation_backend: String,
+    pub simulation_support: String,
+    pub limitations: Vec<String>,
+}
+
+impl ClientProfile {
+    /// Return the stable compatibility contract for this profile.
+    pub fn compatibility_profile(&self) -> ClientCompatibilityProfile {
+        let (family, suffix) = self
+            .short_id
+            .split_once('_')
+            .map_or((self.short_id.as_str(), ""), |parts| parts);
+        let version = ClientDatabase::leading_version(suffix);
+        let legacy_protocol = self
+            .highest_protocol
+            .as_deref()
+            .is_some_and(|value| matches!(value, "0x0300" | "0x0301" | "0x0302"));
+        let quic_profile = self
+            .protocol_flags
+            .iter()
+            .any(|flag| flag.eq_ignore_ascii_case("quic"));
+        let mut limitations = vec![
+            "Runtime simulation uses a rustls-generated ClientHello, not the source byte sequence"
+                .to_string(),
+        ];
+        let simulation_support = if quic_profile {
+            limitations
+                .push("QUIC transport is metadata-only in the TCP TLS simulator".to_string());
+            "metadata_only"
+        } else if legacy_protocol {
+            limitations.push("TLS 1.0/1.1 and SSLv3 profiles are metadata-only".to_string());
+            "metadata_only"
+        } else {
+            "rustls"
+        };
+
+        ClientCompatibilityProfile {
+            schema_version: CLIENT_COMPATIBILITY_PROFILE_SCHEMA_VERSION.to_string(),
+            id: self.short_id.clone(),
+            family: family.to_string(),
+            version: (version > 0).then_some(version),
+            display_name: self.name.clone(),
+            lifecycle: if self.current { "current" } else { "legacy" }.to_string(),
+            simulation_backend: "rustls".to_string(),
+            simulation_support: simulation_support.to_string(),
+            limitations,
+        }
+    }
 }
 
 /// Database of client profiles
@@ -442,6 +509,14 @@ impl ClientDatabase {
         self.clients.iter().filter(|c| c.current).collect()
     }
 
+    /// Return the versioned compatibility contract for every bundled profile.
+    pub fn compatibility_profiles(&self) -> Vec<ClientCompatibilityProfile> {
+        self.clients
+            .iter()
+            .map(ClientProfile::compatibility_profile)
+            .collect()
+    }
+
     /// Get clients by service
     pub fn by_service(&self, service: &str) -> Vec<&ClientProfile> {
         self.clients
@@ -535,6 +610,39 @@ service+=(
 
         let profile = db.get_by_id("client_a").expect("client should exist");
         assert_eq!(profile.name, "Client A");
+    }
+
+    #[test]
+    fn compatibility_profiles_are_versioned_and_classify_legacy_clients() {
+        let db = client_db().expect("embedded client database should load");
+        let profiles = db.compatibility_profiles();
+        assert!(!profiles.is_empty());
+        assert!(
+            profiles.iter().all(
+                |profile| profile.schema_version == CLIENT_COMPATIBILITY_PROFILE_SCHEMA_VERSION
+            )
+        );
+
+        let modern = profiles
+            .iter()
+            .find(|profile| profile.id == "chrome_101_win10")
+            .expect("modern Chrome profile should be present");
+        assert_eq!(modern.family, "chrome");
+        assert_eq!(modern.version, Some(101));
+        assert_eq!(modern.lifecycle, "current");
+        assert_eq!(modern.simulation_backend, "rustls");
+
+        let legacy = profiles
+            .iter()
+            .find(|profile| profile.id == "android_237")
+            .expect("legacy Android profile should be present");
+        assert_eq!(legacy.simulation_support, "metadata_only");
+        assert!(
+            legacy
+                .limitations
+                .iter()
+                .any(|limitation| limitation.contains("TLS 1.0/1.1"))
+        );
     }
 
     #[test]
