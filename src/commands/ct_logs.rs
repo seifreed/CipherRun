@@ -73,18 +73,27 @@ impl Command for CtLogsCommand {
         // Create and start streamer
         let mut streamer = CtStreamer::new(config).await?;
         if let Some(monitor_config_path) = &self.args.ct_logs.monitor_config {
-            use crate::monitor::{MonitorConfig, MonitorDaemon};
-            let monitor_config = MonitorConfig::from_file(monitor_config_path)?;
-            let daemon = std::sync::Arc::new(MonitorDaemon::new(monitor_config).await?);
-            let sink: std::sync::Arc<dyn crate::ct_logs::CtEntrySink> = daemon.clone();
-            tokio::select! {
-                result = streamer.start_with_sink(Some(sink)) => {
-                    daemon.stop();
-                    result?;
-                }
-                result = daemon.start() => {
-                    streamer.stop();
-                    result?;
+            #[cfg(not(feature = "monitoring"))]
+            let _ = monitor_config_path;
+            #[cfg(not(feature = "monitoring"))]
+            return Err(crate::TlsError::ConfigError {
+                message: "CT monitoring sink requires the `monitoring` feature".to_string(),
+            });
+            #[cfg(feature = "monitoring")]
+            {
+                use crate::monitor::{MonitorConfig, MonitorDaemon};
+                let monitor_config = MonitorConfig::from_file(monitor_config_path)?;
+                let daemon = std::sync::Arc::new(MonitorDaemon::new(monitor_config).await?);
+                let sink: std::sync::Arc<dyn crate::ct_logs::CtEntrySink> = daemon.clone();
+                tokio::select! {
+                    result = streamer.start_with_sink(Some(sink)) => {
+                        daemon.stop();
+                        result?;
+                    }
+                    result = daemon.start() => {
+                        streamer.stop();
+                        result?;
+                    }
                 }
             }
         } else {

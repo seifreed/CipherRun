@@ -24,6 +24,7 @@ pub mod external;
 pub mod fingerprint;
 pub mod http;
 pub mod input;
+#[cfg(feature = "monitoring")]
 pub mod monitor;
 pub mod output;
 pub mod policy;

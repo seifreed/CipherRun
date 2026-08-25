@@ -49,8 +49,9 @@ resolver = "2"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [features]
-default = ["email"]
+default = ["email", "monitoring"]
 email = ["dep:lettre"]
+monitoring = []
 # Swagger UI is optional: enabling it requires network access at build time to
 # download the Swagger UI bundle. Keep it off by default so the project builds
 # and tests fully offline.
@@ -195,3 +196,7 @@ harness = false
 [[bench]]
 name = "pqc_bench"
 harness = false
+
+[[test]]
+name = "monitor_alert_channel"
+required-features = ["monitoring"]

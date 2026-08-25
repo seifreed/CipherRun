@@ -13,6 +13,7 @@ mod api_server;
 mod ct_logs;
 mod database;
 mod mass_scan;
+#[cfg(feature = "monitoring")]
 mod monitor;
 mod mx_test;
 mod pqc_scan;
@@ -39,7 +40,34 @@ pub use api_server::ApiServerCommand;
 pub use ct_logs::CtLogsCommand;
 pub use database::DatabaseCommand;
 pub use mass_scan::MassScanCommand;
+#[cfg(feature = "monitoring")]
 pub use monitor::MonitorCommand;
+#[cfg(not(feature = "monitoring"))]
+pub struct MonitorCommand {
+    args: crate::Args,
+}
+
+#[cfg(not(feature = "monitoring"))]
+impl MonitorCommand {
+    pub fn new(args: crate::Args) -> Self {
+        Self { args }
+    }
+}
+
+#[cfg(not(feature = "monitoring"))]
+#[async_trait::async_trait]
+impl Command for MonitorCommand {
+    async fn execute(&self) -> crate::Result<CommandExit> {
+        let _ = &self.args;
+        Err(crate::TlsError::ConfigError {
+            message: "monitoring operations require the `monitoring` feature".to_string(),
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "MonitorCommand"
+    }
+}
 pub use mx_test::MxTestCommand;
 pub use pqc_scan::PqcScanCommand;
 pub use remediation::RemediationCommand;

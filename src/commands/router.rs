@@ -2,10 +2,11 @@
 // Copyright (C) 2025 Marc Rivero (@seifreed)
 // Licensed under GPL-3.0
 
+use super::MonitorCommand;
 use super::{
     AnalyticsCommand, AnycastScanCommand, ApiServerCommand, Command, CtLogsCommand,
-    DatabaseCommand, MassScanCommand, MonitorCommand, MxTestCommand, PqcScanCommand,
-    RemediationCommand, ScanCommand, ScanDiffCommand, SchemaCommand, WorkerCommand,
+    DatabaseCommand, MassScanCommand, MxTestCommand, PqcScanCommand, RemediationCommand,
+    ScanCommand, ScanDiffCommand, SchemaCommand, WorkerCommand,
 };
 use crate::cli::CipherRunSubcommand;
 use crate::{Args, Result, TlsError};
@@ -123,6 +124,9 @@ impl CommandRouter {
 
         // Priority 2: Monitoring operations
         if args.monitoring.enable || args.monitoring.test_alert {
+            #[cfg(feature = "monitoring")]
+            return Ok(Box::new(MonitorCommand::new(args)));
+            #[cfg(not(feature = "monitoring"))]
             return Ok(Box::new(MonitorCommand::new(args)));
         }
 
@@ -359,7 +363,9 @@ impl CommandRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{ApiServerArgs, CtLogsArgs, DatabaseArgs, MonitoringArgs};
+    #[cfg(feature = "monitoring")]
+    use crate::cli::CtLogsArgs;
+    use crate::cli::{ApiServerArgs, DatabaseArgs, MonitoringArgs};
 
     fn assert_routes_to(args: Args, expected_name: &str) {
         let cmd = CommandRouter::route(args).expect("test assertion should succeed");
@@ -383,6 +389,7 @@ mod tests {
         assert_routes_to(args, "PqcScanCommand");
     }
 
+    #[cfg(feature = "monitoring")]
     #[test]
     fn test_route_modes() {
         for (case, args, expected_name) in [
