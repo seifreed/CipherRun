@@ -6,7 +6,18 @@ All notable changes to CipherRun are documented here. The format follows
 
 ## [Unreleased]
 
-No unreleased changes.
+### Added
+
+- Production-router HTTP integration coverage for certificate, history, and
+  statistics tenant ownership.
+- Scheduled, reviewable provenance refreshes for trust stores and fingerprints.
+
+### Changed
+
+- Release images are attested and signed by immutable digest, with the digest
+  published alongside the release assets.
+- CI cancels superseded runs on the same branch so release validation is not
+  delayed by stale jobs.
 
 ## [0.4.0] - 2026-08-25
 
