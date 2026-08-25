@@ -264,7 +264,11 @@ impl ScanExecutor {
                                 if let Some(stats) = &self.stats {
                                     let mut stats = stats.write().await;
                                     stats.record_completed_scan(duration_ms);
-                                    stats.record_completed_scan_for(&job.principal_id, duration_ms);
+                                    stats.record_completed_scan_for_owner(
+                                        &job.principal_id,
+                                        job.tenant_id.as_deref(),
+                                        duration_ms,
+                                    );
                                 }
                             }
                             Ok(Err(e)) => {
@@ -444,12 +448,16 @@ impl ScanExecutor {
                     if let Some(stats) = &self.stats {
                         let mut stats = stats.write().await;
                         stats.record_completed_scan(duration_ms);
-                        stats.record_completed_scan_for(&job.principal_id, duration_ms);
+                        stats.record_completed_scan_for_owner(
+                            &job.principal_id,
+                            job.tenant_id.as_deref(),
+                            duration_ms,
+                        );
                     }
                 } else if failed && let Some(stats) = &self.stats {
                     let mut stats = stats.write().await;
                     stats.record_failed_scan();
-                    stats.record_failed_scan_for(&job.principal_id);
+                    stats.record_failed_scan_for_owner(&job.principal_id, job.tenant_id.as_deref());
                 }
             }
             Ok(false) => {

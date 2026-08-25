@@ -186,24 +186,40 @@ impl ApiStats {
         }
     }
 
-    fn principal_mut(&mut self, principal_id: &str) -> Option<&mut ScopedApiStats> {
+    fn scope_key(principal_id: &str, tenant_id: Option<&str>) -> String {
+        match tenant_id {
+            Some(tenant_id) => format!("tenant:{tenant_id}\0principal:{principal_id}"),
+            None => principal_id.to_string(),
+        }
+    }
+
+    fn principal_mut_for(
+        &mut self,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Option<&mut ScopedApiStats> {
         if principal_id.is_empty() {
             return None;
         }
-        if !self.principal_stats.contains_key(principal_id) {
+        let scope_key = Self::scope_key(principal_id, tenant_id);
+        if !self.principal_stats.contains_key(&scope_key) {
             if self.principal_stats.len() >= MAX_PRINCIPAL_STATS {
                 // ponytail: bounded map drops new principals at the ceiling; replace with
                 // an evicting LRU only if deployments exceed 10k active principals.
                 return None;
             }
             self.principal_stats
-                .insert(principal_id.to_string(), ScopedApiStats::default());
+                .insert(scope_key.clone(), ScopedApiStats::default());
         }
-        self.principal_stats.get_mut(principal_id)
+        self.principal_stats.get_mut(&scope_key)
     }
 
     pub fn increment_requests_for(&mut self, principal_id: &str) {
-        let Some(stats) = self.principal_mut(principal_id) else {
+        self.increment_requests_for_owner(principal_id, None);
+    }
+
+    pub fn increment_requests_for_owner(&mut self, principal_id: &str, tenant_id: Option<&str>) {
+        let Some(stats) = self.principal_mut_for(principal_id, tenant_id) else {
             return;
         };
         stats.total_requests = stats.total_requests.saturating_add(1);
@@ -227,7 +243,16 @@ impl ApiStats {
     }
 
     pub fn record_response_for(&mut self, principal_id: &str, response_time_ms: u64) {
-        let Some(stats) = self.principal_mut(principal_id) else {
+        self.record_response_for_owner(principal_id, None, response_time_ms);
+    }
+
+    pub fn record_response_for_owner(
+        &mut self,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+        response_time_ms: u64,
+    ) {
+        let Some(stats) = self.principal_mut_for(principal_id, tenant_id) else {
             return;
         };
         stats.total_response_time_ms = stats
@@ -237,7 +262,11 @@ impl ApiStats {
     }
 
     pub fn increment_scans_for(&mut self, principal_id: &str) {
-        let Some(stats) = self.principal_mut(principal_id) else {
+        self.increment_scans_for_owner(principal_id, None);
+    }
+
+    pub fn increment_scans_for_owner(&mut self, principal_id: &str, tenant_id: Option<&str>) {
+        let Some(stats) = self.principal_mut_for(principal_id, tenant_id) else {
             return;
         };
         stats.total_scans = stats.total_scans.saturating_add(1);
@@ -248,7 +277,16 @@ impl ApiStats {
     }
 
     pub fn record_completed_scan_for(&mut self, principal_id: &str, duration_ms: u64) {
-        let Some(stats) = self.principal_mut(principal_id) else {
+        self.record_completed_scan_for_owner(principal_id, None, duration_ms);
+    }
+
+    pub fn record_completed_scan_for_owner(
+        &mut self,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+        duration_ms: u64,
+    ) {
+        let Some(stats) = self.principal_mut_for(principal_id, tenant_id) else {
             return;
         };
         stats.completed_scans = stats.completed_scans.saturating_add(1);
@@ -256,13 +294,22 @@ impl ApiStats {
     }
 
     pub fn record_failed_scan_for(&mut self, principal_id: &str) {
-        if let Some(stats) = self.principal_mut(principal_id) {
+        self.record_failed_scan_for_owner(principal_id, None);
+    }
+
+    pub fn record_failed_scan_for_owner(&mut self, principal_id: &str, tenant_id: Option<&str>) {
+        if let Some(stats) = self.principal_mut_for(principal_id, tenant_id) {
             stats.failed_scans = stats.failed_scans.saturating_add(1);
         }
     }
 
     pub fn scoped_snapshot(&self, principal_id: &str) -> Self {
-        let Some(scoped) = self.principal_stats.get(principal_id) else {
+        self.scoped_snapshot_for(principal_id, None)
+    }
+
+    pub fn scoped_snapshot_for(&self, principal_id: &str, tenant_id: Option<&str>) -> Self {
+        let scope_key = Self::scope_key(principal_id, tenant_id);
+        let Some(scoped) = self.principal_stats.get(&scope_key) else {
             return Self::default();
         };
         let mut snapshot = Self {
@@ -541,10 +588,18 @@ impl AppState {
     }
 
     pub async fn record_request_for(&self, principal_id: Option<&str>) {
+        self.record_request_for_owner(principal_id, None).await;
+    }
+
+    pub async fn record_request_for_owner(
+        &self,
+        principal_id: Option<&str>,
+        tenant_id: Option<&str>,
+    ) {
         let mut stats = self.stats.write().await;
         stats.increment_requests();
         if let Some(principal_id) = principal_id {
-            stats.increment_requests_for(principal_id);
+            stats.increment_requests_for_owner(principal_id, tenant_id);
         }
     }
 
@@ -554,10 +609,20 @@ impl AppState {
     }
 
     pub async fn record_response_for(&self, principal_id: Option<&str>, response_time_ms: u64) {
+        self.record_response_for_owner(principal_id, None, response_time_ms)
+            .await;
+    }
+
+    pub async fn record_response_for_owner(
+        &self,
+        principal_id: Option<&str>,
+        tenant_id: Option<&str>,
+        response_time_ms: u64,
+    ) {
         let mut stats = self.stats.write().await;
         stats.record_response(response_time_ms);
         if let Some(principal_id) = principal_id {
-            stats.record_response_for(principal_id, response_time_ms);
+            stats.record_response_for_owner(principal_id, tenant_id, response_time_ms);
         }
     }
 
@@ -568,9 +633,13 @@ impl AppState {
     }
 
     pub async fn record_scan_for(&self, principal_id: &str) {
+        self.record_scan_for_owner(principal_id, None).await;
+    }
+
+    pub async fn record_scan_for_owner(&self, principal_id: &str, tenant_id: Option<&str>) {
         let mut stats = self.stats.write().await;
         stats.increment_scans();
-        stats.increment_scans_for(principal_id);
+        stats.increment_scans_for_owner(principal_id, tenant_id);
     }
 
     /// Record completed scan
@@ -580,9 +649,19 @@ impl AppState {
     }
 
     pub async fn record_completed_for(&self, principal_id: &str, duration_ms: u64) {
+        self.record_completed_for_owner(principal_id, None, duration_ms)
+            .await;
+    }
+
+    pub async fn record_completed_for_owner(
+        &self,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+        duration_ms: u64,
+    ) {
         let mut stats = self.stats.write().await;
         stats.record_completed_scan(duration_ms);
-        stats.record_completed_scan_for(principal_id, duration_ms);
+        stats.record_completed_scan_for_owner(principal_id, tenant_id, duration_ms);
     }
 
     /// Record failed scan
@@ -592,9 +671,13 @@ impl AppState {
     }
 
     pub async fn record_failed_for(&self, principal_id: &str) {
+        self.record_failed_for_owner(principal_id, None).await;
+    }
+
+    pub async fn record_failed_for_owner(&self, principal_id: &str, tenant_id: Option<&str>) {
         let mut stats = self.stats.write().await;
         stats.record_failed_scan();
-        stats.record_failed_scan_for(principal_id);
+        stats.record_failed_scan_for_owner(principal_id, tenant_id);
     }
 
     /// Get statistics snapshot
@@ -604,6 +687,17 @@ impl AppState {
 
     pub async fn get_stats_for(&self, principal_id: &str) -> ApiStats {
         self.stats.read().await.scoped_snapshot(principal_id)
+    }
+
+    pub async fn get_stats_for_owner(
+        &self,
+        principal_id: &str,
+        tenant_id: Option<&str>,
+    ) -> ApiStats {
+        self.stats
+            .read()
+            .await
+            .scoped_snapshot_for(principal_id, tenant_id)
     }
 }
 
@@ -721,6 +815,21 @@ mod tests {
         stats.total_response_time_ms = 250;
         stats.total_responses = 10;
         assert!((stats.avg_response_time_ms() - 25.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tenant_scoped_stats_do_not_cross_contaminate_same_principal() {
+        let mut stats = ApiStats::default();
+        stats.increment_scans_for_owner("shared-principal", Some("tenant-a"));
+        stats.record_completed_scan_for_owner("shared-principal", Some("tenant-a"), 120);
+        stats.increment_scans_for_owner("shared-principal", Some("tenant-b"));
+
+        let tenant_a = stats.scoped_snapshot_for("shared-principal", Some("tenant-a"));
+        let tenant_b = stats.scoped_snapshot_for("shared-principal", Some("tenant-b"));
+        assert_eq!(tenant_a.total_scans, 1);
+        assert_eq!(tenant_a.completed_scans, 1);
+        assert_eq!(tenant_b.total_scans, 1);
+        assert_eq!(tenant_b.completed_scans, 0);
     }
 
     #[test]

@@ -49,7 +49,9 @@ pub async fn get_stats_for_auth(
     let stats = if is_admin {
         state.get_stats().await
     } else {
-        state.get_stats_for(&auth.principal_id).await
+        state
+            .get_stats_for_owner(&auth.principal_id, auth.tenant_id.as_deref())
+            .await
     };
 
     // Calculate average scan duration

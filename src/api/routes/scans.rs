@@ -138,20 +138,23 @@ pub async fn create_scan(
         .as_ref()
         .map(|_| scan_request_fingerprint(&final_target, &options, request.webhook_url.as_deref()))
         .transpose()?;
+    let tenant_id = auth.tenant_id.clone();
     let mut job = ScanJob::new_owned(
         final_target.clone(),
         options,
         request.webhook_url,
         auth.principal_id.clone(),
         auth.key_id,
-        auth.tenant_id,
+        tenant_id.clone(),
     );
     job.idempotency_key = idempotency_key;
     job.request_fingerprint = request_fingerprint;
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
-    state.record_scan_for(&auth.principal_id).await;
+    state
+        .record_scan_for_owner(&auth.principal_id, tenant_id.as_deref())
+        .await;
     let queued_job = scan_adapter::get_scan(state.job_queue.as_ref(), &scan_id).await?;
 
     Ok((
