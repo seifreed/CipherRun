@@ -345,6 +345,9 @@ JSON output is versioned independently from the CLI. The canonical schema, compa
 
 Bundled compliance mappings carry an independent rule-pack version, primary
 publication reference, review date, and runtime SHA-256 of the exact YAML.
+Trust-store and fingerprint refreshes are traceable through the generated
+[data provenance manifest](docs/data-provenance.md), which records their
+source, revision, counts, and SHA-256 values.
 
 Remote timing probes follow the published [timing methodology](docs/timing-methodology.md),
 including sample counts, descriptive statistics, confidence intervals, thresholds,

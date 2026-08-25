@@ -23,6 +23,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="${SCRIPT_DIR}/../data"
 TEMP_DIR="/tmp/cipherrun-trust-stores-$$"
+MANIFEST_PATH="${CIPHERRUN_TRUST_MANIFEST:-${DATA_DIR}/trust-stores-manifest.json}"
+SCRIPT_VERSION="1"
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,7 +35,7 @@ NC='\033[0m' # No Color
 
 # Create temp directory
 mkdir -p "${TEMP_DIR}"
-trap "rm -rf ${TEMP_DIR}" EXIT
+trap 'rm -rf "${TEMP_DIR}"' EXIT
 
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $*"
@@ -49,6 +51,81 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
+}
+
+sha256_file() {
+    local file="$1"
+    if command -v shasum &> /dev/null; then
+        shasum -a 256 "${file}" | awk '{print $1}'
+    elif command -v sha256sum &> /dev/null; then
+        sha256sum "${file}" | awk '{print $1}'
+    else
+        log_error "Neither shasum nor sha256sum found."
+        exit 1
+    fi
+}
+
+source_url() {
+    case "$1" in
+        Mozilla) echo "https://ccadb-public.secure.force.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Websites" ;;
+        Apple) echo "https://support.apple.com/en-us/HT213464" ;;
+        Android) echo "https://android.googlesource.com/platform/system/ca-certificates/+/refs/heads/master/files" ;;
+        Java) echo "local Java cacerts keystore (JAVA_HOME or platform default)" ;;
+        Microsoft) echo "https://learn.microsoft.com/en-us/windows-hardware/drivers/install/certificate-stores" ;;
+        Linux) echo "local distribution trust store" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+source_method() {
+    case "$1" in
+        Mozilla) echo "remote_pem_download" ;;
+        Apple) echo "local_system_bundle_export" ;;
+        Android) echo "mozilla_baseline_or_aosp_export" ;;
+        Java) echo "local_keytool_export" ;;
+        Microsoft) echo "local_windows_export_or_mozilla_baseline" ;;
+        Linux) echo "bundled_distribution_store" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+write_manifest() {
+    local target="$1"
+    local generated_at
+    local revision
+    generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    revision="$(git -C "${SCRIPT_DIR}/.." rev-parse HEAD 2>/dev/null || echo unknown)"
+    mkdir -p "$(dirname "${MANIFEST_PATH}")"
+
+    {
+        printf '{\n'
+        printf '  "schema_version": 1,\n'
+        printf '  "script_version": "%s",\n' "${SCRIPT_VERSION}"
+        printf '  "updated_target": "%s",\n' "${target}"
+        printf '  "generated_at": "%s",\n' "${generated_at}"
+        printf '  "repository_revision": "%s",\n' "${revision}"
+        printf '  "stores": {\n'
+
+        local first=true
+        for store in Mozilla Apple Android Linux Microsoft Java; do
+            local file="${DATA_DIR}/${store}.pem"
+            [[ -f "${file}" ]] || continue
+            local count
+            local digest
+            count="$(grep -c "BEGIN CERTIFICATE" "${file}" || true)"
+            digest="$(sha256_file "${file}")"
+            if [[ "${first}" == true ]]; then
+                first=false
+            else
+                printf ',\n'
+            fi
+            printf '    "%s": {"path": "data/%s.pem", "sha256": "%s", "certificate_count": %s, "source": "%s", "method": "%s"}' \
+                "${store}" "${store}" "${digest}" "${count}" "$(source_url "${store}")" "$(source_method "${store}")"
+        done
+        printf '\n  }\n}\n'
+    } > "${MANIFEST_PATH}.tmp"
+    mv "${MANIFEST_PATH}.tmp" "${MANIFEST_PATH}"
+    log_success "Wrote traceability manifest to ${MANIFEST_PATH}"
 }
 
 # Download utility (prefers curl, falls back to wget)
@@ -78,7 +155,8 @@ update_mozilla() {
     # Validate that we got valid PEM data
     if grep -q "BEGIN CERTIFICATE" "${TEMP_DIR}/mozilla.pem"; then
         mv "${TEMP_DIR}/mozilla.pem" "${output}"
-        local count=$(grep -c "BEGIN CERTIFICATE" "${output}" || echo 0)
+        local count
+        count="$(grep -c "BEGIN CERTIFICATE" "${output}" || true)"
         log_success "Mozilla trust store updated with ${count} certificates"
     else
         log_error "Downloaded Mozilla data does not contain valid certificates"
@@ -100,7 +178,7 @@ update_apple() {
         local cert_dir="/System/Library/Security/Certificates.bundle"
         if [[ -d "${cert_dir}" ]]; then
             local output="${DATA_DIR}/Apple.pem"
-            > "${output}"  # Clear file
+            : > "${output}"  # Clear file
 
             # Extract all .crt files
             find "${cert_dir}" -name "*.crt" -o -name "*.pem" | while read -r cert; do
@@ -110,7 +188,8 @@ update_apple() {
                 fi
             done
 
-            local count=$(grep -c "BEGIN CERTIFICATE" "${output}" || echo 0)
+            local count
+            count="$(grep -c "BEGIN CERTIFICATE" "${output}" || true)"
             if [[ ${count} -gt 0 ]]; then
                 log_success "Apple trust store updated with ${count} certificates"
             else
@@ -178,7 +257,7 @@ update_java() {
     log_info "Found Java cacerts at: ${cacerts}"
 
     local output="${DATA_DIR}/Java.pem"
-    > "${output}"  # Clear file
+    : > "${output}"  # Clear file
 
     # Extract certificates from keystore (default password: changeit)
     if command -v keytool &> /dev/null; then
@@ -295,10 +374,13 @@ main() {
     for store in Mozilla Apple Android Linux Microsoft Java; do
         local file="${DATA_DIR}/${store}.pem"
         if [[ -f "${file}" ]]; then
-            local count=$(grep -c "BEGIN CERTIFICATE" "${file}" || echo 0)
+            local count
+            count="$(grep -c "BEGIN CERTIFICATE" "${file}" || true)"
             printf "  %-12s: %d certificates\n" "${store}" "${count}"
         fi
     done
+
+    write_manifest "${target}"
 }
 
 main "$@"

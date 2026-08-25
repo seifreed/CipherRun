@@ -15,6 +15,7 @@ set -euo pipefail
 
 repo="https://github.com/g0tmi1k/debian-ssh"
 out="$(cd "$(dirname "$0")/.." && pwd)/data/debian_blacklist.txt"
+manifest="${out%.txt}.meta.json"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -40,3 +41,14 @@ echo "Deriving SubjectPublicKeyInfo SHA-256 fingerprints ..." >&2
 
 count="$(grep -cE '^[0-9a-f]{64}' "$out" || true)"
 echo "Wrote $count fingerprints to $out" >&2
+
+revision="$(git -C "$work/src" rev-parse HEAD)"
+generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if command -v shasum >/dev/null 2>&1; then
+  digest="$(shasum -a 256 "$out" | awk '{print $1}')"
+else
+  digest="$(sha256sum "$out" | awk '{print $1}')"
+fi
+printf '{\n  "schema_version": 1,\n  "source": "%s",\n  "source_revision": "%s",\n  "generated_at": "%s",\n  "fingerprint_count": %s,\n  "sha256": "%s"\n}\n' \
+  "$repo" "$revision" "$generated_at" "$count" "$digest" > "$manifest"
+echo "Wrote traceability manifest to $manifest" >&2
