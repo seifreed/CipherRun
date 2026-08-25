@@ -22,7 +22,7 @@ scan_fixture() {
     timeout 180 testssl.sh --protocols --warnings off --color 0 "$target:443" \
         >"$results/$target.testssl.txt" 2>&1 || true
     echo | openssl s_client -connect "$target:443" \
-        >"$results/$target.openssl.txt" 2>&1
+        >"$results/$target.openssl.txt" 2>&1 || true
 }
 
 scan_fixture legacy-tls
