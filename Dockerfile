@@ -13,6 +13,8 @@ COPY crates ./crates
 COPY data ./data
 COPY migrations ./migrations
 COPY benches ./benches
+COPY examples ./examples
+COPY tests ./tests
 RUN cargo build --release --locked && strip target/release/cipherrun
 
 FROM ${RUNTIME_IMAGE}
