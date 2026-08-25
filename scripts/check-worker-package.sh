@@ -10,7 +10,8 @@ if cargo package -p cipherrun-worker --locked --allow-dirty 2>worker-package.err
     rm -f worker-package.err
 else
     if grep -q "candidate versions found" worker-package.err; then
-        echo "worker package smoke deferred until cipherrun ${CARGO_PKG_VERSION:-0.4.0} is published"
+        root_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cipherrun") | .version')"
+        echo "worker package smoke deferred until cipherrun ${root_version} is published"
         rm -f worker-package.err
     else
         cat worker-package.err >&2
