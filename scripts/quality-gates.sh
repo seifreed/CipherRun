@@ -13,7 +13,9 @@ scripts/check-policy-contract-sync.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
-cargo audit
+# RUSTSEC-2023-0071 has no upstream fix; rsa is only retained transitively in
+# Cargo.lock through sqlx-mysql and is not compiled into the default binary.
+cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo package -p cipherrun-core --locked --allow-dirty
 cargo package -p cipherrun-cli --locked --allow-dirty
