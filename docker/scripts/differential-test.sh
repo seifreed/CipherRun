@@ -14,7 +14,8 @@ scan_fixture() {
     local exit_code=0
     cipherrun --allow-private --profile safe --overwrite --json "$json" "$target:443" \
         >"$results/$target.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    # No differential probe supplies --baseline; code 4 is not actionable here.
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun failed for $target with exit code $exit_code" >&2
         return "$exit_code"
     fi
@@ -37,7 +38,7 @@ scan_breach_fixture() {
     local exit_code=0
     cipherrun --allow-private --breach --overwrite --json "$json" "$target:443" \
         >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun BREACH probe failed for $target with exit code $exit_code" >&2
         return "$exit_code"
     fi
@@ -52,7 +53,7 @@ scan_interop_fixture() {
     local exit_code=0
     cipherrun --allow-private --profile safe --overwrite --json "$json" "$target:443" \
         >"$results/$target.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun failed for $target with exit code $exit_code" >&2
         return "$exit_code"
     fi
@@ -77,7 +78,7 @@ scan_starttls_fixture() {
     cipherrun --allow-private --starttls "$protocol" --starttls-only \
         --overwrite --json "$json" "$target:$port" \
         >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun STARTTLS probe failed for $target:$port with exit code $exit_code" >&2
         return "$exit_code"
     fi
@@ -103,7 +104,7 @@ scan_vulnerability_fixture() {
     local exit_code=0
     cipherrun --allow-private "$probe" --overwrite --json "$json" "$target:$port" \
         >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun $probe probe failed for $target with exit code $exit_code" >&2
         return "$exit_code"
     fi
@@ -146,7 +147,7 @@ scan_starttls_injection_fixture() {
     local exit_code=0
     cipherrun --allow-private --starttls-injection --overwrite --json "$json" \
         "$target:$port" >"$results/$artifact.cipherrun.txt" 2>&1 || exit_code=$?
-    if (( exit_code > 1 )); then
+    if (( exit_code > 1 && exit_code != 4 )); then
         echo "CipherRun STARTTLS injection probe failed for $target:$port with exit code $exit_code" >&2
         return "$exit_code"
     fi
