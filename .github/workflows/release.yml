@@ -224,6 +224,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -260,27 +261,47 @@ jobs:
           format: cyclonedx-json
           output-file: dist/cipherrun-sbom.cdx.json
 
-      - name: Attest release artifacts
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
-        with:
-          subject-path: dist/*
-
       - name: Publish and sign production container
+        id: container
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
+          set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker build --tag "$IMAGE" --build-arg CIPHERRUN_VERSION="$VERSION" .
-          docker push "$IMAGE"
+          push_output="$(docker push "$IMAGE" 2>&1 | tee /dev/stderr)"
+          digest="$(sed -n 's/^digest: //p' <<<"$push_output" | tail -n 1)"
+          if [[ -z "$digest" ]]; then
+            repo_digest="$(docker image inspect "$IMAGE" --format='{{index .RepoDigests 0}}')"
+            digest="${repo_digest##*@}"
+          fi
+          [[ "$digest" == sha256:* ]] || {
+            echo "Could not resolve immutable image digest" >&2
+            exit 1
+          }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          printf '%s@%s\n' "${IMAGE%%:*}" "$digest" > dist/cipherrun-container-digest.txt
           if ! command -v cosign >/dev/null 2>&1; then
             go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
             gopath="$(go env GOPATH)"
             export PATH="${gopath}/bin:$PATH"
           fi
-          scripts/sign-container.sh "$IMAGE"
+          scripts/sign-container.sh "${IMAGE%%:*}@${digest}"
+
+      - name: Attest production container
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.container.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: dist/*
 
       - name: Create GitHub Release
         env:
