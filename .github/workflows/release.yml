@@ -26,6 +26,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: clippy, rustfmt
 
@@ -237,6 +240,11 @@ jobs:
           CIPHERRUN_REPOSITORY: ${{ github.repository }}
         run: scripts/generate-package-manifests.sh "${{ needs.validate.outputs.version }}" dist dist
 
+      - name: Export stable contracts
+        run: |
+          cargo run --quiet --locked --bin cipherrun-openapi --features api > dist/cipherrun-openapi.json
+          cp docs/scan-results.schema.json dist/cipherrun-scan-results.schema.json
+
       - name: Create checksums manifest
         shell: bash
         run: |
@@ -266,7 +274,8 @@ jobs:
           docker push "$IMAGE"
           if ! command -v cosign >/dev/null 2>&1; then
             go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
-            export PATH="$(go env GOPATH)/bin:$PATH"
+            gopath="$(go env GOPATH)"
+            export PATH="${gopath}/bin:$PATH"
           fi
           scripts/sign-container.sh "$IMAGE"
 

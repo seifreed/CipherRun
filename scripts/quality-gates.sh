@@ -11,6 +11,7 @@ scripts/check-protocol-contract-sync.sh
 scripts/check-worker-package.sh
 scripts/check-policy-contract-sync.sh
 scripts/validate-rule-pack-provenance.sh
+scripts/check-stable-contracts.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
