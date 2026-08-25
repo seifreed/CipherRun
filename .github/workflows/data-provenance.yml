@@ -72,8 +72,10 @@ jobs:
           git add data
           git commit -m "chore(data): refresh trust stores and fingerprints"
           git push --set-upstream origin "$branch"
-          gh pr create \
+          if ! gh pr create \
             --base main \
             --head "$branch" \
             --title "chore(data): refresh trust stores and fingerprints" \
-            --body "Automated provenance refresh from the scheduled data workflow. Review the generated manifest and source changes before merging."
+            --body "Automated provenance refresh from the scheduled data workflow. Review the generated manifest and source changes before merging."; then
+            echo "::warning::GitHub Actions cannot create pull requests with the repository token; review $branch manually."
+          fi
