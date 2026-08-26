@@ -52,6 +52,9 @@ All notable changes to CipherRun are documented here. The format follows
   fingerprints, with checked-in manifests and digest/count integrity gates.
 - RFC 9345 delegated-credential captures validate the wire structure and
   verify supported delegation signatures against the end-entity certificate.
+- The OpenSSL certificate probe captures decrypted TLS `Certificate` messages
+  and extracts delegated-credential extension 34 before falling back to the
+  certificate-only `not_observed` result.
 - Release images are attested and signed by immutable digest, with the digest
   published alongside the release assets.
 - CI cancels superseded runs on the same branch so release validation is not
