@@ -1,7 +1,8 @@
 # Delegated Credentials
 
-CipherRun recognizes the RFC 9345 delegated-credentials contract without
-claiming false wire-level support.
+CipherRun recognizes and validates the RFC 9345 delegated-credentials
+contract, including the wire-level `Certificate` handshake when the OpenSSL
+certificate probe is used.
 
 When a caller supplies a captured `CertificateEntry` extension, the pure
 `analyze_delegated_credential_entry` parser validates the RFC 9345 length
@@ -12,12 +13,13 @@ RFC 9345 context, certificate, credential, and delegation algorithm. Use
 `analyze_delegated_credential_entry_with_role` for client credentials; the
 short entry point defaults to the server context.
 
-`CertificateAdvancedTester::test_delegated_credentials()` checks the
-end-entity certificate for the RFC 9345 `DelegationUsage` extension
-(`1.3.6.1.4.1.44363.44`) and reports extension type `34`. The result remains
-`not_observed` because a delegated credential is carried in the TLS
-`CertificateEntry`, while the rustls/OpenSSL APIs currently used by CipherRun
-expose the peer certificate but not opaque CertificateEntry extensions.
+`CertificateAdvancedTester::test_delegated_credentials()` installs an OpenSSL
+message callback, parses the decrypted TLS `Certificate` handshake, and checks
+extension type `34` on each `CertificateEntry`. The captured extension is
+validated structurally and, for supported RSA/ECDSA schemes, its RFC 9345
+signature is verified against the certificate key. If the backend completes a
+handshake without exposing a `Certificate` transcript, the probe falls back to
+the X.509 `DelegationUsage` prerequisite and reports `not_observed`.
 
 Therefore:
 
@@ -27,5 +29,8 @@ Therefore:
 - An `observed` entry with an unsupported signature scheme still requires
   signature and certificate-key binding verification before it can be treated
   as trusted; a `verified` entry has passed the offline signature check.
-- Full positive/negative wire validation requires a TLS backend that exposes
-  CertificateEntry extensions and dedicated RFC 9345 fixtures.
+- The rustls certificate parser still exposes only the peer certificate chain;
+  wire-level delegated-credential capture is currently implemented by the
+  OpenSSL certificate probe.
+- Full positive/negative interoperability validation still requires dedicated
+  RFC 9345 server fixtures.

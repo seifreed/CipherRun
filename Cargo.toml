@@ -100,6 +100,8 @@ rustls-pki-types = "1.10"
 tokio-rustls = { version = "0.26", features = ["early-data"] }
 webpki-roots = "1.0.7"
 openssl = { version = "0.10.80", default-features = false }
+openssl-sys = { version = "0.9.116", default-features = false }
+foreign-types-shared = "0.1.1"
 
 # Networking
 hickory-resolver = "0.26"

@@ -3,13 +3,63 @@
 
 use crate::Result;
 use crate::utils::network::Target;
+use foreign_types_shared::ForeignType;
 use openssl::hash::MessageDigest;
 use openssl::rsa::Padding;
 use openssl::sign::{RsaPssSaltlen, Verifier};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
+use std::ffi::{c_int, c_void};
+use std::slice;
+use std::sync::Mutex;
 use tokio::time::Duration;
+
+type SslMessageCallback = unsafe extern "C" fn(
+    is_write: c_int,
+    version: c_int,
+    content_type: c_int,
+    buffer: *const c_void,
+    length: usize,
+    ssl: *mut c_void,
+    argument: *mut c_void,
+);
+
+unsafe extern "C" {
+    fn SSL_set_msg_callback(ssl: *mut c_void, callback: Option<SslMessageCallback>);
+    fn SSL_set_msg_callback_arg(ssl: *mut c_void, argument: *mut c_void);
+}
+
+#[derive(Default)]
+struct HandshakeCapture {
+    messages: Mutex<Vec<Vec<u8>>>,
+}
+
+unsafe extern "C" fn capture_tls_message(
+    is_write: c_int,
+    _version: c_int,
+    content_type: c_int,
+    buffer: *const c_void,
+    length: usize,
+    _ssl: *mut c_void,
+    argument: *mut c_void,
+) {
+    if is_write != 0 || content_type != 22 || buffer.is_null() || argument.is_null() {
+        return;
+    }
+
+    const MAX_CAPTURED_MESSAGE: usize = 16 * 1024 * 1024;
+    if length > MAX_CAPTURED_MESSAGE {
+        return;
+    }
+    // OpenSSL invokes this callback synchronously while processing a message;
+    // copy the bytes before returning so the capture owns its transcript.
+    let bytes = unsafe { slice::from_raw_parts(buffer.cast::<u8>(), length) };
+    let capture = unsafe { &*(argument.cast::<HandshakeCapture>()) };
+    if let Ok(mut messages) = capture.messages.lock() {
+        messages.push(bytes.to_vec());
+    }
+}
 
 /// RFC 9345 delegated credentials are sent in CertificateEntry extension 34.
 pub const DELEGATED_CREDENTIAL_EXTENSION_TYPE: u16 = 34;
@@ -179,6 +229,234 @@ impl DelegatedCredentialRole {
     }
 }
 
+/// A TLS `CertificateEntry` captured from a decrypted handshake transcript.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TlsCertificateEntry {
+    pub certificate_der: Vec<u8>,
+    pub extensions: Vec<(u16, Vec<u8>)>,
+}
+
+fn delegated_credential_parse_error(message: impl Into<String>) -> crate::error::TlsError {
+    crate::error::TlsError::ParseError {
+        message: message.into(),
+    }
+}
+
+fn parse_handshake_messages(input: &[u8]) -> Result<Vec<&[u8]>> {
+    let mut messages = Vec::new();
+    let mut cursor = 0usize;
+
+    // The OpenSSL message callback normally supplies a complete handshake
+    // message. Accept TLS record framing as well so captured packet transcripts
+    // can be fed to the same parser.
+    while cursor + 5 <= input.len() && input[cursor] == 22 {
+        let record_length = usize::from(u16::from_be_bytes([input[cursor + 3], input[cursor + 4]]));
+        let record_start = cursor + 5;
+        let record_end = record_start
+            .checked_add(record_length)
+            .ok_or_else(|| delegated_credential_parse_error("TLS record length overflows"))?;
+        if record_end > input.len() {
+            return Err(delegated_credential_parse_error("TLS record is truncated"));
+        }
+        messages.extend(parse_handshake_messages(&input[record_start..record_end])?);
+        cursor = record_end;
+    }
+
+    if cursor != 0 {
+        if cursor != input.len() {
+            return Err(delegated_credential_parse_error(
+                "trailing bytes after TLS records",
+            ));
+        }
+        return Ok(messages);
+    }
+
+    while cursor + 4 <= input.len() {
+        let body_length = (usize::from(input[cursor + 1]) << 16)
+            | (usize::from(input[cursor + 2]) << 8)
+            | usize::from(input[cursor + 3]);
+        let body_start = cursor + 4;
+        let body_end = body_start
+            .checked_add(body_length)
+            .ok_or_else(|| delegated_credential_parse_error("TLS handshake length overflows"))?;
+        if body_end > input.len() {
+            return Err(delegated_credential_parse_error(
+                "TLS handshake message is truncated",
+            ));
+        }
+        messages.push(&input[cursor..body_end]);
+        cursor = body_end;
+    }
+
+    if cursor != input.len() {
+        return Err(delegated_credential_parse_error(
+            "trailing bytes after TLS handshake messages",
+        ));
+    }
+    Ok(messages)
+}
+
+fn parse_tls_certificate_message(message: &[u8]) -> Result<Vec<TlsCertificateEntry>> {
+    if message.len() < 4 || message[0] != 11 {
+        return Err(delegated_credential_parse_error(
+            "expected a TLS Certificate handshake message",
+        ));
+    }
+    let body_length =
+        (usize::from(message[1]) << 16) | (usize::from(message[2]) << 8) | usize::from(message[3]);
+    if message.len() != body_length + 4 {
+        return Err(delegated_credential_parse_error(
+            "TLS Certificate handshake length does not match payload",
+        ));
+    }
+
+    let body = &message[4..];
+    if body.is_empty() {
+        return Err(delegated_credential_parse_error(
+            "TLS Certificate message is missing request context",
+        ));
+    }
+    let context_length = usize::from(body[0]);
+    let list_length_start = 1usize
+        .checked_add(context_length)
+        .ok_or_else(|| delegated_credential_parse_error("certificate context overflows"))?;
+    let list_length_end = list_length_start
+        .checked_add(3)
+        .ok_or_else(|| delegated_credential_parse_error("certificate list length overflows"))?;
+    if list_length_end > body.len() {
+        return Err(delegated_credential_parse_error(
+            "TLS Certificate message is truncated before certificate list",
+        ));
+    }
+    let list_length = (usize::from(body[list_length_start]) << 16)
+        | (usize::from(body[list_length_start + 1]) << 8)
+        | usize::from(body[list_length_start + 2]);
+    let list_start = list_length_end;
+    let list_end = list_start
+        .checked_add(list_length)
+        .ok_or_else(|| delegated_credential_parse_error("certificate list length overflows"))?;
+    if list_end != body.len() {
+        return Err(delegated_credential_parse_error(
+            "TLS Certificate list length does not match payload",
+        ));
+    }
+
+    let mut entries = Vec::new();
+    let mut cursor = list_start;
+    while cursor < list_end {
+        let certificate_length_end = cursor
+            .checked_add(3)
+            .ok_or_else(|| delegated_credential_parse_error("certificate length overflows"))?;
+        if certificate_length_end > list_end {
+            return Err(delegated_credential_parse_error(
+                "TLS Certificate entry is truncated before certificate length",
+            ));
+        }
+        let certificate_length = (usize::from(body[cursor]) << 16)
+            | (usize::from(body[cursor + 1]) << 8)
+            | usize::from(body[cursor + 2]);
+        let certificate_start = certificate_length_end;
+        let certificate_end = certificate_start
+            .checked_add(certificate_length)
+            .ok_or_else(|| delegated_credential_parse_error("certificate length overflows"))?;
+        let extensions_length_end = certificate_end
+            .checked_add(2)
+            .ok_or_else(|| delegated_credential_parse_error("certificate extensions overflow"))?;
+        if extensions_length_end > list_end {
+            return Err(delegated_credential_parse_error(
+                "TLS Certificate entry is truncated before extensions",
+            ));
+        }
+        let extensions_length = usize::from(u16::from_be_bytes([
+            body[certificate_end],
+            body[certificate_end + 1],
+        ]));
+        let extensions_start = extensions_length_end;
+        let extensions_end = extensions_start
+            .checked_add(extensions_length)
+            .ok_or_else(|| delegated_credential_parse_error("certificate extensions overflow"))?;
+        if extensions_end > list_end {
+            return Err(delegated_credential_parse_error(
+                "TLS Certificate extensions are truncated",
+            ));
+        }
+
+        let mut extensions = Vec::new();
+        let mut extension_cursor = extensions_start;
+        while extension_cursor < extensions_end {
+            let header_end = extension_cursor.checked_add(4).ok_or_else(|| {
+                delegated_credential_parse_error("certificate extension overflows")
+            })?;
+            if header_end > extensions_end {
+                return Err(delegated_credential_parse_error(
+                    "TLS Certificate extension is truncated before its length",
+                ));
+            }
+            let extension_type =
+                u16::from_be_bytes([body[extension_cursor], body[extension_cursor + 1]]);
+            let extension_length = usize::from(u16::from_be_bytes([
+                body[extension_cursor + 2],
+                body[extension_cursor + 3],
+            ]));
+            let extension_data_start = header_end;
+            let extension_data_end = extension_data_start
+                .checked_add(extension_length)
+                .ok_or_else(|| {
+                    delegated_credential_parse_error("certificate extension overflows")
+                })?;
+            if extension_data_end > extensions_end {
+                return Err(delegated_credential_parse_error(
+                    "TLS Certificate extension data is truncated",
+                ));
+            }
+            extensions.push((
+                extension_type,
+                body[extension_data_start..extension_data_end].to_vec(),
+            ));
+            extension_cursor = extension_data_end;
+        }
+
+        if extension_cursor != extensions_end {
+            return Err(delegated_credential_parse_error(
+                "TLS Certificate extension list length does not match payload",
+            ));
+        }
+        entries.push(TlsCertificateEntry {
+            certificate_der: body[certificate_start..certificate_end].to_vec(),
+            extensions,
+        });
+        cursor = extensions_end;
+    }
+
+    Ok(entries)
+}
+
+/// Extract and verify a delegated credential from a decrypted TLS transcript.
+/// Returns `None` when the transcript contains no CertificateEntry extension 34.
+pub fn analyze_delegated_credential_tls_transcript(
+    transcript: &[u8],
+    role: DelegatedCredentialRole,
+) -> Result<Option<DelegatedCredentialAnalysis>> {
+    for message in parse_handshake_messages(transcript)? {
+        if message.first().copied() != Some(11) {
+            continue;
+        }
+        for entry in parse_tls_certificate_message(message)? {
+            for (extension_type, extension_data) in entry.extensions {
+                if extension_type == DELEGATED_CREDENTIAL_EXTENSION_TYPE {
+                    return analyze_delegated_credential_entry_with_role(
+                        &entry.certificate_der,
+                        &extension_data,
+                        role,
+                    )
+                    .map(Some);
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn digest_for_signature_scheme(scheme: u16) -> Option<MessageDigest> {
     match scheme {
         0x0401 | 0x0403 | 0x0804 | 0x0809 => Some(MessageDigest::sha256()),
@@ -219,9 +497,8 @@ fn verify_delegated_credential_signature(
 /// Inspect the end-entity certificate prerequisite for delegated credentials.
 ///
 /// The delegated credential itself is a TLS `CertificateEntry` extension, not
-/// an X.509 extension. Current rustls/OpenSSL handshake APIs expose the peer
-/// certificate but not those opaque CertificateEntry extensions, so this
-/// function deliberately reports `not_observed` instead of claiming support.
+/// an X.509 extension. This helper is the conservative fallback used when a
+/// caller has only the certificate chain and no decrypted handshake transcript.
 pub fn analyze_delegated_credential_certificate(
     certificate_der: &[u8],
 ) -> Result<DelegatedCredentialAnalysis> {
@@ -441,9 +718,17 @@ impl CertificateAdvancedTester {
 
     /// Check delegated-credential authorization on the peer certificate.
     pub async fn test_delegated_credentials(&self) -> Result<DelegatedCredentialAnalysis> {
-        let certificate = self
-            .get_peer_certificate(Some(&self.target.hostname))
+        let (certificate, transcript) = self
+            .get_peer_certificate_with_transcript(Some(&self.target.hostname))
             .await?;
+        for message in transcript {
+            if let Some(analysis) = analyze_delegated_credential_tls_transcript(
+                &message,
+                DelegatedCredentialRole::Server,
+            )? {
+                return Ok(analysis);
+            }
+        }
         let der = certificate.to_der()?;
         analyze_delegated_credential_certificate(&der)
     }
@@ -454,6 +739,15 @@ impl CertificateAdvancedTester {
     }
 
     async fn get_peer_certificate(&self, sni_hostname: Option<&str>) -> Result<X509> {
+        self.get_peer_certificate_with_transcript(sni_hostname)
+            .await
+            .map(|(certificate, _)| certificate)
+    }
+
+    async fn get_peer_certificate_with_transcript(
+        &self,
+        sni_hostname: Option<&str>,
+    ) -> Result<(X509, Vec<Vec<u8>>)> {
         let addr = self
             .target
             .socket_addrs()
@@ -469,7 +763,7 @@ impl CertificateAdvancedTester {
 
         let (hostname_to_use, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
-        tokio::task::spawn_blocking(move || -> Result<X509> {
+        tokio::task::spawn_blocking(move || -> Result<(X509, Vec<Vec<u8>>)> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // The scanner must retrieve and inspect certificates from hosts whose
             // certificates are expired/self-signed/untrusted — exactly the cases a
@@ -478,17 +772,47 @@ impl CertificateAdvancedTester {
             builder.set_verify(SslVerifyMode::NONE);
 
             let connector = builder.build();
-            let ssl_stream = connector
+            let ssl = connector
                 .configure()?
                 .use_server_name_indication(use_sni)
-                .connect(&hostname_to_use, std_stream)?;
+                .into_ssl(&hostname_to_use)?;
+            let capture = Box::new(HandshakeCapture::default());
+            let capture_ptr = Box::into_raw(capture);
+            unsafe {
+                let ssl_ptr = ssl.as_ptr().cast::<c_void>();
+                SSL_set_msg_callback(ssl_ptr, Some(capture_tls_message));
+                SSL_set_msg_callback_arg(ssl_ptr, capture_ptr.cast::<c_void>());
+            }
 
-            let cert = ssl_stream
-                .ssl()
-                .peer_certificate()
-                .ok_or_else(|| crate::error::TlsError::Other("No certificate presented".into()))?;
+            let handshake = ssl.connect(std_stream);
+            let ssl_stream = match handshake {
+                Ok(stream) => stream,
+                Err(error) => {
+                    let converted = crate::error::TlsError::from(error);
+                    // The failed stream is owned by the handshake error and is
+                    // dropped before the capture is reclaimed.
+                    let _capture = unsafe { Box::from_raw(capture_ptr) };
+                    return Err(converted);
+                }
+            };
 
-            Ok(cert)
+            let cert = match ssl_stream.ssl().peer_certificate() {
+                Some(cert) => cert,
+                None => {
+                    drop(ssl_stream);
+                    let _capture = unsafe { Box::from_raw(capture_ptr) };
+                    return Err(crate::error::TlsError::Other(
+                        "No certificate presented".into(),
+                    ));
+                }
+            };
+
+            drop(ssl_stream);
+            let transcript = unsafe { Box::from_raw(capture_ptr) }
+                .messages
+                .into_inner()
+                .unwrap_or_default();
+            Ok((cert, transcript))
         })
         .await
         .map_err(|e| crate::TlsError::Other(format!("certificate task failed: {}", e)))?
@@ -834,6 +1158,28 @@ mod tests {
     use openssl::sign::Signer;
     use openssl::x509::extension::SubjectAlternativeName;
     use openssl::x509::{X509Builder, X509NameBuilder};
+
+    fn certificate_handshake(certificate: &[u8], delegated_credential: &[u8]) -> Vec<u8> {
+        let mut entry = Vec::new();
+        entry.extend_from_slice(&(certificate.len() as u32).to_be_bytes()[1..]);
+        entry.extend_from_slice(certificate);
+
+        let mut extensions = Vec::new();
+        extensions.extend_from_slice(&DELEGATED_CREDENTIAL_EXTENSION_TYPE.to_be_bytes());
+        extensions.extend_from_slice(&(delegated_credential.len() as u16).to_be_bytes());
+        extensions.extend_from_slice(delegated_credential);
+        entry.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        entry.extend_from_slice(&extensions);
+
+        let mut body = vec![0]; // empty certificate_request_context
+        body.extend_from_slice(&(entry.len() as u32).to_be_bytes()[1..]);
+        body.extend_from_slice(&entry);
+
+        let mut message = vec![11]; // TLS HandshakeType::certificate
+        message.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        message.extend_from_slice(&body);
+        message
+    }
 
     #[test]
     fn test_extract_certificate_info() {
@@ -1183,6 +1529,80 @@ mod tests {
         assert!(analysis.structurally_valid);
         assert_eq!(analysis.status, "invalid");
         assert_eq!(analysis.signature_verified, Some(false));
+    }
+
+    #[test]
+    fn delegated_credential_transcript_extracts_certificate_entry_extension() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "delegated-credential.example")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let certificate = builder.build().to_der().unwrap();
+        let delegated_credential = [
+            0, 0, 0, 60, // valid_time
+            0x04, 0x03, // credential key scheme
+            0, 0, 3, 1, 2, 3, // three-byte SPKI vector
+            0x99, 0x99, // unsupported delegation signature scheme
+            0, 2, 4, 5, // signature vector
+        ];
+        let handshake = certificate_handshake(&certificate, &delegated_credential);
+
+        let analysis = analyze_delegated_credential_tls_transcript(
+            &handshake,
+            DelegatedCredentialRole::Server,
+        )
+        .expect("certificate transcript should parse")
+        .expect("delegated credential extension should be observed");
+        assert!(analysis.credential_observed);
+        assert!(analysis.structurally_valid);
+        assert_eq!(analysis.status, "observed");
+        assert_eq!(analysis.signature_scheme, Some(0x9999));
+    }
+
+    #[test]
+    fn delegated_credential_transcript_accepts_tls_record_framing() {
+        let certificate = vec![0x30, 0x00];
+        let extension = [0, 0, 0, 60, 0x04, 0x03, 0, 0, 1, 1, 0, 1, 2, 9];
+        let handshake = certificate_handshake(&certificate, &extension);
+        let mut record = vec![22, 3, 3];
+        record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+        record.extend_from_slice(&handshake);
+
+        let error =
+            analyze_delegated_credential_tls_transcript(&record, DelegatedCredentialRole::Server)
+                .expect_err("invalid DER certificate should be rejected after record parsing");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid delegated-credential certificate")
+        );
+    }
+
+    #[test]
+    fn delegated_credential_transcript_rejects_truncated_certificate_message() {
+        let error = analyze_delegated_credential_tls_transcript(
+            &[11, 0, 0, 5, 0],
+            DelegatedCredentialRole::Server,
+        )
+        .expect_err("truncated certificate message should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("TLS handshake message is truncated")
+        );
     }
 
     #[test]

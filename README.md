@@ -356,9 +356,10 @@ and the conditions that produce an inconclusive verdict.
 Client simulations expose a versioned compatibility contract with explicit
 rustls and metadata-only limitations; see
 [client compatibility profiles](docs/client-compatibility-profiles.md).
-Delegated-credential checks report the RFC 9345 certificate prerequisite and
-explicitly remain `not_observed` until the TLS backend exposes CertificateEntry
-extensions; see [delegated credentials](docs/delegated-credentials.md).
+Delegated-credential checks capture OpenSSL's decrypted TLS `Certificate`
+handshake and verify RFC 9345 extension 34 when present; certificate-only
+backends conservatively report `not_observed`. See
+[delegated credentials](docs/delegated-credentials.md).
 
 `remediate` generates configuration snippets for nginx, Apache, HAProxy, Envoy,
 or Caddy. It never changes a running service, and it deliberately leaves
