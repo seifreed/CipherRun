@@ -284,7 +284,7 @@ jobs:
         id: container
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
+          IMAGE: ghcr.io/seifreed/cipherrun:${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
@@ -313,7 +313,7 @@ jobs:
       - name: Attest production container
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ghcr.io/seifreed/cipherrun
           subject-digest: ${{ steps.container.outputs.digest }}
           push-to-registry: true
 
