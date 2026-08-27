@@ -311,14 +311,14 @@ jobs:
           scripts/sign-container.sh "${IMAGE%%:*}@${digest}"
 
       - name: Attest production container
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ghcr.io/seifreed/cipherrun
           subject-digest: ${{ steps.container.outputs.digest }}
           push-to-registry: true
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/*
 
