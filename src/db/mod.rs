@@ -109,6 +109,8 @@ impl CipherRunDatabase {
     pub async fn store_scan(&self, results: &PersistedScan) -> crate::Result<i64> {
         use crate::db::models::*;
 
+        let started = std::time::Instant::now();
+
         // Create scan record
         let mut scan = ScanRecord::new(results.target_hostname.clone(), results.target_port);
         scan = scan.with_owner(
@@ -151,6 +153,20 @@ impl CipherRunDatabase {
             }
             return Err(error);
         }
+
+        tracing::info!(
+            event_name = "database.scan.persisted",
+            operation = "store_scan",
+            scan_id,
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            protocol_count = results.protocols.len(),
+            cipher_count = results.ciphers.len(),
+            vulnerability_count = results.vulnerabilities.len(),
+            rating_count = results.ratings.len(),
+            certificate_count = results.certificates.len(),
+            outcome = "stored",
+            "Scan results persisted"
+        );
 
         Ok(scan_id)
     }
@@ -254,6 +270,12 @@ mod tests {
     #[tokio::test]
     async fn test_store_scan_minimal() {
         let db = test_db().await;
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
 
         let results = PersistedScan {
             target_hostname: "example.com".to_string(),
@@ -274,9 +296,20 @@ mod tests {
 
         let scan_id = db
             .store_scan(&results)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
             .await
             .expect("test assertion should succeed");
         assert!(scan_id >= 0);
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(logs.trim()).unwrap();
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(event["fields"]["event_name"], "database.scan.persisted");
+        assert_eq!(event["fields"]["operation"], "store_scan");
+        assert_eq!(event["fields"]["scan_id"], scan_id);
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert_eq!(event["fields"]["outcome"], "stored");
+        assert!(!logs.contains("example.com"));
 
         if let DatabasePool::Sqlite(pool) = db.pool() {
             let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scans")
