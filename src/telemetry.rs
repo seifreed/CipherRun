@@ -5,7 +5,7 @@ use opentelemetry::{
     propagation::{Extractor, TextMapPropagator},
     trace::{TraceContextExt, TracerProvider},
 };
-use opentelemetry_otlp::SpanExporter;
+use opentelemetry_otlp::{RetryPolicy, SpanExporter, WithHttpConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use std::collections::HashMap;
@@ -49,6 +49,12 @@ where
 {
     let exporter = SpanExporter::builder()
         .with_http()
+        .with_retry_policy(RetryPolicy {
+            max_retries: 3,
+            initial_delay_ms: 100,
+            max_delay_ms: 1_600,
+            jitter_ms: 100,
+        })
         .build()
         .map_err(|_| crate::TlsError::Other("Failed to build OTLP exporter".to_string()))?;
     let provider = SdkTracerProvider::builder()

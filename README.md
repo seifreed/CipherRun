@@ -273,8 +273,12 @@ webhook URLs, certificate contents, or alert message bodies to tracing fields.
 
 With the `otel` feature enabled, tracing spans are exported through OTLP over
 HTTP. Export failures produce sanitized SDK error events through `tracing`; the
-collector's response body is not included. Without `otel`, logs and spans remain
-local and no telemetry service is required.
+collector's response body is not included. Transient HTTP failures are retried
+up to three times with exponential backoff and jitter; after the initial attempt
+and retries are exhausted, the batch is reported as failed and may be lost.
+`OTEL_EXPORTER_OTLP_TIMEOUT` (or `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`) limits
+each HTTP request attempt. Without `otel`, logs and spans remain local and no
+telemetry service is required.
 
 Native HTTPS is available by setting `tls_cert_file` and `tls_key_file` to a
 certificate chain and private-key PEM file. The two paths must be configured

@@ -92,6 +92,7 @@ otel = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry_sdk",
     "dep:tracing-opentelemetry",
+    "opentelemetry-otlp/experimental-http-retry",
 ]
 
 [dependencies]
