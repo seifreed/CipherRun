@@ -107,6 +107,7 @@ impl ScanExecutor {
 
         let mut shutdown_rx = self.shutdown_rx.clone();
         let mut active_tasks = tokio::task::JoinSet::new();
+        let mut dequeue_failure_reported = false;
 
         loop {
             // Check for shutdown signal
@@ -150,8 +151,12 @@ impl ScanExecutor {
                 }
             };
             let mut job = match result {
-                Ok(Some(job)) => job,
+                Ok(Some(job)) => {
+                    dequeue_failure_reported = false;
+                    job
+                }
                 Ok(None) => {
+                    dequeue_failure_reported = false;
                     tokio::select! {
                         _ = shutdown_rx.changed() => {},
                         _ = tokio::time::sleep(Duration::from_millis(500)) => {},
@@ -168,12 +173,15 @@ impl ScanExecutor {
                     continue;
                 }
                 Err(error) => {
-                    error!(
-                        event_name = "scan_job.dequeue_failed",
-                        error_type = "queue",
-                        error_code = error.observability_code(),
-                        "Failed to dequeue scan job"
-                    );
+                    if !dequeue_failure_reported {
+                        error!(
+                            event_name = "scan_job.dequeue_failed",
+                            error_type = "queue",
+                            error_code = error.observability_code(),
+                            "Failed to dequeue scan job"
+                        );
+                        dequeue_failure_reported = true;
+                    }
                     tokio::select! {
                         _ = shutdown_rx.changed() => {},
                         _ = tokio::time::sleep(Duration::from_secs(1)) => {},
@@ -930,6 +938,8 @@ mod tests {
         cancelled_job: ScanJob,
         entered: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
         release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+        dequeue_error: bool,
+        dequeue_calls: AtomicUsize,
     }
 
     #[async_trait::async_trait]
@@ -939,6 +949,10 @@ mod tests {
         }
 
         async fn dequeue(&self) -> Result<Option<ScanJob>> {
+            self.dequeue_calls.fetch_add(1, Ordering::SeqCst);
+            if self.dequeue_error {
+                return Err(TlsError::Other("queue unavailable".into()));
+            }
             Ok(self.job.lock().await.take())
         }
 
@@ -991,6 +1005,8 @@ mod tests {
             cancelled_job,
             entered: tokio::sync::Mutex::new(Some(entered_tx)),
             release: tokio::sync::Mutex::new(Some(release_rx)),
+            dequeue_error: false,
+            dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue, 1));
         let handle = tokio::spawn(Arc::clone(&executor).start());
@@ -1012,6 +1028,65 @@ mod tests {
             .expect("executor should stop after the active task finishes")
             .expect("executor task should join")
             .unwrap();
+    }
+
+    struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_dequeue_failures_emit_one_event_per_failure_streak() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: true,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let handle = tokio::spawn(Arc::clone(&executor).start().with_subscriber(dispatch));
+
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert!(queue.dequeue_calls.load(Ordering::SeqCst) >= 2);
+        executor.shutdown().await.unwrap();
+        handle.await.unwrap().unwrap();
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            output.matches("scan_job.dequeue_failed").count(),
+            1,
+            "{output}"
+        );
     }
 
     struct WebhookTestState {
