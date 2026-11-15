@@ -476,7 +476,9 @@ impl ScanExecutor {
                     .unwrap_or_default();
                 let mut cancelled = false;
 
-                if let Ok(Some(current)) = queue.get_job(&job.id).await {
+                let current =
+                    get_job_for_status_check(queue.as_ref(), &job.id, "success_finalization").await;
+                if let Some(current) = current {
                     if matches!(current.status, ScanStatus::Cancelled) {
                         cancelled = true;
                         job = current;
@@ -508,7 +510,9 @@ impl ScanExecutor {
                 outcome_error_code = e.observability_code();
                 let error_msg = e.to_string();
                 let mut cancelled = false;
-                if let Ok(Some(current)) = queue.get_job(&job.id).await {
+                let current =
+                    get_job_for_status_check(queue.as_ref(), &job.id, "failure_finalization").await;
+                if let Some(current) = current {
                     if matches!(current.status, ScanStatus::Cancelled) {
                         cancelled = true;
                         job = current;
@@ -916,6 +920,28 @@ fn scan_task_join_error_code(error: &tokio::task::JoinError) -> &'static str {
     if error.is_panic() { "panic" } else { "other" }
 }
 
+async fn get_job_for_status_check(
+    queue: &dyn JobQueue,
+    job_id: &str,
+    operation: &'static str,
+) -> Option<ScanJob> {
+    match queue.get_job(job_id).await {
+        Ok(job) => job,
+        Err(error) => {
+            warn!(
+                event_name = "scan_job.status_check.failed",
+                operation,
+                job_id,
+                error_type = "queue",
+                error_code = error.observability_code(),
+                outcome = "continue_without_status",
+                "Failed to read scan job status during finalization"
+            );
+            None
+        }
+    }
+}
+
 impl Clone for ScanExecutor {
     fn clone(&self) -> Self {
         Self {
@@ -960,12 +986,53 @@ mod tests {
         assert_eq!(scan_task_join_error_code(&cancelled), "other");
     }
 
+    #[test]
+    fn final_status_check_failure_is_logged_without_raw_backend_error() {
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let queue = GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: ScanJob::new("example.com".to_string(), ScanOptions::full(), None),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: true,
+            dequeue_calls: AtomicUsize::new(0),
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(
+                runtime
+                    .block_on(get_job_for_status_check(
+                        &queue,
+                        "job-123",
+                        "failure_finalization",
+                    ))
+                    .is_none()
+            );
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("scan_job.status_check.failed"), "{output}");
+        assert!(output.contains("failure_finalization"), "{output}");
+        assert!(output.contains("continue_without_status"), "{output}");
+        assert!(!output.contains("password=must-not-appear"), "{output}");
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
         entered: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
         release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
         dequeue_error: bool,
+        get_job_error: bool,
         dequeue_calls: AtomicUsize,
     }
 
@@ -984,6 +1051,9 @@ mod tests {
         }
 
         async fn get_job(&self, _id: &str) -> Result<Option<ScanJob>> {
+            if self.get_job_error {
+                return Err(TlsError::Other("password=must-not-appear".into()));
+            }
             if let Some(entered) = self.entered.lock().await.take() {
                 let _ = entered.send(());
             }
@@ -1033,6 +1103,7 @@ mod tests {
             entered: tokio::sync::Mutex::new(Some(entered_tx)),
             release: tokio::sync::Mutex::new(Some(release_rx)),
             dequeue_error: false,
+            get_job_error: false,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue, 1));
@@ -1097,6 +1168,7 @@ mod tests {
             entered: tokio::sync::Mutex::new(None),
             release: tokio::sync::Mutex::new(None),
             dequeue_error: true,
+            get_job_error: false,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
