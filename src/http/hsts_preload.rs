@@ -120,8 +120,16 @@ impl HstsPreloadChecker {
         validate_hostname(&normalized)
             .map_err(|error| format!("Invalid HSTS preload lookup hostname: {error}"))?;
 
+        let started = Instant::now();
+
         // Check cache first
         if let Some(cached) = self.get_from_cache(&normalized)? {
+            tracing::debug!(
+                event_name = "hsts_preload.cache.hit",
+                outcome = "hit",
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Using cached HSTS preload status"
+            );
             return Ok(cached);
         }
 
@@ -131,10 +139,22 @@ impl HstsPreloadChecker {
         // Try API query
         match self.query_api(&normalized).await {
             Ok(status) => {
+                tracing::debug!(
+                    event_name = "hsts_preload.lookup.completed",
+                    outcome = "success",
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "HSTS preload lookup completed"
+                );
                 self.cache_status(&normalized, status.clone())?;
                 Ok(status)
             }
             Err(api_error) => {
+                tracing::warn!(
+                    event_name = "hsts_preload.lookup.failed",
+                    error_type = "external_api",
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "HSTS preload lookup failed; returning unknown status"
+                );
                 // Fallback: create error status
                 let status = PreloadStatus {
                     in_chrome: false,

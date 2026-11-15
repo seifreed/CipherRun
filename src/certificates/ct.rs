@@ -69,7 +69,32 @@ impl CtVerifier {
 
         // Check if certificate is in CT logs (requires network access)
         if self.phone_out {
-            match self.check_ct_logs(cert).await {
+            let started = std::time::Instant::now();
+            let lookup = self.check_ct_logs(cert).await;
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match &lookup {
+                Ok(outcome) => {
+                    let outcome = match outcome {
+                        CtLogLookup::Found => "found",
+                        CtLogLookup::NotFound => "not_found",
+                        CtLogLookup::Inconclusive(_) => "inconclusive",
+                    };
+                    tracing::debug!(
+                        event_name = "certificate.ct.lookup.completed",
+                        outcome,
+                        duration_ms,
+                        "Certificate Transparency lookup completed"
+                    );
+                }
+                Err(_) => tracing::warn!(
+                    event_name = "certificate.ct.lookup.failed",
+                    error_type = "external_lookup",
+                    duration_ms,
+                    "Certificate Transparency lookup failed"
+                ),
+            }
+
+            match lookup {
                 Ok(CtLogLookup::Found) => {
                     result
                         .details
