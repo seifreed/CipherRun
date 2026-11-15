@@ -188,8 +188,12 @@ impl AlpnTester {
 
             match client.get(&url).send().await {
                 Ok(_) => return Ok(AlpnProbeOutcome::Negotiated("h3".to_string())),
-                Err(error) => {
-                    tracing::debug!(%error, %addr, "HTTP/3 request did not complete");
+                Err(_) => {
+                    tracing::debug!(
+                        event_name = "http3.request.failed",
+                        error_type = "transport",
+                        "HTTP/3 request did not complete"
+                    );
                 }
             }
         }

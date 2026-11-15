@@ -615,10 +615,16 @@ impl ScanExecutor {
         let _ = progress_tx.send(ProgressMessage::new(&job.id, progress, stage));
         let mut snapshot = job.clone();
         snapshot.update_progress(progress, stage.to_string());
-        if let Err(e) = queue.update_job_preserving_cancelled(&snapshot).await {
+        if queue
+            .update_job_preserving_cancelled(&snapshot)
+            .await
+            .is_err()
+        {
             error!(
-                "Failed to persist running progress for job {}: {}",
-                job.id, e
+                event_name = "scan_job.progress.persist_failed",
+                job_id = %job.id,
+                error_type = "queue",
+                "Failed to persist running progress"
             );
         }
     }
@@ -733,8 +739,10 @@ impl ScanExecutor {
             match response {
                 Ok(response) if response.status().is_success() => {
                     info!(
-                        "Delivered webhook {} for job {} after {} attempt(s)",
-                        delivery_id, job.id, attempt
+                        event_name = "scan_job.webhook.delivered",
+                        job_id = %job.id,
+                        attempt,
+                        "Delivered scan webhook"
                     );
                     return Ok(());
                 }
@@ -751,15 +759,19 @@ impl ScanExecutor {
                     });
                 }
                 Ok(response) => warn!(
-                    "Webhook {} attempt {} returned {}, retrying",
-                    delivery_id,
+                    event_name = "scan_job.webhook.retry",
+                    job_id = %job.id,
                     attempt,
-                    response.status()
+                    status = response.status().as_u16(),
+                    "Scan webhook returned retryable status"
                 ),
                 Err(error) if attempt == max_attempts => return Err(error.into()),
-                Err(error) => warn!(
-                    "Webhook {} attempt {} failed: {}, retrying",
-                    delivery_id, attempt, error
+                Err(_) => warn!(
+                    event_name = "scan_job.webhook.retry",
+                    job_id = %job.id,
+                    attempt,
+                    error_type = "transport",
+                    "Scan webhook transport failed"
                 ),
             }
 
