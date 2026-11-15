@@ -169,10 +169,13 @@ impl AlpnTester {
             return Ok(AlpnProbeOutcome::NotNegotiated);
         }
 
+        let started = std::time::Instant::now();
         let addrs = self.probe_addrs()?;
+        let address_count = addrs.len();
         let host = self.target.hostname.clone();
         let url = format!("https://{}:{}/", host, self.target.port);
 
+        let mut attempts = 0;
         for addr in addrs {
             let client = reqwest::Client::builder()
                 .http3_prior_knowledge()
@@ -186,24 +189,35 @@ impl AlpnTester {
                     crate::TlsError::Other(format!("HTTP/3 client setup failed: {error}"))
                 })?;
 
-            match client.get(&url).send().await {
-                Ok(_) => return Ok(AlpnProbeOutcome::Negotiated("h3".to_string())),
-                Err(_) => {
-                    tracing::debug!(
-                        event_name = "http3.request.failed",
-                        error_type = "transport",
-                        "HTTP/3 request did not complete"
-                    );
-                }
+            attempts += 1;
+            if client.get(&url).send().await.is_ok() {
+                tracing::debug!(
+                    event_name = "http3.request.completed",
+                    outcome = "negotiated",
+                    protocol = "h3",
+                    address_count,
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "HTTP/3 request completed"
+                );
+                return Ok(AlpnProbeOutcome::Negotiated("h3".to_string()));
             }
         }
 
+        tracing::debug!(
+            event_name = "http3.request.inconclusive",
+            attempt_count = attempts,
+            address_count,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "HTTP/3 request did not complete"
+        );
         Ok(AlpnProbeOutcome::Inconclusive)
     }
 
     /// Test a specific ALPN protocol
     async fn test_protocol(&self, protocols: Vec<Vec<u8>>) -> Result<AlpnProbeOutcome> {
+        let started = std::time::Instant::now();
         let addrs = self.probe_addrs()?;
+        let address_count = addrs.len();
         let hostname = self
             .starttls_hostname
             .clone()
@@ -271,6 +285,15 @@ impl AlpnTester {
                 let (_, connection) = tls_stream.get_ref();
                 if let Some(protocol) = connection.alpn_protocol() {
                     let proto_str = String::from_utf8_lossy(protocol).to_string();
+                    tracing::debug!(
+                        event_name = "alpn.probe.completed",
+                        requested_protocols = ?protocols,
+                        negotiated_protocol = %proto_str,
+                        outcome = "negotiated",
+                        address_count,
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        "ALPN probe completed"
+                    );
                     return Ok(AlpnProbeOutcome::Negotiated(proto_str));
                 }
                 saw_not_negotiated = true;
@@ -278,8 +301,23 @@ impl AlpnTester {
         }
 
         if saw_not_negotiated {
+            tracing::debug!(
+                event_name = "alpn.probe.completed",
+                requested_protocols = ?protocols,
+                outcome = "not_negotiated",
+                address_count,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "ALPN probe completed"
+            );
             Ok(AlpnProbeOutcome::NotNegotiated)
         } else {
+            tracing::debug!(
+                event_name = "alpn.probe.inconclusive",
+                requested_protocols = ?protocols,
+                address_count,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "ALPN probe could not complete"
+            );
             Ok(AlpnProbeOutcome::Inconclusive)
         }
     }
