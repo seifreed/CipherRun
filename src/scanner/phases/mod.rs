@@ -49,6 +49,8 @@ use crate::utils::mtls::MtlsConfig;
 use crate::utils::network::{Target, canonical_target};
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::time::Instant;
+use tracing::Instrument;
 
 fn is_fatal_phase_error(error: &crate::TlsError) -> bool {
     matches!(
@@ -339,6 +341,22 @@ impl PhaseOrchestrator {
                     reporter.on_phase_start(phase.name());
                 }
 
+                let phase_span = tracing::info_span!(
+                    "scan.phase",
+                    phase = phase.name(),
+                    outcome = tracing::field::Empty,
+                    duration_ms = tracing::field::Empty,
+                );
+                let phase_start = Instant::now();
+                let phase_result = phase
+                    .execute(&mut context)
+                    .instrument(phase_span.clone())
+                    .await;
+                phase_span.record(
+                    "duration_ms",
+                    u64::try_from(phase_start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
+
                 // A single data-gathering phase failing must not abort the
                 // whole scan. Servers the client cannot fully handshake with
                 // (weak-cipher-only, legacy-TLS-only, partial outages) would
@@ -346,8 +364,17 @@ impl PhaseOrchestrator {
                 // scanner should do. Record the failure and continue so the
                 // remaining phases still produce findings. Unreachable targets
                 // are already rejected earlier (DNS resolution / preflight).
-                if let Err(error) = phase.execute(&mut context).await {
-                    if is_fatal_phase_error(&error) {
+                if let Err(error) = phase_result {
+                    let fatal = is_fatal_phase_error(&error);
+                    phase_span.record(
+                        "outcome",
+                        if fatal {
+                            "fatal_error"
+                        } else {
+                            "partial_error"
+                        },
+                    );
+                    if fatal {
                         return Err(error);
                     }
                     tracing::warn!(
@@ -361,6 +388,8 @@ impl PhaseOrchestrator {
                         phase.name(),
                         error
                     ));
+                } else {
+                    phase_span.record("outcome", "success");
                 }
 
                 if let Some(ref reporter) = self.reporter {
@@ -393,7 +422,35 @@ pub(crate) fn test_scan_context(args: ScanRequest) -> ScanContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct ErrorPhase {
         error: crate::TlsError,
@@ -546,5 +603,30 @@ mod tests {
             "{:?}",
             results.scan_metadata.human_warnings
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn phase_span_records_outcome_and_duration_without_raw_error() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let orchestrator = PhaseOrchestrator::new().add_phase(Box::new(ErrorPhase {
+            error: crate::TlsError::Other("probe failed target=private.example".to_string()),
+        }));
+
+        orchestrator
+            .execute(test_scan_context(ScanRequest::default()))
+            .with_subscriber(subscriber)
+            .await
+            .expect("nonfatal phase errors should be recoverable");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("scan.phase"), "{output:?}");
+        assert!(output.contains("outcome=\"partial_error\""), "{output:?}");
+        assert!(output.contains("duration_ms="), "{output:?}");
+        assert!(!output.contains("private.example"), "{output:?}");
     }
 }
