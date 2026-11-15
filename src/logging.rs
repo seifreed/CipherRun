@@ -10,11 +10,28 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::FmtSubscriber;
 
 pub fn initialize(args: &Args) -> Result<LoggingGuard> {
+    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
+    if tracing::dispatcher::has_been_set() {
+        tracing::info!(
+            event_name = "logging.subscriber.reused",
+            requested_file_destination = args.output.logfile.is_some(),
+            outcome = "existing_subscriber",
+            "Using the already initialized tracing subscriber"
+        );
+        return Ok(LoggingGuard {
+            writer_guard: None,
+            dropped_log_lines: None,
+            json,
+            drop_monitor: None,
+            #[cfg(feature = "otel")]
+            tracer_provider: None,
+        });
+    }
+
     let filter = resolve_log_filter(
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
     );
-    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
     let file = args.output.logfile.as_ref().and_then(|path| {
         rolling_log_file(path).map_or_else(
             |_| {
@@ -101,7 +118,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     let drop_monitor = start_drop_monitor(dropped_log_lines.clone(), json);
     Ok(LoggingGuard {
         writer_guard: Some(writer_guard),
-        dropped_log_lines,
+        dropped_log_lines: Some(dropped_log_lines),
         json,
         drop_monitor,
         #[cfg(feature = "otel")]
@@ -111,7 +128,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
 
 pub struct LoggingGuard {
     writer_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
-    dropped_log_lines: tracing_appender::non_blocking::ErrorCounter,
+    dropped_log_lines: Option<tracing_appender::non_blocking::ErrorCounter>,
     json: bool,
     drop_monitor: Option<(SyncSender<()>, JoinHandle<usize>)>,
     #[cfg(feature = "otel")]
@@ -131,18 +148,17 @@ impl Drop for LoggingGuard {
         }
 
         drop(self.writer_guard.take());
-        if let Some((stop, monitor)) = self.drop_monitor.take() {
+        let already_reported = if let Some((stop, monitor)) = self.drop_monitor.take() {
             let _ = stop.send(());
-            let already_reported = monitor.join().unwrap_or(0);
-            report_dropped_log_lines(
-                self.dropped_log_lines
-                    .dropped_lines()
-                    .saturating_sub(already_reported),
-                self.json,
-            );
+            monitor.join().unwrap_or(0)
         } else {
-            report_dropped_log_lines(self.dropped_log_lines.dropped_lines(), self.json);
-        }
+            0
+        };
+        let dropped_lines = self
+            .dropped_log_lines
+            .as_ref()
+            .map_or(0, |counter| counter.dropped_lines());
+        report_dropped_log_lines(dropped_lines.saturating_sub(already_reported), self.json);
     }
 }
 
