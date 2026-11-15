@@ -2,7 +2,6 @@
 
 pub mod auth;
 pub mod cors;
-pub mod logging;
 pub mod metrics;
 pub mod proxy;
 pub mod rate_limit;
@@ -12,7 +11,6 @@ pub use auth::{
     require_admin, require_user,
 };
 pub use cors::cors_layer_with_origins;
-pub use logging::logging_layer;
 pub use metrics::metrics;
 pub use rate_limit::{PerKeyRateLimiter, rate_limit};
 

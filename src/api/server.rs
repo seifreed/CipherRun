@@ -344,8 +344,6 @@ impl ApiServer {
             )
             // Add compression
             .layer(CompressionLayer::new())
-            // Add logging
-            .layer(middleware::logging_layer())
             // Add shared state
             .with_state(self.state.clone()))
     }

@@ -119,7 +119,6 @@ pub fn test_api_router_with_config(config: ApiConfig) -> Router {
             middleware::metrics,
         ))
         .layer(CompressionLayer::new())
-        .layer(middleware::logging_layer())
         .with_state(state)
 }
 
