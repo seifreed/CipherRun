@@ -43,7 +43,10 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     });
     let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)
-        .finish(LogWriter { file });
+        .finish(LogWriter {
+            file,
+            file_failure_reported: false,
+        });
     let dropped_log_lines = writer.error_counter();
 
     #[cfg(feature = "otel")]
@@ -164,22 +167,40 @@ impl Drop for LoggingGuard {
 
 struct LogWriter {
     file: Option<RollingFileAppender>,
+    file_failure_reported: bool,
 }
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut stderr = io::stderr().lock();
-        let file = self.file.as_mut().map(|file| file as &mut dyn Write);
-        write_to_destinations(buf, &mut stderr, file)
+        let Self {
+            file,
+            file_failure_reported,
+        } = self;
+        let file = file.as_mut().map(|file| file as &mut dyn Write);
+        write_to_destinations(buf, &mut stderr, file, || {
+            if !*file_failure_reported {
+                report_log_file_write_fallback();
+                *file_failure_reported = true;
+            }
+        })
     }
 
     fn flush(&mut self) -> io::Result<()> {
         let stderr = io::stderr();
         let mut stderr = stderr.lock();
+        let Self {
+            file,
+            file_failure_reported,
+        } = self;
         let stderr_result = stderr.flush();
-        let file_result = self.file.as_mut().map(Write::flush);
-        stderr_result?;
-        file_result.unwrap_or(Ok(()))
+        let file_result = file.as_mut().map(Write::flush);
+        destination_result(stderr_result, file_result, || {
+            if !*file_failure_reported {
+                report_log_file_write_fallback();
+                *file_failure_reported = true;
+            }
+        })
     }
 }
 
@@ -187,14 +208,25 @@ fn write_to_destinations(
     buf: &[u8],
     stderr: &mut dyn Write,
     file: Option<&mut dyn Write>,
+    report_file_failure: impl FnOnce(),
 ) -> io::Result<usize> {
     let stderr_result = stderr.write_all(buf);
     let file_result = file.map(|file| file.write_all(buf));
-    stderr_result?;
-    if let Some(result) = file_result {
-        result?;
+    destination_result(stderr_result, file_result, report_file_failure).map(|()| buf.len())
+}
+
+fn destination_result(
+    stderr_result: io::Result<()>,
+    file_result: Option<io::Result<()>>,
+    report_file_failure: impl FnOnce(),
+) -> io::Result<()> {
+    if file_result.as_ref().is_some_and(|result| result.is_err()) {
+        report_file_failure();
     }
-    Ok(buf.len())
+    match (stderr_result, file_result) {
+        (Ok(()), _) | (Err(_), Some(Ok(()))) => Ok(()),
+        (Err(stderr_error), _) => Err(stderr_error),
+    }
 }
 
 fn rolling_log_file(path: &Path) -> io::Result<RollingFileAppender> {
@@ -289,6 +321,12 @@ fn report_log_file_fallback(json: bool) {
     let _ = writeln!(io::stderr().lock(), "{line}");
 }
 
+fn report_log_file_write_fallback() {
+    let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let line = format_log_file_write_fallback_event(&timestamp);
+    let _ = writeln!(io::stderr().lock(), "{line}");
+}
+
 fn format_log_file_fallback_event(json: bool, timestamp: &str) -> String {
     if json {
         serde_json::json!({
@@ -308,6 +346,23 @@ fn format_log_file_fallback_event(json: bool, timestamp: &str) -> String {
     } else {
         "WARN logging.file_destination.failed operation=open_log_file error_type=file_destination error_code=filesystem_error outcome=stderr_only Log file unavailable; continuing with stderr".to_string()
     }
+}
+
+fn format_log_file_write_fallback_event(timestamp: &str) -> String {
+    serde_json::json!({
+        "timestamp": timestamp,
+        "level": "WARN",
+        "fields": {
+            "event_name": "logging.file_destination.write_failed",
+            "operation": "write_log_file",
+            "error_type": "file_destination",
+            "error_code": "filesystem_error",
+            "outcome": "stderr_only",
+            "message": "Log file write failed; continuing with stderr"
+        },
+        "target": "cipherrun::logging"
+    })
+    .to_string()
 }
 
 fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -> String {
@@ -333,8 +388,9 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 #[cfg(test)]
 mod tests {
     use super::{
-        LogWriter, format_dropped_log_event, format_log_file_fallback_event, json_logs_enabled,
-        monitor_dropped_log_lines, resolve_log_filter, rolling_log_file, write_to_destinations,
+        LogWriter, format_dropped_log_event, format_log_file_fallback_event,
+        format_log_file_write_fallback_event, json_logs_enabled, monitor_dropped_log_lines,
+        resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -410,10 +466,13 @@ mod tests {
         let file_output = Buffer(Arc::new(Mutex::new(Vec::new())));
         let mut file = BufferWriter(file_output.0.clone());
 
-        let error = write_to_destinations(b"event\n", &mut FailingWriter, Some(&mut file))
-            .expect_err("stderr failure should remain observable");
+        let mut reported = false;
+        write_to_destinations(b"event\n", &mut FailingWriter, Some(&mut file), || {
+            reported = true;
+        })
+        .expect("the file destination successfully stored the event");
 
-        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert!(!reported);
         assert_eq!(*file_output.0.lock().unwrap(), b"event\n");
     }
 
@@ -422,11 +481,29 @@ mod tests {
         let stderr_output = Buffer(Arc::new(Mutex::new(Vec::new())));
         let mut stderr = BufferWriter(stderr_output.0.clone());
 
-        let error = write_to_destinations(b"event\n", &mut stderr, Some(&mut FailingWriter))
-            .expect_err("file failure should remain observable");
+        let mut reported = false;
+        write_to_destinations(b"event\n", &mut stderr, Some(&mut FailingWriter), || {
+            reported = true;
+        })
+        .expect("stderr successfully stored the event");
+
+        assert!(reported, "file destination failure should be surfaced");
+        assert_eq!(*stderr_output.0.lock().unwrap(), b"event\n");
+    }
+
+    #[test]
+    fn both_destination_failures_return_an_io_error() {
+        let mut reported = false;
+        let error = write_to_destinations(
+            b"event\n",
+            &mut FailingWriter,
+            Some(&mut FailingWriter),
+            || reported = true,
+        )
+        .expect_err("an event with no successful destination should fail");
 
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
-        assert_eq!(*stderr_output.0.lock().unwrap(), b"event\n");
+        assert!(reported);
     }
 
     #[test]
@@ -501,6 +578,19 @@ mod tests {
         assert_eq!(event["fields"]["error_code"], "filesystem_error");
         assert_eq!(event["fields"]["outcome"], "stderr_only");
         assert!(!serialized.contains("/private/path"));
+    }
+
+    #[test]
+    fn failed_file_write_uses_a_safe_json_fallback_event() {
+        let serialized = format_log_file_write_fallback_event("2026-11-15T12:00:00.000000Z");
+        let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "logging.file_destination.write_failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "filesystem_error");
+        assert_eq!(event["fields"]["outcome"], "stderr_only");
     }
 
     #[test]
@@ -698,7 +788,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cipherrun.jsonl");
         let file = rolling_log_file(&path).unwrap();
-        let mut writer = LogWriter { file: Some(file) };
+        let mut writer = LogWriter {
+            file: Some(file),
+            file_failure_reported: false,
+        };
         writer.write_all(b"test event\n").unwrap();
         writer.flush().unwrap();
 
