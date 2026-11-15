@@ -79,10 +79,11 @@ impl BuiltinFrameworkSource {
     }
 
     fn metadata_from_content(content: &str) -> crate::Result<RulePackMetadata> {
-        let header: RulePackHeader =
-            serde_yaml::from_str(content).map_err(|error| crate::error::TlsError::ConfigError {
+        let header: RulePackHeader = serde_saphyr::from_str(content).map_err(|error| {
+            crate::error::TlsError::ConfigError {
                 message: format!("Invalid rule pack metadata: {error}"),
-            })?;
+            }
+        })?;
         let declaration = header.rule_pack;
         if declaration.version.trim().is_empty()
             || declaration.source.organization.trim().is_empty()

@@ -9,7 +9,7 @@ pub struct FrameworkLoader;
 impl FrameworkLoader {
     pub fn load_from_string(yaml_content: &str) -> crate::Result<ComplianceFramework> {
         let framework: ComplianceFramework =
-            serde_yaml::from_str(yaml_content).map_err(|e| TlsError::ParseError {
+            serde_saphyr::from_str(yaml_content).map_err(|e| TlsError::ParseError {
                 message: format!("Failed to deserialize compliance framework YAML: {}", e),
             })?;
         Self::validate_regex_patterns(&framework)?;
@@ -92,5 +92,36 @@ mod tests {
     fn test_unknown_framework() {
         let result = FrameworkLoader::load_builtin("unknown-framework");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_json_compatible_custom_rule_values() {
+        let yaml = r#"
+id: test
+name: Test
+version: "1"
+description: Test framework
+organization: Test
+requirements:
+  - id: test-1
+    name: Test
+    description: Test
+    category: Test
+    severity: low
+    rules:
+      - type: Custom
+        custom:
+          enabled: true
+          labels: [one, two]
+          settings:
+            retries: 3
+"#;
+
+        let framework = FrameworkLoader::load_from_string(yaml).unwrap();
+        let custom = &framework.requirements[0].rules[0].custom_params["custom"];
+
+        assert_eq!(custom["enabled"], serde_json::json!(true));
+        assert_eq!(custom["labels"], serde_json::json!(["one", "two"]));
+        assert_eq!(custom["settings"]["retries"], serde_json::json!(3));
     }
 }

@@ -4,6 +4,16 @@ All notable changes to CipherRun are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Raise the Rust MSRV to 1.89 and Python SDK minimum to 3.10.
+- Replace the unmaintained `serde_yaml` parser with safe-Rust `serde-saphyr`.
+- Change `Rule.custom_params` from `serde_yaml::Value` to `serde_json::Value`.
+- Upgrade Python SDK packaging to version 0.5.0 and remediate its Dependabot alerts.
+- Continue W3C trace context from HTTP requests into persisted scan jobs.
+
 ## [0.4.0] - 2026-08-25
 
 ### Added
@@ -78,6 +88,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Automated crates.io and multiplatform binary releases.
 
 [Unreleased]: https://github.com/seifreed/CipherRun/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/seifreed/CipherRun/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/seifreed/CipherRun/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/seifreed/CipherRun/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/seifreed/CipherRun/releases/tag/v0.3.0

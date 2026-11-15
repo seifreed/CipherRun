@@ -5,7 +5,6 @@ use crate::policy::Policy;
 use crate::protocols::Protocol;
 use crate::security::sanitize_path;
 use regex::Regex;
-use serde_yaml;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -108,8 +107,8 @@ impl<'a> PolicyLoader<'a> {
 
     fn parse_policy_document(&self, content: &str) -> Result<Policy> {
         // Parse the YAML into a generic value first
-        let yaml_value: serde_yaml::Value =
-            serde_yaml::from_str(content).map_err(|e| crate::TlsError::ParseError {
+        let yaml_value: serde_json::Value =
+            serde_saphyr::from_str(content).map_err(|e| crate::TlsError::ParseError {
                 message: format!("Failed to parse YAML: {}", e),
             })?;
 
@@ -122,7 +121,7 @@ impl<'a> PolicyLoader<'a> {
         };
 
         // Deserialize the policy
-        serde_yaml::from_value(policy_value).map_err(|e| crate::TlsError::ParseError {
+        serde_json::from_value(policy_value).map_err(|e| crate::TlsError::ParseError {
             message: format!("Failed to parse policy YAML: {}", e),
         })
     }

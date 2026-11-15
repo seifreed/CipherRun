@@ -86,7 +86,7 @@ pub struct Rule {
 
     /// Additional custom parameters
     #[serde(flatten)]
-    pub custom_params: HashMap<String, serde_yaml::Value>,
+    pub custom_params: HashMap<String, serde_json::Value>,
 }
 
 impl Rule {

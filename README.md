@@ -119,7 +119,7 @@ cargo install cipherrun
 
 ### Releases
 
-Pushing a tag matching the package version, such as `v0.4.0`, runs the release
+Pushing a tag matching the package version, such as `v0.5.0`, runs the release
 workflow. It builds platform packages for Linux, Windows, and macOS on x64 and
 ARM64, together with SHA-256 checksums, package-manager manifests, and an SBOM.
 The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN` for
@@ -127,7 +127,8 @@ crates.io publication. The production container and provenance attestations are
 separate release outputs and must be verified on the individual GitHub release
 before being advertised as published.
 
-The 0.4 migration steps are in [docs/migration-0.4.0.md](docs/migration-0.4.0.md),
+The 0.5 migration steps are in [docs/migration-0.5.0.md](docs/migration-0.5.0.md),
+the 0.4 migration steps are in [docs/migration-0.4.0.md](docs/migration-0.4.0.md),
 the supported platforms and versions are in [docs/support-matrix.md](docs/support-matrix.md),
 and automation compatibility rules are in [docs/stability-policy.md](docs/stability-policy.md).
 The release job generates `cipherrun.rb` and `cipherrun.json` assets from the
@@ -146,8 +147,8 @@ scripts/generate-python-sdk.sh sdk/python
 The default image is the production build: a distroless, non-root runtime containing only CipherRun and the CA bundle.
 
 ```bash
-docker build -t cipherrun:0.4.0 .
-docker run --rm cipherrun:0.4.0 example.com
+docker build -t cipherrun:0.5.0 .
+docker run --rm cipherrun:0.5.0 example.com
 ```
 
 To run the API, generate credentials first. The production Compose binds the API to localhost, mounts the configuration read-only, drops every capability, and uses a read-only root filesystem.
