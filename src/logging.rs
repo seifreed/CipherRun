@@ -23,6 +23,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)
         .finish(LogWriter { file });
+    let dropped_log_lines = writer.error_counter();
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
 
     #[cfg(feature = "otel")]
@@ -69,6 +70,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
 
     Ok(LoggingGuard {
         _writer_guard: writer_guard,
+        dropped_log_lines,
         #[cfg(feature = "otel")]
         tracer_provider,
     })
@@ -76,13 +78,16 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
 
 pub struct LoggingGuard {
     _writer_guard: tracing_appender::non_blocking::WorkerGuard,
+    dropped_log_lines: tracing_appender::non_blocking::ErrorCounter,
     #[cfg(feature = "otel")]
     tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
-#[cfg(feature = "otel")]
 impl Drop for LoggingGuard {
     fn drop(&mut self) {
+        report_dropped_log_lines(self.dropped_log_lines.dropped_lines());
+
+        #[cfg(feature = "otel")]
         if let Some(provider) = &self.tracer_provider
             && provider.shutdown().is_err()
         {
@@ -132,9 +137,19 @@ fn json_logs_enabled(format: Option<&str>) -> bool {
     format.is_some_and(|value| value.eq_ignore_ascii_case("json"))
 }
 
+fn report_dropped_log_lines(dropped_lines: usize) {
+    if dropped_lines > 0 {
+        tracing::warn!(
+            event_name = "logging.events_dropped",
+            dropped_lines,
+            "Log events were dropped by the bounded logging queue"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LogWriter, json_logs_enabled, resolve_log_filter};
+    use super::{LogWriter, json_logs_enabled, report_dropped_log_lines, resolve_log_filter};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -211,6 +226,23 @@ mod tests {
         assert_eq!(serialized.lines().count(), 1);
         let event: serde_json::Value = serde_json::from_str(serialized).unwrap();
         assert_eq!(event["fields"]["input"], untrusted);
+    }
+
+    #[test]
+    fn dropped_log_lines_are_reported_on_shutdown() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || report_dropped_log_lines(3));
+
+        let bytes = output.0.lock().unwrap().clone();
+        let event: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(event["fields"]["event_name"], "logging.events_dropped");
+        assert_eq!(event["fields"]["dropped_lines"], 3);
     }
 
     #[test]
