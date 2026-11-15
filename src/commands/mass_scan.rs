@@ -95,15 +95,15 @@ impl MassScanCommand {
     }
 
     /// Build the mass scanner from the active target source (--file, --cidr, or
-    /// --asn) and return it alongside a human-readable source label.
+    /// --asn) and return the stable source kind for diagnostics.
     async fn build_mass_scanner(
         &self,
         request: ScanRequest,
         config: MassScanConfig,
-    ) -> Result<(MassScanner, String)> {
+    ) -> Result<(MassScanner, &'static str)> {
         if let Some(input_file) = self.args.input_file.as_ref() {
             let scanner = MassScanner::from_file(request, config, input_file)?;
-            return Ok((scanner, format!("file {}", input_file.display())));
+            return Ok((scanner, "file"));
         }
 
         if let Some(cidr) = self.args.cidr.as_deref() {
@@ -114,10 +114,7 @@ impl MassScanCommand {
                 .iter()
                 .map(|ip| Self::format_ip_target(ip, port))
                 .collect();
-            return Ok((
-                MassScanner::new(request, config, targets),
-                format!("CIDR {cidr}"),
-            ));
+            return Ok((MassScanner::new(request, config, targets), "cidr"));
         }
 
         if let Some(asn) = self.args.asn.as_deref() {
@@ -155,18 +152,7 @@ impl MassScanCommand {
                 .flat_map(|expansion| expansion.iter())
                 .map(|ip| Self::format_ip_target(ip, port))
                 .collect();
-            let label = if skipped.is_empty() {
-                format!("{} ({} announced prefixes)", asn, networks.len())
-            } else {
-                format!(
-                    "{} ({} of {} announced prefixes; {} skipped as too large)",
-                    asn,
-                    enumerable.len(),
-                    networks.len(),
-                    skipped.len()
-                )
-            };
-            return Ok((MassScanner::new(request, config, targets), label));
+            return Ok((MassScanner::new(request, config, targets), "asn"));
         }
 
         Err(TlsError::InvalidInput {
@@ -185,12 +171,13 @@ impl Command for MassScanCommand {
             certificate_filters: certificate_filters.clone(),
         };
 
-        let (mass_scanner, source) = self.build_mass_scanner(scan_request, config).await?;
+        let (mass_scanner, source_type) = self.build_mass_scanner(scan_request, config).await?;
 
         info!(
-            "Loaded {} targets from {}",
-            mass_scanner.targets.len(),
-            source
+            event_name = "mass_scan.targets.loaded",
+            target_count = mass_scanner.targets.len(),
+            source_type,
+            "Loaded mass scan targets"
         );
 
         let results = if self.args.network.parallel {
@@ -279,7 +266,7 @@ impl Command for MassScanCommand {
 mod tests {
     use super::*;
 
-    async fn build_scanner(args: Args) -> (MassScanner, String) {
+    async fn build_scanner(args: Args) -> (MassScanner, &'static str) {
         MassScanCommand::new(args)
             .build_mass_scanner(ScanRequest::default(), MassScanConfig::default())
             .await
@@ -324,12 +311,28 @@ mod tests {
             cidr: Some("192.0.2.0/30".to_string()),
             ..Default::default()
         };
-        let (scanner, source) = build_scanner(args).await;
+        let (scanner, source_type) = build_scanner(args).await;
 
-        assert_eq!(source, "CIDR 192.0.2.0/30");
+        assert_eq!(source_type, "cidr");
         assert_eq!(scanner.targets.len(), 4);
         assert!(scanner.targets.contains(&"192.0.2.0:443".to_string()));
         assert!(scanner.targets.contains(&"192.0.2.3:443".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_build_mass_scanner_uses_file_source_kind_without_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("private-targets.txt");
+        std::fs::write(&path, "192.0.2.7:443\n").expect("target file should be written");
+        let args = Args {
+            input_file: Some(path),
+            ..Default::default()
+        };
+
+        let (scanner, source_type) = build_scanner(args).await;
+
+        assert_eq!(source_type, "file");
+        assert_eq!(scanner.targets, vec!["192.0.2.7:443"]);
     }
 
     #[tokio::test]

@@ -174,9 +174,11 @@ impl ChangeDetector {
                 _ => {
                     // Cannot reliably compare dates — skip emitting a directional change event
                     tracing::warn!(
-                        "Could not parse certificate dates for comparison: '{}' vs '{}', skipping expiry direction detection",
-                        previous.not_after,
-                        current.not_after
+                        event_name = "monitor.certificate_dates.unparseable",
+                        error_type = "certificate_date_parse",
+                        error_code = "invalid_certificate_date",
+                        outcome = "comparison_skipped",
+                        "Could not parse certificate dates for comparison"
                     );
                     None
                 }
@@ -276,6 +278,63 @@ mod tests {
             certificate_transparency: None,
             der_bytes: vec![],
         }
+    }
+
+    #[test]
+    fn unparseable_expiry_log_redacts_certificate_dates() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let mut previous = create_test_cert("123", "CN=Test CA", Some(2048), vec![]);
+        previous.not_after = "private-start secret=do-not-log\ninjected=true".to_string();
+        let mut current = previous.clone();
+        current.not_after = "private-end".to_string();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            ChangeDetector::new().detect_changes(&previous, &current);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "monitor.certificate_dates.unparseable"
+        );
+        assert_eq!(event["fields"]["error_code"], "invalid_certificate_date");
+        assert_eq!(event["fields"]["outcome"], "comparison_skipped");
+        assert!(!output.contains("private-start"));
+        assert!(!output.contains("private-end"));
+        assert!(!output.contains("do-not-log"));
+        assert!(!output.contains("injected=true"));
     }
 
     #[test]

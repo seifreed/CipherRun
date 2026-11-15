@@ -151,9 +151,12 @@ impl CipherPhase {
                 Ok(summary) => summary,
                 Err(error) => {
                     tracing::warn!(
+                        event_name = "cipher_phase.protocol.failed",
                         protocol = %protocol_result.protocol,
-                        "cipher probing failed for protocol; skipping it: {}",
-                        error
+                        error_type = "TlsError",
+                        error_code = error.observability_code(),
+                        outcome = "skipped",
+                        "Cipher probing failed for protocol; skipping it"
                     );
                     continue;
                 }

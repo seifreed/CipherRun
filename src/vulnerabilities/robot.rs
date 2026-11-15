@@ -107,9 +107,12 @@ impl RobotTester {
                     Ok(None) => responses.push(None),
                     Err(err) => {
                         tracing::debug!(
-                            "ROBOT probe {} failed transiently ({}); recording as missing sample",
-                            i,
-                            err
+                            event_name = "vulnerability.robot.probe.failed",
+                            vector_index = i,
+                            error_type = "TlsError",
+                            error_code = err.observability_code(),
+                            outcome = "missing_sample",
+                            "ROBOT probe failed transiently; recording a missing sample"
                         );
                         responses.push(None);
                     }

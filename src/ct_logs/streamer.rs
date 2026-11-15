@@ -386,8 +386,11 @@ impl CtStreamer {
                     }
                     Err(e) => {
                         debug!(
-                            "Failed to parse entry {} from {}: {}",
-                            entry_index, source_id, e
+                            event_name = "ct_log.entry.parse_failed",
+                            entry_index,
+                            error_type = "TlsError",
+                            error_code = e.observability_code(),
+                            "Failed to parse CT log entry"
                         );
                     }
                 }
@@ -401,8 +404,11 @@ impl CtStreamer {
             // would permanently skip every entry the server did not return.
             if entries.is_empty() {
                 warn!(
-                    "Log {} returned no entries for requested range {}-{}; backing off before retry",
-                    source_id, current_index, batch_end
+                    event_name = "ct_log.entries.empty",
+                    requested_start = current_index,
+                    requested_end = batch_end,
+                    outcome = "retrying",
+                    "CT log returned no entries for the requested range; backing off"
                 );
                 sleep(Duration::from_secs(1)).await;
                 continue;
