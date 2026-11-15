@@ -12,8 +12,11 @@ async fn main() -> ExitCode {
     };
     let _logging_guard = match cipherrun::logging::initialize(&args) {
         Ok(guard) => guard,
-        Err(_) => {
-            eprintln!("Failed to initialize worker logging");
+        Err(error) => {
+            eprintln!(
+                "Failed to initialize worker logging (error_code={})",
+                error.observability_code()
+            );
             return ExitCode::from(1);
         }
     };
@@ -28,11 +31,12 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Err(_error) => {
+        Err(error) => {
             tracing::error!(
                 event_name = "worker.failed",
                 duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 error_type = "TlsError",
+                error_code = error.observability_code(),
                 outcome = "error",
             );
             ExitCode::from(1)

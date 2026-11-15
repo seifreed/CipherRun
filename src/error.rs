@@ -138,6 +138,42 @@ pub enum TlsError {
     Other(String),
 }
 
+impl TlsError {
+    /// Returns a stable, non-sensitive code suitable for structured telemetry.
+    pub fn observability_code(&self) -> &'static str {
+        match self {
+            Self::ConnectionTimeout { .. } => "connection_timeout",
+            Self::ConnectionRefused { .. } => "connection_refused",
+            Self::DnsResolutionFailed { .. } => "dns_resolution_failed",
+            Self::ProtocolNotSupported { .. } => "protocol_not_supported",
+            Self::InvalidHandshake { .. } => "invalid_handshake",
+            Self::CertificateError(_) => "certificate_validation",
+            Self::IoError { .. } => "io_error",
+            Self::HttpError { .. } => "http_error",
+            Self::ParseError { .. } => "parse_error",
+            Self::OpenSslError(_) => "openssl_error",
+            Self::RequestError(_) => "request_error",
+            Self::UrlParseError(_) => "url_parse_error",
+            Self::StarttlsError { .. } => "starttls_error",
+            Self::CipherError { .. } => "cipher_error",
+            Self::ConfigError { .. } => "configuration_error",
+            Self::Timeout { .. } => "timeout",
+            Self::DatabaseError(_) => "database_error",
+            Self::UnexpectedResponse { .. } => "unexpected_response",
+            Self::ConnectionClosed { .. } => "connection_closed",
+            Self::InvalidInput { .. } => "invalid_input",
+            Self::SerializationError(_) => "serialization_error",
+            Self::Utf8Error(_) => "utf8_error",
+            Self::ParseIntError(_) => "integer_parse_error",
+            Self::FileSystemError { .. } => "filesystem_error",
+            Self::MtlsError { .. } => "mtls_error",
+            Self::PemError(_) => "pem_error",
+            Self::NoSocketAddresses => "no_socket_addresses",
+            Self::Other(_) => "other",
+        }
+    }
+}
+
 /// Certificate validation specific errors
 #[derive(Debug, Error)]
 pub enum CertificateValidationError {
@@ -364,6 +400,14 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("Invalid configuration"));
         assert!(msg.contains("bad config"));
+    }
+
+    #[test]
+    fn observability_code_is_stable_and_excludes_error_details() {
+        let err = TlsError::DatabaseError("password=do-not-log".to_string());
+
+        assert_eq!(err.observability_code(), "database_error");
+        assert!(!err.observability_code().contains("do-not-log"));
     }
 
     #[test]

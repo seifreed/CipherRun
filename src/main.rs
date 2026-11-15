@@ -32,9 +32,13 @@ async fn main() -> ExitCode {
             };
             ExitCode::from(u8_code)
         }
-        Err(_) => {
+        Err(error) => {
             if tracing::dispatcher::has_been_set() {
-                tracing::error!(error_type = "TlsError", "CLI command failed");
+                tracing::error!(
+                    error_type = "TlsError",
+                    error_code = error.observability_code(),
+                    "CLI command failed"
+                );
             } else {
                 eprintln!("Error: CipherRun failed before logging was initialized");
             }
@@ -202,13 +206,14 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
                 exit_code = exit.code(),
                 outcome = "complete",
             ),
-            Err(_) => {
+            Err(error) => {
                 command_failure_logged = true;
                 tracing::error!(
                     event_name = "cli.command.failed",
                     operation,
                     duration_ms,
                     error_type = "TlsError",
+                    error_code = error.observability_code(),
                     outcome = "error",
                 );
             }
@@ -216,10 +221,13 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         result
     }
     .await;
-    if result.is_err() && !command_failure_logged {
+    if let Err(error) = &result
+        && !command_failure_logged
+    {
         tracing::error!(
             event_name = "cli.failed",
             error_type = "TlsError",
+            error_code = error.observability_code(),
             "CLI command failed"
         );
     }

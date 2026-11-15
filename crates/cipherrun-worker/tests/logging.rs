@@ -19,6 +19,7 @@ fn worker_emits_structured_failure_when_configuration_is_missing() {
 
     assert_eq!(event["level"], "ERROR");
     assert_eq!(event["fields"]["error_type"], "TlsError");
+    assert_eq!(event["fields"]["error_code"], "configuration_error");
     assert_eq!(event["fields"]["outcome"], "error");
     assert!(!stderr.contains("--worker requires --api-config"));
 }
