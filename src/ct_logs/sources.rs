@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use tokio::net::lookup_host;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Google CT log list URL (v3 format)
 const CT_LOG_LIST_URL: &str = "https://www.gstatic.com/ct/log_list/v3/log_list.json";
@@ -76,7 +76,14 @@ impl SourceManager {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|_| {
+                warn!(
+                    event_name = "ct_log.sources.client.degraded_fallback",
+                    error_type = "client_builder",
+                    "HTTP client setup failed; using default client"
+                );
+                reqwest::Client::new()
+            });
 
         Self {
             sources: HashMap::new(),
@@ -86,22 +93,35 @@ impl SourceManager {
 
     /// Fetch CT log sources from Google's log list
     pub async fn fetch_sources(&mut self) -> Result<()> {
-        info!("Fetching CT log sources from {}", CT_LOG_LIST_URL);
+        let started = std::time::Instant::now();
 
         let response = self
             .client
             .get(CT_LOG_LIST_URL)
             .send()
             .await
-            .map_err(|e| TlsError::Other(format!("Failed to fetch CT log list: {}", e)))?;
+            .map_err(|error| {
+                warn!(
+                    event_name = "ct_log.sources.fetch.failed",
+                    error_type = "transport",
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "CT log source list request failed"
+                );
+                TlsError::Other(format!("Failed to fetch CT log list: {}", error))
+            })?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            warn!(
+                event_name = "ct_log.sources.fetch.failed",
+                error_type = "http_status",
+                http_status = status.as_u16(),
+                duration_ms = started.elapsed().as_millis() as u64,
+                "CT log source list request failed"
+            );
             return Err(TlsError::HttpError {
-                status: response.status().as_u16(),
-                details: format!(
-                    "CT log list request failed with status: {}",
-                    response.status()
-                ),
+                status: status.as_u16(),
+                details: format!("CT log list request failed with status: {}", status),
             });
         }
 
@@ -111,16 +131,27 @@ impl SourceManager {
             MAX_CT_LOG_LIST_BYTES,
             "CT log list",
         )
-        .await?;
-        let log_list: GoogleCtLogList =
-            serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
-                message: format!("Failed to parse CT log list: {}", e),
-            })?;
-
-        debug!(
-            "Fetched {} operators from CT log list",
-            log_list.operators.len()
-        );
+        .await
+        .inspect_err(|_| {
+            warn!(
+                event_name = "ct_log.sources.fetch.failed",
+                error_type = "response_body",
+                duration_ms = started.elapsed().as_millis() as u64,
+                "CT log source list response could not be read"
+            );
+        })?;
+        let log_list: GoogleCtLogList = serde_json::from_slice(&body).map_err(|error| {
+            warn!(
+                event_name = "ct_log.sources.fetch.failed",
+                error_type = "invalid_json",
+                duration_ms = started.elapsed().as_millis() as u64,
+                "CT log source list response was invalid"
+            );
+            TlsError::ParseError {
+                message: format!("Failed to parse CT log list: {}", error),
+            }
+        })?;
+        let operator_count = log_list.operators.len();
 
         // Parse operators to get log sources
         for operator in &log_list.operators {
@@ -179,7 +210,14 @@ impl SourceManager {
             }
         }
 
-        info!("Loaded {} usable CT log sources", self.sources.len());
+        info!(
+            event_name = "ct_log.sources.fetch.completed",
+            outcome = "success",
+            operator_count,
+            source_count = self.sources.len(),
+            duration_ms = started.elapsed().as_millis() as u64,
+            "CT log sources loaded"
+        );
         Ok(())
     }
 
@@ -205,8 +243,11 @@ impl SourceManager {
         if let Some(source) = self.sources.get_mut(id) {
             source.mark_failed(error);
             warn!(
-                "Source {} marked as failed (failure count: {})",
-                id, source.failure_count
+                event_name = "ct_log.source.marked_failed",
+                source_id = %id,
+                failure_count = source.failure_count,
+                usable = source.usable,
+                "CT log source marked as failed"
             );
         }
     }
