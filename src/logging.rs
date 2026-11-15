@@ -1,8 +1,10 @@
 use crate::{Args, Result, TlsError};
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
@@ -16,12 +18,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
         .output
         .logfile
         .as_ref()
-        .map(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-        })
+        .map(|path| rolling_log_file(path))
         .transpose()?;
     let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)
@@ -120,7 +117,7 @@ impl Drop for LoggingGuard {
 }
 
 struct LogWriter {
-    file: Option<std::fs::File>,
+    file: Option<RollingFileAppender>,
 }
 
 impl Write for LogWriter {
@@ -139,6 +136,27 @@ impl Write for LogWriter {
         }
         Ok(())
     }
+}
+
+fn rolling_log_file(path: &Path) -> io::Result<RollingFileAppender> {
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Log file path must include a filename",
+        )
+    })?;
+    let name = name.to_string_lossy().into_owned();
+    let directory = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{name}.d"));
+
+    RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix(name)
+        .max_log_files(7)
+        .build(directory)
+        .map_err(io::Error::other)
 }
 
 fn resolve_log_filter(rust_log: Option<&str>, verbose: u8) -> EnvFilter {
@@ -230,7 +248,7 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 mod tests {
     use super::{
         LogWriter, format_dropped_log_event, json_logs_enabled, monitor_dropped_log_lines,
-        resolve_log_filter,
+        resolve_log_filter, rolling_log_file,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -351,16 +369,46 @@ mod tests {
 
     #[test]
     fn log_writer_mirrors_events_to_configured_file() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        let path = file.path().to_owned();
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(path.clone())
-            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cipherrun.jsonl");
+        let file = rolling_log_file(&path).unwrap();
         let mut writer = LogWriter { file: Some(file) };
         writer.write_all(b"test event\n").unwrap();
         writer.flush().unwrap();
 
-        assert_eq!(std::fs::read(path).unwrap(), b"test event\n");
+        let log_dir = directory.path().join(".cipherrun.jsonl.d");
+        let log_path = std::fs::read_dir(log_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(std::fs::read(log_path).unwrap(), b"test event\n");
+    }
+
+    #[test]
+    fn rolling_log_retention_is_scoped_to_its_dedicated_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cipherrun.jsonl");
+        let log_dir = directory.path().join(".cipherrun.jsonl.d");
+        std::fs::create_dir(&log_dir).unwrap();
+        for day in 1..=10 {
+            std::fs::write(
+                log_dir.join(format!("cipherrun.jsonl.2020-01-{day:02}")),
+                b"old log\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(directory.path().join("cipherrun.jsonl.keep"), b"preserve\n").unwrap();
+
+        let file = rolling_log_file(&path).unwrap();
+        drop(file);
+
+        let retained_logs = std::fs::read_dir(&log_dir).unwrap().count();
+        assert!(retained_logs <= 7);
+        assert_eq!(
+            std::fs::read(directory.path().join("cipherrun.jsonl.keep")).unwrap(),
+            b"preserve\n"
+        );
     }
 }

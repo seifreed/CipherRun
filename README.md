@@ -247,8 +247,9 @@ without that feature, no telemetry backend is contacted.
 ### Logging and diagnosis
 
 CipherRun uses Rust `tracing`. Logs go to stderr; pass `--logfile FILE` to also
-append them to a local file. The default level is `info`; `-v` enables `debug`
-and `-vv` enables `trace`. `RUST_LOG` takes precedence and supports standard
+write them to daily-rotated files in a dedicated `.<FILE>.d` directory beside
+the requested path. Up to seven daily files are retained. The default level is
+`info`; `-v` enables `debug` and `-vv` enables `trace`. `RUST_LOG` takes precedence and supports standard
 module directives, for example `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.

@@ -116,7 +116,7 @@ pub struct OutputArgs {
     #[arg(long = "colorblind")]
     pub colorblind: bool,
 
-    /// Log file
+    /// Daily-rotating log file prefix (retains up to seven daily files)
     #[arg(long = "logfile", value_name = "FILE")]
     pub logfile: Option<PathBuf>,
 
