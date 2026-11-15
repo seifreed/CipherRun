@@ -100,10 +100,36 @@ mod tests {
     use crate::api::state::ApiStats;
     use crate::db::{DatabaseConfig, DatabasePool};
     use async_trait::async_trait;
+    use std::io::Write;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
     use tokio::sync::{RwLock, broadcast};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct FailingQueue;
 
@@ -194,6 +220,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check_degrades_when_queue_backend_fails() {
+        use tracing::instrument::WithSubscriber;
+
         let config = Arc::new(ApiConfig::default());
         let job_queue = Arc::new(FailingQueue);
         let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
@@ -214,7 +242,17 @@ mod tests {
             results_store: None,
         });
 
-        let Json(response) = health_check(State(state)).await;
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let Json(response) = async { health_check(State(state)).await }
+            .with_subscriber(dispatch)
+            .await;
 
         assert_eq!(response.status, "degraded");
         assert_eq!(response.database.as_deref(), Some("not_configured"));
@@ -228,5 +266,10 @@ mod tests {
                 .unwrap_or_default()
                 .contains("must-not-leak")
         );
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("health.queue.unavailable"), "{logs}");
+        assert!(logs.contains("active_error_code=\"other\""), "{logs}");
+        assert!(logs.contains("queued_error_code=\"other\""), "{logs}");
+        assert!(!logs.contains("must-not-leak"), "{logs}");
     }
 }
