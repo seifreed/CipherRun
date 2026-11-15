@@ -20,7 +20,10 @@ use governor::{
 };
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Instant;
 
 /// Type alias for the governor rate limiter with state information middleware
@@ -44,6 +47,7 @@ pub struct PerKeyRateLimiter {
     /// Index for efficient LRU eviction: timestamp -> keys
     /// Uses BTreeMap for O(log n) access to oldest entries
     access_index: Arc<RwLock<BTreeMap<Instant, Vec<String>>>>,
+    cleanup_failure_reported: Arc<AtomicBool>,
     /// Default quota configuration
     default_quota: Quota,
     /// Requests per minute limit
@@ -66,6 +70,7 @@ impl PerKeyRateLimiter {
         Self {
             limiters: Arc::new(DashMap::new()),
             access_index: Arc::new(RwLock::new(BTreeMap::new())),
+            cleanup_failure_reported: Arc::new(AtomicBool::new(false)),
             default_quota,
             requests_per_minute: effective_rpm,
             window_seconds: 60,
@@ -202,16 +207,25 @@ impl PerKeyRateLimiter {
         let now = Instant::now();
         let cutoff = now - std::time::Duration::from_secs(MAX_AGE_SECS);
 
-        let Ok(mut index) = self.access_index.write() else {
-            tracing::warn!(
-                event_name = "api.rate_limit.cleanup_failed",
-                operation = "cleanup",
-                error_type = "lock_poisoned",
-                error_code = "access_index_unavailable",
-                outcome = "skipped",
-                "Rate limit entry cleanup skipped"
-            );
-            return;
+        let mut index = match self.access_index.write() {
+            Ok(index) => {
+                self.cleanup_failure_reported
+                    .store(false, Ordering::Relaxed);
+                index
+            }
+            Err(_) => {
+                if !self.cleanup_failure_reported.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        event_name = "api.rate_limit.cleanup_failed",
+                        operation = "cleanup",
+                        error_type = "lock_poisoned",
+                        error_code = "access_index_unavailable",
+                        outcome = "skipped",
+                        "Rate limit entry cleanup skipped"
+                    );
+                }
+                return;
+            }
         };
 
         // --- Phase 1: age-based pruning ---
@@ -454,6 +468,7 @@ impl Clone for PerKeyRateLimiter {
         Self {
             limiters: self.limiters.clone(),
             access_index: self.access_index.clone(),
+            cleanup_failure_reported: self.cleanup_failure_reported.clone(),
             default_quota: self.default_quota,
             requests_per_minute: self.requests_per_minute,
             window_seconds: self.window_seconds,
@@ -574,10 +589,13 @@ mod tests {
             .with_max_level(tracing::Level::TRACE)
             .with_writer(output.clone())
             .finish();
-        tracing::subscriber::with_default(subscriber, || limiter.cleanup());
+        tracing::subscriber::with_default(subscriber, || {
+            limiter.cleanup();
+            limiter.cleanup();
+        });
 
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        assert!(output.contains("api.rate_limit.cleanup_failed"), "{output}");
+        assert_eq!(output.matches("api.rate_limit.cleanup_failed").count(), 1);
         assert!(output.contains("access_index_unavailable"), "{output}");
         assert!(!output.contains("test-only lock poison"), "{output}");
     }
