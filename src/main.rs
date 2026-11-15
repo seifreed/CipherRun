@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{Level, info};
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::{EnvFilter, fmt::MakeWriter};
 use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
 
 #[tokio::main]
@@ -257,7 +257,7 @@ async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
 }
 
 fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
-    let log_level = resolve_log_level(
+    let filter = resolve_log_filter(
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
     );
@@ -279,9 +279,7 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
 
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_writer(writer)
-            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-                log_level,
-            ));
+            .with_filter(filter);
         let otel_layer = cipherrun::telemetry::layer()?;
         tracing_subscriber::registry()
             .with(fmt_layer)
@@ -295,7 +293,7 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
     #[cfg(not(feature = "otel"))]
     {
         let subscriber = FmtSubscriber::builder()
-            .with_max_level(log_level)
+            .with_env_filter(filter)
             .with_writer(writer)
             .finish();
         tracing::subscriber::set_global_default(subscriber).map_err(|e| {
@@ -305,13 +303,15 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
     Ok(())
 }
 
-fn resolve_log_level(rust_log: Option<&str>, verbose: u8) -> Level {
+fn resolve_log_filter(rust_log: Option<&str>, verbose: u8) -> EnvFilter {
     rust_log
-        .and_then(|value| value.parse::<Level>().ok())
-        .unwrap_or(match verbose {
-            0 => Level::INFO,
-            1 => Level::DEBUG,
-            _ => Level::TRACE,
+        .and_then(|value| EnvFilter::try_new(value).ok())
+        .unwrap_or_else(|| {
+            EnvFilter::new(match verbose {
+                0 => "info",
+                1 => "debug",
+                _ => "trace",
+            })
         })
 }
 
@@ -364,29 +364,34 @@ impl std::io::Write for SharedFileGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{color_output_enabled, resolve_log_level};
-    use tracing::Level;
+    use super::{color_output_enabled, resolve_log_filter};
 
     #[test]
     fn test_resolve_log_level_defaults_to_info() {
-        assert_eq!(resolve_log_level(None, 0), Level::INFO);
+        assert!(resolve_log_filter(None, 0).to_string().contains("info"));
     }
 
     #[test]
     fn test_resolve_log_level_uses_verbose_when_env_missing() {
-        assert_eq!(resolve_log_level(None, 1), Level::DEBUG);
-        assert_eq!(resolve_log_level(None, 2), Level::TRACE);
-        assert_eq!(resolve_log_level(None, 5), Level::TRACE);
+        assert!(resolve_log_filter(None, 1).to_string().contains("debug"));
+        assert!(resolve_log_filter(None, 2).to_string().contains("trace"));
+        assert!(resolve_log_filter(None, 5).to_string().contains("trace"));
     }
 
     #[test]
     fn test_resolve_log_level_prefers_rust_log() {
-        assert_eq!(resolve_log_level(Some("ERROR"), 2), Level::ERROR);
+        assert!(resolve_log_filter(Some("error"), 2).to_string().contains("error"));
     }
 
     #[test]
     fn test_resolve_log_level_falls_back_on_invalid_rust_log() {
-        assert_eq!(resolve_log_level(Some("not-a-level"), 1), Level::DEBUG);
+        assert!(resolve_log_filter(Some("not-a-level"), 1).to_string().contains("debug"));
+    }
+
+    #[test]
+    fn test_resolve_log_filter_supports_module_directives() {
+        let filter = resolve_log_filter(Some("warn,cipherrun::api=debug"), 0);
+        assert!(filter.to_string().contains("cipherrun::api=debug"));
     }
 
     #[test]
