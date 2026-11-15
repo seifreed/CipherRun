@@ -795,7 +795,5 @@ mod tests {
         assert!(result.trusted_count > 0);
 
         // Should be trusted by at least Mozilla and Google uses public CAs
-        println!("Trust validation result: {}", result.summary());
-        println!("Trusted platforms: {:?}", result.trusted_platforms());
     }
 }
