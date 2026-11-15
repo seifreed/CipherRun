@@ -248,11 +248,6 @@ mod tests {
             44,
             "Pin should be 44 characters"
         );
-
-        println!(
-            "Test certificate Pin SHA256: {}",
-            pin.expect("Pin should be present")
-        );
     }
 
     #[test]

@@ -571,8 +571,6 @@ mod tests {
                     .all(|c| c.is_alphanumeric() || c == '+' || c == '/'),
             "Pin should be valid Base64"
         );
-
-        println!("Calculated Pin SHA256 for google.com: {}", pin);
     }
 
     #[test]
