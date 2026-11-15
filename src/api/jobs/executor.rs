@@ -13,7 +13,7 @@ use crate::security::webhook::{validate_webhook_url, webhook_http_client};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore, broadcast};
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, info_span, warn};
 
 const WEBHOOK_MAX_ATTEMPTS: u8 = 3;
 const WEBHOOK_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -203,11 +203,20 @@ impl ScanExecutor {
 
             let executor = Arc::clone(&self);
             let queue = Arc::clone(&self.job_queue);
+            let job_span = info_span!(
+                "scan.job",
+                component = "api.jobs",
+                operation = "scan",
+                job_id = %job.id,
+            );
 
-            active_tasks.spawn(async move {
-                executor.execute_scan(queue, job).await;
-                drop(permit);
-            });
+            active_tasks.spawn(
+                async move {
+                    executor.execute_scan(queue, job).await;
+                    drop(permit);
+                }
+                .instrument(job_span),
+            );
         }
 
         Ok(())
