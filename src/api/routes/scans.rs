@@ -102,7 +102,7 @@ pub async fn create_scan(
     headers: HeaderMap,
     Json(request): Json<ScanRequest>,
 ) -> Result<(StatusCode, Json<ScanResponse>), ApiError> {
-    info!("Creating scan request");
+    let enqueue_started = std::time::Instant::now();
 
     // Basic empty check
     if request.target.is_empty() {
@@ -130,8 +130,6 @@ pub async fn create_scan(
         }
     }
 
-    info!("Scan target validated");
-
     // Create scan job with validated target
     let idempotency_key = idempotency_key(&headers)?;
     let request_fingerprint = idempotency_key
@@ -156,6 +154,13 @@ pub async fn create_scan(
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;
+    info!(
+        event_name = "scan.request.queued",
+        job_id = %scan_id,
+        duration_ms = u64::try_from(enqueue_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        outcome = "queued",
+        "Scan request queued"
+    );
     state
         .record_scan_for_owner(&auth.principal_id, tenant_id.as_deref())
         .await;
@@ -293,6 +298,12 @@ pub async fn cancel_scan(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if cancelled {
+        info!(
+            event_name = "scan.request.cancelled",
+            job_id = %id,
+            outcome = "cancelled",
+            "Scan cancellation requested"
+        );
         Ok(Json(serde_json::json!({
             "message": "Scan cancelled successfully",
             "scan_id": id

@@ -56,7 +56,14 @@ impl Command for CtLogsCommand {
     async fn execute(&self) -> Result<CommandExit> {
         use crate::ct_logs::{CtConfig, CtStreamer};
 
-        info!("Starting CT logs streaming mode");
+        info!(
+            event_name = "ct_log.command.started",
+            start_from_beginning = self.args.ct_logs.beginning,
+            batch_size = self.args.ct_logs.batch_size,
+            poll_interval_seconds = self.args.ct_logs.poll_interval,
+            custom_index_count = self.args.ct_logs.index.len(),
+            "Starting CT logs streaming mode"
+        );
 
         let custom_indices = parse_custom_indices(&self.args.ct_logs.index)?;
 

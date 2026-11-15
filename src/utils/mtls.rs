@@ -97,7 +97,11 @@ fn parse_keys(
             "EC PRIVATE KEY" => keys.push(PrivateKeyDer::Sec1(PrivateSec1KeyDer::from(
                 item.into_contents(),
             ))),
-            _ => warn!("Skipping unsupported PEM item in mTLS config"),
+            _ => warn!(
+                event_name = "mtls.pem.item.unsupported",
+                outcome = "skipped",
+                "Skipping unsupported PEM item in mTLS config"
+            ),
         }
     }
     Ok(keys)

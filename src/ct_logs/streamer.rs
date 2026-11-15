@@ -103,8 +103,9 @@ impl CtStreamer {
         }
 
         info!(
-            "Initialized CT streamer with {} sources",
-            source_manager.total_sources()
+            event_name = "ct_log.streamer.initialized",
+            source_count = source_manager.total_sources(),
+            "CT log streamer initialized"
         );
 
         // Initialize stats tracker
@@ -133,7 +134,10 @@ impl CtStreamer {
 
     /// Start streaming CT logs and deliver each parsed entry to an optional sink.
     pub async fn start_with_sink(&mut self, sink: Option<Arc<dyn CtEntrySink>>) -> Result<()> {
-        info!("Starting CT log streaming...");
+        info!(
+            event_name = "ct_log.streaming.started",
+            "Starting CT log streaming"
+        );
 
         // Setup signal handler for graceful shutdown
         let shutdown_clone = Arc::clone(&self.shutdown);
@@ -143,6 +147,7 @@ impl CtStreamer {
                 Err(_) => error!(
                     event_name = "ct_log.shutdown_signal.failed",
                     error_type = "signal_handler",
+                    error_code = "signal_wait_failed",
                     "Failed to listen for shutdown signal"
                 ),
             }
@@ -159,20 +164,29 @@ impl CtStreamer {
         let output_handle = tokio::spawn(async move {
             while let Some(entry) = rx.recv().await {
                 if let Some(sink) = &sink_for_output
-                    && sink.handle_entry(&entry).await.is_err()
+                    && let Err(error) = sink.handle_entry(&entry).await
                 {
                     warn!(
                         event_name = "ct_log.sink.failed",
                         source = %entry.log_source,
                         index = entry.index,
                         error_type = "sink_error",
+                        error_code = error.observability_code(),
                         "CT entry sink rejected certificate"
                     );
                 }
                 if json_output {
                     // JSON output mode - one entry per line
-                    if let Ok(json) = serde_json::to_string(&entry) {
-                        println!("{}", json);
+                    match serde_json::to_string(&entry) {
+                        Ok(json) => println!("{}", json),
+                        Err(_) => error!(
+                            event_name = "ct_log.output.serialize_failed",
+                            source = %entry.log_source,
+                            index = entry.index,
+                            error_type = "serialization",
+                            error_code = "serialization_failed",
+                            "Failed to serialize CT entry for JSON output"
+                        ),
                     }
                 } else {
                     // Human-readable output
@@ -189,7 +203,11 @@ impl CtStreamer {
             });
         }
 
-        info!("Streaming from {} healthy sources", sources.len());
+        info!(
+            event_name = "ct_log.sources.streaming",
+            source_count = sources.len(),
+            "Streaming from healthy CT log sources"
+        );
 
         // Spawn streaming task for each source
         let mut handles = Vec::new();
@@ -230,31 +248,34 @@ impl CtStreamer {
 
         // Wait for all streaming tasks to complete
         for handle in handles {
-            if handle.await.is_err() {
+            if let Err(error) = handle.await {
                 error!(
                     event_name = "ct_log.stream_task.failed",
                     error_type = "join_error",
+                    error_code = if error.is_panic() { "panic" } else { "other" },
                     "CT log streaming task failed"
                 );
             }
         }
 
         // Wait for output task to complete
-        if output_handle.await.is_err() {
+        if let Err(error) = output_handle.await {
             error!(
                 event_name = "ct_log.output_task.failed",
                 error_type = "join_error",
+                error_code = if error.is_panic() { "panic" } else { "other" },
                 "CT log output task failed"
             );
         }
 
         // Wait for stats reporter
         if let Some(handle) = stats_handle
-            && handle.await.is_err()
+            && let Err(error) = handle.await
         {
             error!(
                 event_name = "ct_log.stats_task.failed",
                 error_type = "join_error",
+                error_code = if error.is_panic() { "panic" } else { "other" },
                 "CT log stats reporter failed"
             );
         }
@@ -264,7 +285,10 @@ impl CtStreamer {
             self.stats.print_stats();
         }
 
-        info!("CT log streaming stopped");
+        info!(
+            event_name = "ct_log.streaming.stopped",
+            "CT log streaming stopped"
+        );
         Ok(())
     }
 
@@ -280,30 +304,24 @@ impl CtStreamer {
         shutdown: Arc<AtomicBool>,
         config: CtConfig,
     ) {
-        info!("Starting stream for source: {}", source_id);
+        info!(event_name = "ct_log.source.started", source = %source_id, "Starting CT log source stream");
 
         // Determine starting index
         let mut current_index = if let Some(&custom_index) = config.custom_indices.get(&source_id) {
-            info!(
-                "Starting from custom index {} for {}",
-                custom_index, source_id
-            );
+            info!(event_name = "ct_log.source.position.selected", source = %source_id, start_index = custom_index, outcome = "custom_index", "Selected CT log start position");
             custom_index
         } else if config.start_from_beginning {
-            info!("Starting from beginning (index 0) for {}", source_id);
+            info!(event_name = "ct_log.source.position.selected", source = %source_id, start_index = 0_u64, outcome = "beginning", "Selected CT log start position");
             0
         } else {
             // Start from current tree size (now mode)
             match client.get_tree_size(&source_url).await {
                 Ok(tree_size) => {
-                    info!(
-                        "Starting from current tree size {} for {}",
-                        tree_size, source_id
-                    );
+                    info!(event_name = "ct_log.source.position.selected", source = %source_id, start_index = tree_size, outcome = "current_tree_size", "Selected CT log start position");
                     tree_size
                 }
-                Err(_) => {
-                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", "Failed to get CT log tree size");
+                Err(error) => {
+                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "source_stopped", "Failed to get CT log tree size");
                     return;
                 }
             }
@@ -314,8 +332,8 @@ impl CtStreamer {
             // Get current tree size
             let tree_size = match client.get_tree_size(&source_url).await {
                 Ok(size) => size,
-                Err(_) => {
-                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", "Failed to get CT log tree size");
+                Err(error) => {
+                    warn!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to get CT log tree size");
                     stats.increment_source_failures(&source_id);
                     sleep(Duration::from_secs(10)).await;
                     continue;
@@ -324,10 +342,7 @@ impl CtStreamer {
 
             // Check if we're caught up
             if current_index >= tree_size {
-                debug!(
-                    "Caught up with log {} (index: {}, tree size: {})",
-                    source_id, current_index, tree_size
-                );
+                debug!(event_name = "ct_log.source.caught_up", source = %source_id, current_index, tree_size, "CT log source is caught up");
                 sleep(config.poll_interval).await;
                 continue;
             }
@@ -336,11 +351,6 @@ impl CtStreamer {
             // batch_end is inclusive, so we subtract 1 from batch_size to get exactly batch_size entries
             let batch_end = Self::batch_end(current_index, tree_size, config.batch_size);
 
-            debug!(
-                "Fetching entries {}-{} from {} (tree size: {})",
-                current_index, batch_end, source_id, tree_size
-            );
-
             // Fetch batch
             let fetch_start = std::time::Instant::now();
             let entries = match client
@@ -348,8 +358,8 @@ impl CtStreamer {
                 .await
             {
                 Ok(entries) => entries,
-                Err(_) => {
-                    error!(event_name = "ct_log.entries.failed", source = %source_id, error_type = "ct_log_request", "Failed to fetch CT log entries");
+                Err(error) => {
+                    warn!(event_name = "ct_log.entries.failed", source = %source_id, start_index = current_index, end_index = batch_end, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to fetch CT log entries");
                     stats.increment_source_failures(&source_id);
                     stats.increment_retries();
                     sleep(Duration::from_secs(5)).await;
@@ -358,6 +368,15 @@ impl CtStreamer {
             };
 
             let fetch_duration = fetch_start.elapsed();
+            debug!(
+                event_name = "ct_log.entries.fetched",
+                source = %source_id,
+                start_index = current_index,
+                end_index = batch_end,
+                entry_count = entries.len(),
+                duration_ms = u64::try_from(fetch_duration.as_millis()).unwrap_or(u64::MAX),
+                "Fetched CT log entries"
+            );
 
             // Update stats
             stats.update_source_stats(&source_id, current_index, tree_size, fetch_duration);
@@ -420,7 +439,7 @@ impl CtStreamer {
             sleep(Duration::from_millis(100)).await;
         }
 
-        info!("Stopped streaming from source: {}", source_id);
+        info!(event_name = "ct_log.source.stopped", source = %source_id, "Stopped CT log source stream");
     }
 
     /// Stats reporter task

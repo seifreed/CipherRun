@@ -287,8 +287,12 @@ impl CertificateParser {
                                 };
                                 san.push(addr_str);
                             }
-                            other => {
-                                debug!("Skipping non-DNS/IP SAN type: {:?}", other);
+                            _ => {
+                                debug!(
+                                    event_name = "certificate.san.skipped",
+                                    reason = "unsupported_name_type",
+                                    "Skipping unsupported subject alternative name type"
+                                );
                             }
                         }
                     }

@@ -60,7 +60,10 @@ impl MonitorCommand {
     ) -> Result<CommandExit> {
         use crate::monitor::MonitorDaemon;
 
-        info!("Testing alert channels...");
+        info!(
+            event_name = "monitor.alert_test.started",
+            "Testing alert channels"
+        );
         let daemon = MonitorDaemon::new(monitor_config).await?;
         let results = daemon.test_alerts().await;
         self.print_alert_test_results(results);
@@ -99,7 +102,10 @@ impl MonitorCommand {
     ) -> Result<CommandExit> {
         use crate::monitor::MonitorDaemon;
 
-        info!("Starting certificate monitoring daemon");
+        info!(
+            event_name = "monitor.command.started",
+            "Starting certificate monitoring daemon"
+        );
 
         let default_interval_seconds = monitor_config.monitor.default_interval_seconds;
         let daemon = MonitorDaemon::new(monitor_config).await?;

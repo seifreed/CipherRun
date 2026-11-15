@@ -254,8 +254,10 @@ impl RevocationChecker {
                     }
                     _ => {
                         trace!(
-                            "Skipping unknown handshake message type: 0x{:02x}",
-                            msg_type
+                            event_name = "certificate.ocsp_stapling.message.skipped",
+                            message_type = msg_type,
+                            reason = "unknown_handshake_message",
+                            "Skipping unknown stapling handshake message"
                         );
                     }
                 }

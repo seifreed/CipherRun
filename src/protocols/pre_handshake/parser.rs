@@ -249,8 +249,10 @@ impl PreHandshakeScanner {
                     }
                     _ => {
                         trace!(
-                            "Skipping unhandled handshake type: 0x{:02x}",
-                            handshake_type
+                            event_name = "protocol.handshake.message.skipped",
+                            handshake_type,
+                            reason = "unhandled_message_type",
+                            "Skipping unhandled handshake message"
                         );
                     }
                 }

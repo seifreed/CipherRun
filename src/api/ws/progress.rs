@@ -25,7 +25,10 @@ pub async fn handle_websocket(ws: WebSocketUpgrade, State(state): State<Arc<WsSt
 
 /// WebSocket handler
 async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
-    info!("WebSocket connection established");
+    info!(
+        event_name = "websocket.connection.established",
+        "WebSocket connection established"
+    );
 
     let (mut sender, mut receiver) = socket.split();
 
@@ -58,12 +61,18 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
 
                             // Send as text message
                             if sender.send(Message::Text(json.into())).await.is_err() {
-                                debug!("Client disconnected");
+                                debug!(event_name = "websocket.connection.closed", reason = "send_failed", "WebSocket client disconnected");
                                 break;
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             // Receiver fell behind; newer messages are still available
+                            warn!(
+                                event_name = "websocket.progress.lagged",
+                                skipped_messages = skipped,
+                                outcome = "continuing",
+                                "WebSocket progress receiver lagged"
+                            );
                             continue;
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
@@ -71,7 +80,7 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                 }
                 _ = ping_interval.tick() => {
                     if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        debug!("Client disconnected");
+                        debug!(event_name = "websocket.connection.closed", reason = "ping_send_failed", "WebSocket client disconnected");
                         break;
                     }
                 }
@@ -84,18 +93,28 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Close(_)) => {
-                    debug!("Client sent close message");
+                    debug!(
+                        event_name = "websocket.close.received",
+                        "WebSocket client sent close"
+                    );
                     break;
                 }
                 Ok(Message::Ping(_data)) => {
-                    debug!("Received ping, sending pong");
+                    trace!(
+                        event_name = "websocket.ping.received",
+                        "WebSocket ping received"
+                    );
                     // Axum automatically handles pong responses
                 }
                 Ok(Message::Pong(_)) => {
-                    debug!("Received pong");
+                    trace!(
+                        event_name = "websocket.pong.received",
+                        "WebSocket pong received"
+                    );
                 }
                 Ok(Message::Text(text)) => {
-                    debug!(
+                    trace!(
+                        event_name = "websocket.text.received",
                         message_bytes = text.len(),
                         "Received WebSocket text message"
                     );
@@ -103,13 +122,17 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                 }
                 Err(_) => {
                     error!(
+                        event_name = "websocket.receive.failed",
                         error_type = "websocket_transport",
                         "WebSocket connection failed"
                     );
                     break;
                 }
                 Ok(Message::Binary(_)) => {
-                    trace!("Received binary WebSocket message");
+                    trace!(
+                        event_name = "websocket.binary.received",
+                        "WebSocket binary frame received"
+                    );
                 }
             }
         }
@@ -117,15 +140,34 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
 
     // Wait for either task to complete
     tokio::select! {
-        _ = (&mut send_task) => {
+        result = (&mut send_task) => {
+            if let Err(error) = result {
+                error!(
+                    event_name = "websocket.send_task.failed",
+                    error_type = "join_error",
+                    error_code = if error.is_panic() { "panic" } else { "other" },
+                    "WebSocket send task failed"
+                );
+            }
             recv_task.abort();
         }
-        _ = (&mut recv_task) => {
+        result = (&mut recv_task) => {
+            if let Err(error) = result {
+                error!(
+                    event_name = "websocket.receive_task.failed",
+                    error_type = "join_error",
+                    error_code = if error.is_panic() { "panic" } else { "other" },
+                    "WebSocket receive task failed"
+                );
+            }
             send_task.abort();
         }
     }
 
-    info!("WebSocket connection closed");
+    info!(
+        event_name = "websocket.connection.closed",
+        "WebSocket connection closed"
+    );
 }
 
 /// Handle WebSocket for specific scan
@@ -139,7 +181,11 @@ pub async fn handle_scan_websocket(
 
 /// WebSocket handler for specific scan
 pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: Arc<WsState>) {
-    info!("WebSocket connection established for scan: {}", scan_id);
+    info!(
+        event_name = "websocket.scan.connection.established",
+        scan_id = %scan_id,
+        "WebSocket connection established for scan"
+    );
 
     let (mut sender, mut receiver) = socket.split();
 
@@ -157,7 +203,12 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     if let Ok(json) = serde_json::to_string(&init_msg)
         && sender.send(Message::Text(json.into())).await.is_err()
     {
-        debug!("Client disconnected before initial scan message");
+        debug!(
+            event_name = "websocket.scan.connection.closed",
+            scan_id = %scan_id,
+            reason = "initial_message_send_failed",
+            "WebSocket client disconnected before initial scan message"
+        );
         return;
     }
 
@@ -192,7 +243,12 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
 
                             // Send as text message
                             if sender.send(Message::Text(json.into())).await.is_err() {
-                                debug!("Client disconnected");
+                                debug!(
+                                    event_name = "websocket.scan.connection.closed",
+                                    scan_id = %scan_id_clone,
+                                    reason = "progress_send_failed",
+                                    "WebSocket client disconnected"
+                                );
                                 break;
                             }
 
@@ -201,9 +257,19 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                 || progress.msg_type == "failed"
                                 || progress.msg_type == "cancelled"
                             {
-                                debug!("Scan {} finished, closing WebSocket", scan_id_clone);
+                                debug!(
+                                    event_name = "websocket.scan.stream.completed",
+                                    scan_id = %scan_id_clone,
+                                    progress_type = %progress.msg_type,
+                                    "Closing completed scan progress stream"
+                                );
                                 if sender.send(Message::Close(None)).await.is_err() {
-                                    debug!("Client disconnected while closing scan stream");
+                                    debug!(
+                                        event_name = "websocket.scan.connection.closed",
+                                        scan_id = %scan_id_clone,
+                                        reason = "close_send_failed",
+                                        "WebSocket client disconnected while closing scan stream"
+                                    );
                                 }
                                 break;
                             }
@@ -219,8 +285,11 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                             // reconnect or poll the REST scan-status endpoint for the
                             // final result.
                             warn!(
-                                "Progress stream lagged by {} messages for scan {}; closing stream",
-                                skipped, scan_id_clone
+                                event_name = "websocket.scan.progress.lagged",
+                                scan_id = %scan_id_clone,
+                                skipped_messages = skipped,
+                                outcome = "closed",
+                                "Progress stream lagged; closing scan stream"
                             );
                             let notice = serde_json::json!({
                                 "type": "lagged",
@@ -231,11 +300,21 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                             if let Ok(json) = serde_json::to_string(&notice)
                                 && sender.send(Message::Text(json.into())).await.is_err()
                             {
-                                debug!("Client disconnected while sending lagged notice");
+                                debug!(
+                                    event_name = "websocket.scan.connection.closed",
+                                    scan_id = %scan_id_clone,
+                                    reason = "lag_notice_send_failed",
+                                    "WebSocket client disconnected while sending lag notice"
+                                );
                                 break;
                             }
                             if sender.send(Message::Close(None)).await.is_err() {
-                                debug!("Client disconnected while closing lagged scan stream");
+                                debug!(
+                                    event_name = "websocket.scan.connection.closed",
+                                    scan_id = %scan_id_clone,
+                                    reason = "lag_close_send_failed",
+                                    "WebSocket client disconnected while closing lagged scan stream"
+                                );
                             }
                             break;
                         }
@@ -244,7 +323,12 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                 }
                 _ = ping_interval.tick() => {
                     if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        debug!("Client disconnected");
+                        debug!(
+                            event_name = "websocket.scan.connection.closed",
+                            scan_id = %scan_id_clone,
+                            reason = "ping_send_failed",
+                            "WebSocket client disconnected"
+                        );
                         break;
                     }
                 }
@@ -253,21 +337,24 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     });
 
     // Spawn task to receive messages from client
+    let scan_id_recv = scan_id.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Close(_)) => {
-                    debug!("Client sent close message");
+                    debug!(event_name = "websocket.scan.close.received", scan_id = %scan_id_recv, "WebSocket client closed scan stream");
                     break;
                 }
                 Ok(Message::Ping(_)) => {
-                    debug!("Received ping");
+                    trace!(event_name = "websocket.scan.ping.received", scan_id = %scan_id_recv, "WebSocket ping received");
                 }
                 Ok(Message::Pong(_)) => {
-                    debug!("Received pong");
+                    trace!(event_name = "websocket.scan.pong.received", scan_id = %scan_id_recv, "WebSocket pong received");
                 }
                 Ok(Message::Text(text)) => {
-                    debug!(
+                    trace!(
+                        event_name = "websocket.scan.text.received",
+                        scan_id = %scan_id_recv,
                         message_bytes = text.len(),
                         "Received WebSocket text message"
                     );
@@ -275,13 +362,14 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                 Err(_) => {
                     error!(
                         event_name = "websocket.receive.failed",
-                        error_type = "transport",
+                        scan_id = %scan_id_recv,
+                        error_type = "websocket_transport",
                         "WebSocket receive failed"
                     );
                     break;
                 }
                 Ok(Message::Binary(_)) => {
-                    trace!("Received binary WebSocket message");
+                    trace!(event_name = "websocket.scan.binary.received", scan_id = %scan_id_recv, "WebSocket binary frame received");
                 }
             }
         }
@@ -289,15 +377,37 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
 
     // Wait for either task to complete
     tokio::select! {
-        _ = (&mut send_task) => {
+        result = (&mut send_task) => {
+            if let Err(error) = result {
+                error!(
+                    event_name = "websocket.scan.send_task.failed",
+                    scan_id = %scan_id,
+                    error_type = "join_error",
+                    error_code = if error.is_panic() { "panic" } else { "other" },
+                    "Scan WebSocket send task failed"
+                );
+            }
             recv_task.abort();
         }
-        _ = (&mut recv_task) => {
+        result = (&mut recv_task) => {
+            if let Err(error) = result {
+                error!(
+                    event_name = "websocket.scan.receive_task.failed",
+                    scan_id = %scan_id,
+                    error_type = "join_error",
+                    error_code = if error.is_panic() { "panic" } else { "other" },
+                    "Scan WebSocket receive task failed"
+                );
+            }
             send_task.abort();
         }
     }
 
-    info!("WebSocket connection closed for scan: {}", scan_id);
+    info!(
+        event_name = "websocket.scan.connection.closed",
+        scan_id = %scan_id,
+        "WebSocket connection closed for scan"
+    );
 }
 
 #[cfg(test)]
