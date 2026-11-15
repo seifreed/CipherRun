@@ -64,9 +64,22 @@ impl RobotTester {
 
     /// Test for ROBOT vulnerability
     pub async fn test(&self) -> Result<RobotTestResult> {
-        Ok(RobotTestResult::from_status(
-            self.test_robot_oracle().await?,
-        ))
+        let started = std::time::Instant::now();
+        let status = self.test_robot_oracle().await?;
+        let outcome = match status {
+            RobotStatus::Vulnerable => "vulnerable",
+            RobotStatus::WeakOracle => "weak_oracle",
+            RobotStatus::NotVulnerable => "not_vulnerable",
+            RobotStatus::Inconclusive => "inconclusive",
+        };
+        tracing::info!(
+            event_name = "vulnerability.robot.completed",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome,
+            vulnerable = matches!(status, RobotStatus::Vulnerable),
+            "ROBOT vulnerability probe completed"
+        );
+        Ok(RobotTestResult::from_status(status))
     }
 
     /// Test for ROBOT padding oracle

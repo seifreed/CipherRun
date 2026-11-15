@@ -47,9 +47,12 @@ fn classify_pattern_divergence(
 
     if content_differences == 0 && len_difference > 0 {
         tracing::debug!(
-            "ROBOT: {} patterns differ only in length ({} bytes) — TCP noise, not an oracle",
-            response_patterns.len(),
-            len_difference
+            event_name = "vulnerability.robot.response_divergence",
+            response_pattern_count = response_patterns.len(),
+            content_byte_differences = content_differences,
+            length_difference = len_difference,
+            outcome = "length_only_noise",
+            "ROBOT response patterns differ only by length"
         );
         return RobotStatus::NotVulnerable;
     }
@@ -63,28 +66,37 @@ fn classify_pattern_divergence(
 
     if byte_differences >= MIN_BYTE_DIFFERENCES || relative_diff >= MIN_RELATIVE_DIFFERENCE {
         tracing::debug!(
-            "ROBOT: Weak oracle detected - {} byte differences ({:.1}% of {} bytes)",
+            event_name = "vulnerability.robot.response_divergence",
+            response_pattern_count = response_patterns.len(),
             byte_differences,
-            relative_diff * 100.0,
-            pattern_len
+            relative_difference_percent = relative_diff * 100.0,
+            pattern_length = pattern_len,
+            outcome = "weak_oracle",
+            "ROBOT response patterns diverged"
         );
         return RobotStatus::WeakOracle;
     }
 
     if byte_differences >= 2 {
         tracing::info!(
-            "ROBOT: Borderline detection - {} byte differences ({:.1}% of pattern), manual investigation recommended",
+            event_name = "vulnerability.robot.response_divergence",
             byte_differences,
-            relative_diff * 100.0
+            relative_difference_percent = relative_diff * 100.0,
+            pattern_length = pattern_len,
+            outcome = "borderline",
+            "ROBOT response divergence is borderline"
         );
     }
 
     tracing::debug!(
-        "ROBOT: {} patterns detected but only {} byte differences (min: {} or {:.0}%), likely noise",
-        response_patterns.len(),
+        event_name = "vulnerability.robot.response_divergence",
+        response_pattern_count = response_patterns.len(),
         byte_differences,
-        MIN_BYTE_DIFFERENCES,
-        MIN_RELATIVE_DIFFERENCE * 100.0
+        relative_difference_percent = relative_diff * 100.0,
+        minimum_byte_differences = MIN_BYTE_DIFFERENCES,
+        minimum_relative_difference_percent = MIN_RELATIVE_DIFFERENCE * 100.0,
+        outcome = "noise",
+        "ROBOT response divergence is below the oracle threshold"
     );
     RobotStatus::NotVulnerable
 }
