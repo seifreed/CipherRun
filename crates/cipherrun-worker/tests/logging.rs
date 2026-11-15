@@ -62,3 +62,35 @@ fn worker_continues_with_stderr_when_logfile_cannot_be_opened() {
         event["level"] == "ERROR" && event["fields"]["event_name"] == "worker.failed"
     }));
 }
+
+#[cfg(feature = "otel")]
+#[test]
+fn worker_continues_with_local_logs_when_otlp_setup_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun-worker"))
+        .arg("--worker")
+        .env("RUST_LOG", "info")
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env_remove("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
+        .env("OTEL_EXPORTER_OTLP_COMPRESSION", "gzip")
+        .output()
+        .expect("worker process should start");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("logs should be UTF-8");
+    let events = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| {
+            event["level"] == "WARN"
+                && event["fields"]["event_name"] == "telemetry.exporter.initialization_failed"
+                && event["fields"]["outcome"] == "local_logging_only"
+        }),
+        "{stderr}"
+    );
+    assert!(events.iter().any(|event| {
+        event["level"] == "ERROR" && event["fields"]["event_name"] == "worker.failed"
+    }));
+    assert!(!stderr.contains("gzip-http"));
+}

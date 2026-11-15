@@ -33,25 +33,52 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     let tracer_provider = {
         use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
-        let fmt_layer = if json {
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(writer)
-                .with_filter(filter)
-                .boxed()
-        } else {
-            tracing_subscriber::fmt::layer()
-                .with_writer(writer)
-                .with_filter(filter)
-                .boxed()
-        };
-        let (otel_layer, provider) = crate::telemetry::layer()?;
-        tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(otel_layer)
-            .try_init()
-            .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
-        Some(provider)
+        match crate::telemetry::layer() {
+            Ok((otel_layer, provider)) => {
+                let fmt_layer = if json {
+                    tracing_subscriber::fmt::layer()
+                        .json()
+                        .with_writer(writer)
+                        .with_filter(filter)
+                        .boxed()
+                } else {
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(writer)
+                        .with_filter(filter)
+                        .boxed()
+                };
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(otel_layer)
+                    .try_init()
+                    .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
+                Some(provider)
+            }
+            Err(error) => {
+                let result = if json {
+                    tracing_subscriber::fmt()
+                        .json()
+                        .with_env_filter(filter)
+                        .with_writer(writer)
+                        .try_init()
+                } else {
+                    tracing_subscriber::fmt()
+                        .with_env_filter(filter)
+                        .with_writer(writer)
+                        .try_init()
+                };
+                result
+                    .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
+                tracing::warn!(
+                    event_name = "telemetry.exporter.initialization_failed",
+                    error_type = "otlp_exporter",
+                    error_code = error.observability_code(),
+                    outcome = "local_logging_only",
+                    "OpenTelemetry setup failed; continuing with local logging"
+                );
+                None
+            }
+        }
     };
 
     #[cfg(not(feature = "otel"))]
