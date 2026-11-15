@@ -166,10 +166,9 @@ fn parse_unbracketed_ipv6(
     // Log a warning for the user to use bracketed notation
     if target.contains("::") || target.matches(':').count() >= 2 {
         tracing::warn!(
-            "Potentially malformed IPv6 address '{}'. \
-             Use bracketed notation [IPv6]:port for IPv6 addresses with ports, \
-             e.g., '[::1]:443' or '[2001:db8::1]:443'.",
-            target
+            event_name = "input.target.malformed_ipv6",
+            error_type = "invalid_address_format",
+            "Potentially malformed IPv6 target; use bracketed notation for addresses with ports"
         );
     }
 

@@ -161,8 +161,8 @@ impl MultiIpScanner {
         while let Some(result) = futures.next().await {
             if per_ip_results.contains_key(&result.ip) {
                 tracing::warn!(
-                    "Duplicate IP result for {}, overwriting previous result",
-                    result.ip
+                    event_name = "scan.multi_ip.duplicate_result",
+                    "Duplicate IP result received; overwriting previous result"
                 );
             }
             per_ip_results.insert(result.ip, result);

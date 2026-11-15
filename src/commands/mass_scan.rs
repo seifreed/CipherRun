@@ -126,12 +126,11 @@ impl MassScanCommand {
 
             if !skipped.is_empty() {
                 tracing::warn!(
-                    "Skipping {} of {} announced prefix(es) for {} that exceed the {}-host per-prefix limit and cannot be enumerated: {}",
-                    skipped.len(),
-                    networks.len(),
-                    asn,
-                    MAX_EXPANDED_TARGETS,
-                    skipped.join(", ")
+                    event_name = "mass_scan.prefixes.skipped",
+                    skipped_prefix_count = skipped.len(),
+                    announced_prefix_count = networks.len(),
+                    max_hosts_per_prefix = MAX_EXPANDED_TARGETS,
+                    "Skipped announced prefixes that exceed the per-prefix enumeration limit"
                 );
             }
 

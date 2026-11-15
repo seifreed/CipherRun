@@ -138,7 +138,7 @@ impl ProtocolTester {
     /// a protocol, the attacker's view of the deployment includes that path —
     /// so reporting it as "supported" is the security-correct verdict. An
     /// intersection reading ("is TLS 1.3 available everywhere?") is a distinct
-    /// property; the caller can read the per-IP inconsistency warnings in the
+    /// property; the caller can read the aggregate inconsistency event in the
     /// log, or (future work) consume a per-IP result map.
     ///
     /// The conservative-aggregation contract documented in the architecture
@@ -154,50 +154,55 @@ impl ProtocolTester {
             return Ok(ProtocolProbeOutcome::Inconclusive);
         }
 
-        tracing::info!(
-            "Testing {} IPs for hostname {} (protocol: {})",
-            addrs.len(),
-            self.target.hostname,
-            protocol
-        );
-
+        let started = std::time::Instant::now();
+        let address_count = addrs.len();
         let mut per_ip_results = Vec::new();
 
-        for (idx, addr) in addrs.iter().enumerate() {
+        for addr in &addrs {
             let ip_outcome = self.test_protocol_on_ip(protocol, *addr).await?;
-
-            tracing::debug!(
-                "IP {} ({}/{}): {} {} - {}",
-                addr.ip(),
-                idx + 1,
-                addrs.len(),
-                protocol,
-                ip_outcome.label(),
-                match ip_outcome {
-                    ProtocolProbeOutcome::Supported => "✓",
-                    ProtocolProbeOutcome::NotSupported => "✗",
-                    ProtocolProbeOutcome::Inconclusive => "?",
-                }
-            );
-
             per_ip_results.push((addr.ip(), ip_outcome));
         }
 
         let (outcome, inconsistent) = aggregate_protocol_probe_results(&per_ip_results);
+        let supported_count = per_ip_results
+            .iter()
+            .filter(|(_, outcome)| outcome.is_supported())
+            .count();
+        let inconclusive_count = per_ip_results
+            .iter()
+            .filter(|(_, outcome)| outcome.is_inconclusive())
+            .count();
+        let not_supported_count = address_count - supported_count - inconclusive_count;
+        let outcome_name = match &outcome {
+            ProtocolProbeOutcome::Supported => "supported",
+            ProtocolProbeOutcome::NotSupported => "not_supported",
+            ProtocolProbeOutcome::Inconclusive => "inconclusive",
+        };
+
         if inconsistent {
             tracing::warn!(
-                "WARNING: Inconsistent {} support across IPs for {}",
-                protocol,
-                self.target.hostname
+                event_name = "protocol.probe.inconsistent_results",
+                protocol = %protocol,
+                outcome = outcome_name,
+                address_count,
+                supported_count,
+                not_supported_count,
+                inconclusive_count,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Protocol support differs across target addresses"
             );
-            for (ip, supported) in &per_ip_results {
-                tracing::warn!(
-                    "  {} {} - {}",
-                    ip,
-                    protocol,
-                    supported.label().to_uppercase()
-                );
-            }
+        } else {
+            tracing::debug!(
+                event_name = "protocol.probe.completed",
+                protocol = %protocol,
+                outcome = outcome_name,
+                address_count,
+                supported_count,
+                not_supported_count,
+                inconclusive_count,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Protocol probe completed across target addresses"
+            );
         }
 
         Ok(outcome)

@@ -316,22 +316,10 @@ impl Default for ApiConfig {
         let random_key = generate_secure_api_key();
         api_keys.insert(random_key.clone(), Permission::User);
 
-        // SECURITY WARNING: Show only key prefix to avoid exposing full key in logs
-        // In production, users should set their own keys via config file
-        let key_preview: String = random_key.chars().take(8).collect();
+        // In production, users should set their own keys via config file.
         tracing::warn!(
-            "=============================================================================\n\
-             SECURITY WARNING: Auto-generated API key created\n\
-             Key prefix: {}...\n\
-             \n\
-             This key is randomly generated and will change on restart.\n\
-             For production use:\n\
-             1. Create a config file with your own API keys\n\
-             2. Set strong, unique API keys for each client\n\
-             3. Never use the default configuration in production\n\
-             4. Restrict API access to specific IP addresses if possible\n\
-             =============================================================================",
-            key_preview
+            event_name = "api.config.generated_key",
+            "Generated a temporary API key; configure persistent keys for production"
         );
 
         Self {

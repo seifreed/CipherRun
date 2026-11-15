@@ -256,9 +256,9 @@ impl MassScanner {
                 Ok(r) => r,
                 Err(join_err) => {
                     tracing::error!(
-                        "Scan task panicked for target {}: {}",
-                        target_name,
-                        join_err
+                        event_name = "scan.target.task.failed",
+                        error_type = "task_join",
+                        "Scan task failed before returning a result"
                     );
                     main_pb.inc(1);
                     if let Some(ref callback) = self.callback {
