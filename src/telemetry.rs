@@ -64,9 +64,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{context_from_traceparent, traceparent_for_context};
+    use super::{context_from_traceparent, current_traceparent, traceparent_for_context};
     use opentelemetry::trace::{TraceContextExt, Tracer, TracerProvider};
     use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    use tracing_subscriber::prelude::*;
 
     #[test]
     fn traceparent_round_trips_across_background_job_boundary() {
@@ -86,5 +88,29 @@ mod tests {
             context.span().span_context().span_id()
         );
         assert!(context_from_traceparent("invalid").is_none());
+    }
+
+    #[test]
+    fn active_request_span_context_continues_into_job_span() {
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let request_span = tracing::info_span!("http.request");
+            request_span.in_scope(|| {
+                let traceparent = current_traceparent().expect("active request trace");
+                let parent = context_from_traceparent(&traceparent).expect("valid parent");
+                let job_span = tracing::info_span!("scan.job");
+                job_span.set_parent(parent).unwrap();
+
+                assert_eq!(
+                    request_span.context().span().span_context().trace_id(),
+                    job_span.context().span().span_context().trace_id()
+                );
+            });
+        });
+
+        provider.shutdown().unwrap();
     }
 }
