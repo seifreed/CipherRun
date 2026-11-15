@@ -402,15 +402,19 @@ impl ApiServer {
             "API server listening"
         );
         let shutdown = async {
-            if tokio::signal::ctrl_c().await.is_err() {
-                tracing::warn!(
-                    error_type = "signal_handler",
-                    "Failed to receive shutdown signal"
-                );
-            }
+            let signal = match crate::utils::shutdown::shutdown_signal().await {
+                Ok(signal) => signal,
+                Err(_) => {
+                    tracing::warn!(
+                        error_type = "signal_handler",
+                        "Failed to receive shutdown signal"
+                    );
+                    "unknown"
+                }
+            };
             info!(
                 event_name = "api_server.shutdown_requested",
-                "API server shutdown requested"
+                signal, "API server shutdown requested"
             );
         };
 

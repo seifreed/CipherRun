@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -139,14 +138,14 @@ impl CtStreamer {
         // Setup signal handler for graceful shutdown
         let shutdown_clone = Arc::clone(&self.shutdown);
         tokio::spawn(async move {
-            if signal::ctrl_c().await.is_err() {
-                error!(
+            match crate::utils::shutdown::shutdown_signal().await {
+                Ok(signal) => info!(event_name = "ct_log.shutdown.requested", signal),
+                Err(_) => error!(
                     event_name = "ct_log.shutdown_signal.failed",
                     error_type = "signal_handler",
                     "Failed to listen for shutdown signal"
-                );
+                ),
             }
-            info!("Shutdown signal received");
             shutdown_clone.store(true, Ordering::Release);
         });
 

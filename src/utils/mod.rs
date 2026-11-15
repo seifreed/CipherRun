@@ -22,6 +22,7 @@ pub(crate) mod result_byte_parse;
 pub mod retry;
 pub mod reverse_ptr;
 pub mod rustls_provider;
+pub mod shutdown;
 pub mod sneaky;
 pub mod sni_generator;
 pub(crate) mod target_addrs;

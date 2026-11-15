@@ -80,8 +80,9 @@ pub async fn run_worker(args: &Args) -> Result<()> {
         result = &mut handle => {
             result.map_err(|error| TlsError::Other(format!("worker task failed: {error}")))??;
         }
-        signal = tokio::signal::ctrl_c() => {
-            signal.map_err(|error| TlsError::Other(format!("worker signal handler failed: {error}")))?;
+        signal = crate::utils::shutdown::shutdown_signal() => {
+            let signal = signal.map_err(|_| TlsError::Other("Worker signal handler failed".to_string()))?;
+            info!(event_name = "worker.shutdown.requested", signal);
             executor.shutdown().await?;
             handle.await.map_err(|error| TlsError::Other(format!("worker shutdown failed: {error}")))??;
         }
