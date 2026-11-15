@@ -783,6 +783,21 @@ mod tests {
         }
     }
 
+    struct FailingChannel;
+
+    #[async_trait::async_trait]
+    impl AlertChannel for FailingChannel {
+        async fn send_alert(&self, _alert: &Alert) -> Result<()> {
+            Err(crate::TlsError::Other(
+                "transport failed for customer-private.example".to_string(),
+            ))
+        }
+
+        fn channel_name(&self) -> &str {
+            "test"
+        }
+    }
+
     #[test]
     fn test_alert_dedup_key() {
         let alert =
@@ -844,6 +859,8 @@ mod tests {
             .finish();
         let mut manager = AlertManager::new(24).expect("valid dedup window");
         manager.add_channel(Box::new(SuccessChannel));
+        let mut failing_manager = AlertManager::new(24).expect("valid dedup window");
+        failing_manager.add_channel(Box::new(FailingChannel));
         let sensitive = "customer-private.example";
         let alert = Alert::scan_failure(
             "example.com".to_string(),
@@ -856,11 +873,17 @@ mod tests {
             message: format!("Invalid target {sensitive}"),
             ..alert.clone()
         };
+        let failing_alert = Alert::scan_failure(
+            "example.com".to_string(),
+            format!("Failed while parsing {sensitive}"),
+        );
         let dispatch = tracing::Dispatch::new(subscriber);
 
         async {
             manager.send_alert(&alert).await?;
-            manager.send_alert(&validation_alert).await
+            manager.send_alert(&validation_alert).await?;
+            assert!(failing_manager.send_alert(&failing_alert).await.is_err());
+            Ok::<(), crate::TlsError>(())
         }
         .with_subscriber(dispatch)
         .await
@@ -868,6 +891,7 @@ mod tests {
 
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         assert!(output.contains("monitor.alert.delivered"), "{output}");
+        assert!(output.contains("monitor.alert.delivery.failed"), "{output}");
         assert!(output.contains("alert_type=\"scan_failure\""), "{output}");
         assert!(
             output.contains("alert_type=\"validation_failure\""),
@@ -875,6 +899,7 @@ mod tests {
         );
         assert!(!output.contains(sensitive), "{output}");
         assert!(!output.contains("Failed while parsing"), "{output}");
+        assert!(!output.contains("transport failed"), "{output}");
     }
 
     #[test]
