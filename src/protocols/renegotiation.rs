@@ -264,8 +264,10 @@ impl<'a> RenegotiationTester<'a> {
                                 // 2. Simply not support renegotiation at all (modern, secure behavior)
                                 // Mark as inconclusive and recommend manual verification.
                                 tracing::warn!(
-                                    "Server responded without renegotiation_info extension - \
-                                     inconclusive for CVE-2009-3555. Manual verification recommended."
+                                    event_name = "protocol.renegotiation.inconclusive",
+                                    reason = "renegotiation_info_missing",
+                                    outcome = "inconclusive",
+                                    "Server response lacked renegotiation_info"
                                 );
                                 return Ok(InsecureRenegotiationResult::Inconclusive);
                             }

@@ -196,7 +196,10 @@ impl BeastTester {
                 // This means we cannot test SSL 3.0, so the probe stays
                 // inconclusive instead of claiming the server is safe.
                 tracing::debug!(
-                    "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
+                    event_name = "vulnerability.beast.ssl3_probe.unsupported",
+                    outcome = "inconclusive",
+                    reason = "openssl_protocol_configuration_failed",
+                    "OpenSSL cannot configure SSL 3.0 for the BEAST probe"
                 );
                 return Ok(ssl3_setup_inconclusive());
             }
@@ -206,7 +209,10 @@ impl BeastTester {
                 .is_err()
             {
                 tracing::debug!(
-                    "SSL 3.0 not supported by OpenSSL - cannot test for BEAST on SSL 3.0"
+                    event_name = "vulnerability.beast.ssl3_probe.unsupported",
+                    outcome = "inconclusive",
+                    reason = "openssl_protocol_configuration_failed",
+                    "OpenSSL cannot configure SSL 3.0 for the BEAST probe"
                 );
                 return Ok(ssl3_setup_inconclusive());
             }

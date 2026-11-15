@@ -13,8 +13,11 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
     };
     if content_type != CONTENT_TYPE_HEARTBEAT {
         tracing::debug!(
-            "Heartbleed: Response content type is not Heartbeat (0x{:02x}, expected 0x18)",
-            content_type
+            event_name = "vulnerability.heartbleed.response_rejected",
+            reason = "unexpected_content_type",
+            content_type,
+            expected_content_type = CONTENT_TYPE_HEARTBEAT,
+            "Heartbleed response rejected"
         );
         return false;
     }
@@ -27,9 +30,11 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
     };
     if major != 0x03 || !(0x01..=0x03).contains(&minor) {
         tracing::debug!(
-            "Heartbleed: Response has unexpected TLS version 0x{:02x}{:02x}",
-            major,
-            minor
+            event_name = "vulnerability.heartbleed.response_rejected",
+            reason = "unsupported_tls_version",
+            tls_version_major = major,
+            tls_version_minor = minor,
+            "Heartbleed response rejected"
         );
         return false;
     }
@@ -39,9 +44,11 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
     };
     if record_len + 5 != response.len() {
         tracing::debug!(
-            "Heartbleed: Response record length {} does not match buffer length {}",
-            record_len,
-            response.len()
+            event_name = "vulnerability.heartbleed.response_rejected",
+            reason = "record_length_mismatch",
+            record_length = record_len,
+            response_length = response.len(),
+            "Heartbleed response rejected"
         );
         return false;
     }
@@ -51,8 +58,11 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
     };
     if heartbeat_type != 0x02 {
         tracing::debug!(
-            "Heartbleed: Response type is not HeartbeatResponse (0x{:02x}, expected 0x02)",
-            heartbeat_type
+            event_name = "vulnerability.heartbleed.response_rejected",
+            reason = "unexpected_heartbeat_type",
+            heartbeat_type,
+            expected_heartbeat_type = 0x02_u8,
+            "Heartbleed response rejected"
         );
         return false;
     }
@@ -62,9 +72,11 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
     };
     if heartbeat_len + 3 != record_len {
         tracing::debug!(
-            "Heartbleed: Heartbeat payload length {} does not match record length {}",
-            heartbeat_len,
-            record_len
+            event_name = "vulnerability.heartbleed.response_rejected",
+            reason = "heartbeat_length_mismatch",
+            heartbeat_payload_length = heartbeat_len,
+            record_length = record_len,
+            "Heartbleed response rejected"
         );
         return false;
     }

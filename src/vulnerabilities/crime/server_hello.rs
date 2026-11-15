@@ -36,7 +36,16 @@ pub(super) fn tls_compression_status(response: &[u8]) -> CompressionProbeStatus 
     let Some(compression_method) = response.get(compression_offset).copied() else {
         return CompressionProbeStatus::Inconclusive;
     };
-    tracing::debug!("Server compression method: {}", compression_method);
+    tracing::debug!(
+        event_name = "vulnerability.crime.server_hello.compression_classified",
+        compression_method,
+        outcome = if compression_method == 0x01 {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        "CRIME compression method classified"
+    );
     if compression_method == 0x01 {
         CompressionProbeStatus::Enabled
     } else {

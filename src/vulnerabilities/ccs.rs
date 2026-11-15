@@ -122,7 +122,12 @@ impl CcsInjectionTester {
                         return Ok(TestStatus::HandshakeFailed);
                     }
                     Err(_) => {
-                        tracing::debug!("CCS test timeout during ServerHello");
+                        tracing::debug!(
+                            event_name = "vulnerability.ccs.server_hello.read_failed",
+                            error_type = "Timeout",
+                            error_code = "timeout",
+                            "CCS ServerHello read timed out"
+                        );
                         return Ok(TestStatus::HandshakeFailed);
                     }
                 };
@@ -165,8 +170,10 @@ impl CcsInjectionTester {
                     total_iterations += 1;
                     if total_iterations > MAX_TOTAL_ITERATIONS {
                         tracing::warn!(
-                            "CCS: exceeded {} outer read iterations — aborting probe as inconclusive",
-                            MAX_TOTAL_ITERATIONS
+                            event_name = "vulnerability.ccs.response.inconclusive",
+                            reason = "read_iteration_limit",
+                            iteration_limit = MAX_TOTAL_ITERATIONS,
+                            "CCS probe reached read iteration limit"
                         );
                         break Ok(TestStatus::Inconclusive);
                     }
@@ -243,8 +250,11 @@ impl CcsInjectionTester {
                                         reads_remaining = reads_remaining.saturating_sub(1);
                                         if reads_remaining == 0 {
                                             tracing::debug!(
-                                                "Reached max handshake message limit ({}), treating probe as inconclusive",
-                                                MAX_HANDSHAKE_MESSAGES
+                                                event_name =
+                                                    "vulnerability.ccs.response.inconclusive",
+                                                reason = "handshake_message_limit",
+                                                handshake_message_limit = MAX_HANDSHAKE_MESSAGES,
+                                                "CCS probe reached handshake message limit"
                                             );
                                             result = Some(TestStatus::Inconclusive);
                                             break;
