@@ -271,6 +271,7 @@ impl OpenSslClient {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
+        let process_started = Instant::now();
         let (output, timed_out) =
             if let Some(timeout) = options.timeout {
                 let mut child = cmd.spawn()?;
@@ -328,6 +329,34 @@ impl OpenSslClient {
         }
         let exit_code = output.status.code().unwrap_or(-1);
         let success = output.status.success();
+        let duration_ms = u64::try_from(process_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let outcome = if timed_out {
+            "timeout"
+        } else if success {
+            "success"
+        } else {
+            "nonzero_exit"
+        };
+        if timed_out {
+            tracing::warn!(
+                event_name = "subprocess.openssl.s_client.completed",
+                operation = "s_client",
+                duration_ms,
+                exit_code,
+                outcome,
+                error_code = "timeout",
+                "OpenSSL subprocess timed out"
+            );
+        } else {
+            tracing::debug!(
+                event_name = "subprocess.openssl.s_client.completed",
+                operation = "s_client",
+                duration_ms,
+                exit_code,
+                outcome,
+                "OpenSSL subprocess completed"
+            );
+        }
 
         // OpenSSL may exit non-zero even after a completed handshake (e.g. server closes
         // the connection first). Parse connection info whenever stdout has content.
@@ -348,11 +377,29 @@ impl OpenSslClient {
 
     /// Get OpenSSL version
     pub fn get_version(&self) -> Result<String> {
+        let process_started = Instant::now();
         let output = Command::new(&self.openssl_path).arg("version").output()?;
+        let duration_ms = u64::try_from(process_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         if output.status.success() {
+            tracing::debug!(
+                event_name = "subprocess.openssl.version.completed",
+                operation = "version",
+                duration_ms,
+                outcome = "success",
+                "OpenSSL version command completed"
+            );
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
+            tracing::debug!(
+                event_name = "subprocess.openssl.version.completed",
+                operation = "version",
+                duration_ms,
+                exit_code = output.status.code().unwrap_or(-1),
+                outcome = "nonzero_exit",
+                error_code = "nonzero_exit",
+                "OpenSSL version command failed"
+            );
             Err(crate::error::TlsError::Other(
                 "Failed to get OpenSSL version".to_string(),
             ))
@@ -361,22 +408,42 @@ impl OpenSslClient {
 
     /// List local OpenSSL ciphers available on this host.
     pub fn list_local_ciphers(&self) -> Result<Vec<String>> {
+        let process_started = Instant::now();
         let output = Command::new(&self.openssl_path)
             .args(["ciphers", "-v", "ALL"])
             .output()?;
+        let duration_ms = u64::try_from(process_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         if !output.status.success() {
+            tracing::debug!(
+                event_name = "subprocess.openssl.ciphers.completed",
+                operation = "ciphers",
+                duration_ms,
+                exit_code = output.status.code().unwrap_or(-1),
+                outcome = "nonzero_exit",
+                error_code = "nonzero_exit",
+                "OpenSSL cipher listing failed"
+            );
             return Err(crate::error::TlsError::Other(
                 "Failed to list local OpenSSL ciphers".to_string(),
             ));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout)
+        let ciphers = String::from_utf8_lossy(&output.stdout)
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .map(ToString::to_string)
-            .collect())
+            .collect::<Vec<_>>();
+        tracing::debug!(
+            event_name = "subprocess.openssl.ciphers.completed",
+            operation = "ciphers",
+            duration_ms,
+            cipher_count = ciphers.len(),
+            outcome = "success",
+            "OpenSSL cipher listing completed"
+        );
+        Ok(ciphers)
     }
 }
 
@@ -708,6 +775,76 @@ SSL-Session:
 
         assert!(result.stdout.contains("-starttls\npostgres"));
         assert!(result.success);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_logs_structured_outcome_without_target_data() {
+        use std::fs;
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::{Arc, Mutex};
+        use tempfile::tempdir;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let dir = tempdir().expect("tempdir should be created");
+        let script = dir.path().join("openssl");
+        fs::write(&script, "#!/bin/sh\nexit 7\n").expect("script should be written");
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("script should be executable");
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let client = OpenSslClient::with_path(&script);
+        let options = OpenSslClientOptions {
+            host: "example.com".to_string(),
+            ..Default::default()
+        };
+        let result = tracing::subscriber::with_default(subscriber, || client.run(&options))
+            .expect("subprocess execution should return its result");
+        assert_eq!(result.exit_code, 7);
+
+        let log = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON log");
+        let event: serde_json::Value = serde_json::from_str(log.trim()).expect("structured event");
+        assert_eq!(event["level"], "DEBUG");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "subprocess.openssl.s_client.completed"
+        );
+        assert_eq!(event["fields"]["operation"], "s_client");
+        assert_eq!(event["fields"]["outcome"], "nonzero_exit");
+        assert_eq!(event["fields"]["exit_code"], 7);
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!log.contains("example.com"));
     }
 
     #[cfg(unix)]

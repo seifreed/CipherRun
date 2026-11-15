@@ -5,6 +5,7 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::str;
+use std::time::Instant;
 
 /// CAA Record check result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +37,7 @@ impl CaaChecker {
 
     /// Check CAA records for the domain
     pub fn check(&self) -> Result<CaaCheckResult> {
+        let started = Instant::now();
         crate::security::validate_hostname(&self.domain).map_err(|error| {
             crate::TlsError::InvalidInput {
                 message: format!("Invalid CAA domain: {error}"),
@@ -62,6 +64,17 @@ impl CaaChecker {
             self.analyze_caa_records(&mut result);
         }
 
+        tracing::debug!(
+            event_name = "certificate.caa.check.completed",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            record_count = result.records.len(),
+            outcome = if result.has_caa_records {
+                "records_found"
+            } else {
+                "no_records"
+            },
+            "CAA check completed"
+        );
         Ok(result)
     }
 
@@ -85,11 +98,23 @@ impl CaaChecker {
             .args(["+short", "CAA", &self.domain])
             .output();
 
-        if let Ok(output) = output
+        if let Ok(ref output) = output
             && output.status.success()
         {
             return self.parse_dig_caa_output(&output.stdout);
         }
+
+        let reason_code = match &output {
+            Ok(_) => "nonzero_exit",
+            Err(_) => "command_unavailable",
+        };
+        tracing::debug!(
+            event_name = "dns.caa.lookup.fallback",
+            from_resolver = "dig",
+            to_resolver = "host",
+            reason_code,
+            "Falling back to alternate CAA resolver"
+        );
 
         // Fallback to host command
         let output = Command::new("host")

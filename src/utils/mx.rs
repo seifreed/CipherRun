@@ -44,6 +44,7 @@ impl MxTester {
 
     /// Query MX records for the domain
     pub async fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
+        let started = std::time::Instant::now();
         crate::security::validate_hostname(&self.domain).map_err(|error| {
             crate::error::TlsError::InvalidInput {
                 message: format!("Invalid MX domain: {error}"),
@@ -56,35 +57,57 @@ impl MxTester {
             self.domain.yellow()
         );
 
-        let mx_records = if self.resolvers.is_empty() {
+        let (mx_records, resolver) = if self.resolvers.is_empty() {
             // Use dig or nslookup to get MX records
             let output = Command::new("dig")
                 .args(["+short", "MX", &self.domain])
                 .output();
 
-            if let Ok(output) = output
+            if let Ok(ref output) = output
                 && output.status.success()
             {
-                self.parse_dig_output(&output.stdout)?
+                (self.parse_dig_output(&output.stdout)?, "dig")
             } else {
+                let reason_code = match &output {
+                    Ok(_) => "nonzero_exit",
+                    Err(_) => "command_unavailable",
+                };
+                tracing::debug!(
+                    event_name = "dns.mx.lookup.fallback",
+                    from_resolver = "dig",
+                    to_resolver = "nslookup",
+                    reason_code,
+                    "Falling back to alternate MX resolver"
+                );
                 // Fallback to nslookup if dig is not available
                 let output = Command::new("nslookup")
                     .args(["-type=MX", &self.domain])
                     .output()?;
 
-                self.parse_nslookup_output(&output.stdout)?
+                (self.parse_nslookup_output(&output.stdout)?, "nslookup")
             }
         } else {
             let resolver = CustomResolver::new(self.resolvers.clone())?;
-            resolver
-                .lookup_mx(&self.domain)
-                .await?
-                .into_iter()
-                .map(|(priority, hostname)| MxRecord { priority, hostname })
-                .collect()
+            (
+                resolver
+                    .lookup_mx(&self.domain)
+                    .await?
+                    .into_iter()
+                    .map(|(priority, hostname)| MxRecord { priority, hostname })
+                    .collect(),
+                "custom",
+            )
         };
 
         if mx_records.is_empty() {
+            tracing::debug!(
+                event_name = "dns.mx.lookup.completed",
+                resolver,
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                record_count = 0,
+                outcome = "no_records",
+                "MX lookup completed without records"
+            );
             return Err(crate::error::TlsError::Other(format!(
                 "No MX records found for domain: {}",
                 self.domain
@@ -94,6 +117,15 @@ impl MxTester {
         // Sort by priority (lowest first)
         let mut sorted_records = mx_records;
         sorted_records.sort_by_key(|r| r.priority);
+
+        tracing::debug!(
+            event_name = "dns.mx.lookup.completed",
+            resolver,
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            record_count = sorted_records.len(),
+            outcome = "success",
+            "MX lookup completed"
+        );
 
         println!(
             "\n{} Found {} MX record(s):",
