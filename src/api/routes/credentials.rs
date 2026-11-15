@@ -79,6 +79,20 @@ fn map_store_error(error: crate::TlsError) -> ApiError {
     }
 }
 
+fn audit_credential_transition(
+    event_name: &'static str,
+    actor: Permission,
+    credential: &ApiCredential,
+) {
+    tracing::info!(
+        event_name,
+        actor_permission = ?actor,
+        credential_permission = ?credential.permission,
+        tenant_scoped = credential.tenant_id.is_some(),
+        "API credential access state changed"
+    );
+}
+
 /// List credentials without exposing secret hashes.
 #[utoipa::path(
     get,
@@ -106,7 +120,7 @@ pub async fn list_credentials(
 )]
 pub async fn create_credential(
     State(state): State<Arc<AppState>>,
-    Extension(_auth): Extension<crate::api::middleware::AuthExtension>,
+    Extension(auth): Extension<crate::api::middleware::AuthExtension>,
     Json(request): Json<CreateCredentialRequest>,
 ) -> Result<(StatusCode, Json<CredentialSecretResponse>), ApiError> {
     validate_identifier(&request.key_id, "key_id")?;
@@ -137,6 +151,7 @@ pub async fn create_credential(
         .insert(credential.clone())
         .await
         .map_err(map_store_error)?;
+    audit_credential_transition("security.credential.created", auth.permission, &credential);
 
     Ok((
         StatusCode::CREATED,
@@ -159,7 +174,7 @@ pub async fn create_credential(
 )]
 pub async fn rotate_credential(
     State(state): State<Arc<AppState>>,
-    Extension(_auth): Extension<crate::api::middleware::AuthExtension>,
+    Extension(auth): Extension<crate::api::middleware::AuthExtension>,
     Path(key_id): Path<String>,
     Json(request): Json<RotateCredentialRequest>,
 ) -> Result<Json<CredentialSecretResponse>, ApiError> {
@@ -170,6 +185,7 @@ pub async fn rotate_credential(
             .rotate(&key_id, &secret, None)
             .await
             .map_err(map_store_error)?;
+        audit_credential_transition("security.credential.rotated", auth.permission, &credential);
         return Ok(Json(CredentialSecretResponse {
             credential: view(credential),
             secret,
@@ -186,6 +202,7 @@ pub async fn rotate_credential(
         .rotate(&key_id, &secret, Some(expires_at))
         .await
         .map_err(map_store_error)?;
+    audit_credential_transition("security.credential.rotated", auth.permission, &credential);
     Ok(Json(CredentialSecretResponse {
         credential: view(credential),
         secret,
@@ -203,7 +220,7 @@ pub async fn rotate_credential(
 )]
 pub async fn revoke_credential(
     State(state): State<Arc<AppState>>,
-    Extension(_auth): Extension<crate::api::middleware::AuthExtension>,
+    Extension(auth): Extension<crate::api::middleware::AuthExtension>,
     Path(key_id): Path<String>,
 ) -> Result<Json<CredentialView>, ApiError> {
     let credential = state
@@ -211,5 +228,82 @@ pub async fn revoke_credential(
         .revoke(&key_id)
         .await
         .map_err(map_store_error)?;
+    audit_credential_transition("security.credential.revoked", auth.permission, &credential);
     Ok(Json(view(credential)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn credential_audit_events_exclude_ids_and_secret_hash() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let credential = ApiCredential {
+            key_id: "sensitive-key-id".to_string(),
+            secret_hash: "sensitive-secret-hash".to_string(),
+            principal_id: "sensitive-principal-id".to_string(),
+            tenant_id: Some("sensitive-tenant-id".to_string()),
+            permission: Permission::User,
+            created_at: Utc::now(),
+            expires_at: None,
+            active: true,
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            for event_name in [
+                "security.credential.created",
+                "security.credential.rotated",
+                "security.credential.revoked",
+            ] {
+                audit_credential_transition(event_name, Permission::Admin, &credential);
+            }
+        });
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        for event_name in [
+            "security.credential.created",
+            "security.credential.rotated",
+            "security.credential.revoked",
+        ] {
+            assert!(logs.contains(event_name));
+        }
+        assert!(logs.contains("tenant_scoped=true"));
+        assert!(!logs.contains("sensitive-key-id"));
+        assert!(!logs.contains("sensitive-secret-hash"));
+        assert!(!logs.contains("sensitive-principal-id"));
+        assert!(!logs.contains("sensitive-tenant-id"));
+    }
 }
