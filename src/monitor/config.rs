@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 const MAX_MONITOR_CONFIG_BYTES: u64 = 1024 * 1024;
 
@@ -162,33 +163,50 @@ impl Default for MonitorSettings {
 impl MonitorConfig {
     /// Load configuration from TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let size = fs::metadata(path.as_ref())
-            .map_err(|e| TlsError::FileSystemError {
-                path: path.as_ref().display().to_string(),
-                source: e,
-            })?
-            .len();
-        if size > MAX_MONITOR_CONFIG_BYTES {
-            return Err(TlsError::InvalidInput {
-                message: format!(
-                    "Monitor config file too large: {} bytes (max {})",
-                    size, MAX_MONITOR_CONFIG_BYTES
-                ),
-            });
+        let started = Instant::now();
+        let result = (|| {
+            let size = fs::metadata(path.as_ref())
+                .map_err(|e| TlsError::FileSystemError {
+                    path: path.as_ref().display().to_string(),
+                    source: e,
+                })?
+                .len();
+            if size > MAX_MONITOR_CONFIG_BYTES {
+                return Err(TlsError::InvalidInput {
+                    message: format!(
+                        "Monitor config file too large: {} bytes (max {})",
+                        size, MAX_MONITOR_CONFIG_BYTES
+                    ),
+                });
+            }
+            let contents =
+                fs::read_to_string(path.as_ref()).map_err(|e| TlsError::FileSystemError {
+                    path: path.as_ref().display().to_string(),
+                    source: e,
+                })?;
+
+            let config: MonitorConfig =
+                toml::from_str(&contents).map_err(|e| TlsError::ConfigError {
+                    message: format!("Failed to parse TOML config: {e}"),
+                })?;
+            config.validate()?;
+
+            Ok(config)
+        })();
+
+        if let Err(error) = &result {
+            tracing::warn!(
+                event_name = "monitor.configuration.load_failed",
+                operation = "load_monitor_configuration",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "Failed to load monitoring configuration"
+            );
         }
-        let contents =
-            fs::read_to_string(path.as_ref()).map_err(|e| TlsError::FileSystemError {
-                path: path.as_ref().display().to_string(),
-                source: e,
-            })?;
 
-        let config: MonitorConfig =
-            toml::from_str(&contents).map_err(|e| TlsError::ConfigError {
-                message: format!("Failed to parse TOML config: {e}"),
-            })?;
-        config.validate()?;
-
-        Ok(config)
+        result
     }
 
     /// Create default configuration

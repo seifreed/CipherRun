@@ -16,6 +16,7 @@ use chrono::Utc;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::interval;
 
@@ -33,9 +34,35 @@ pub struct MonitorDaemon {
 impl MonitorDaemon {
     /// Create new monitoring daemon
     pub async fn new(config: MonitorConfig) -> Result<Self> {
-        config.validate()?;
+        let started = Instant::now();
+        if let Err(error) = config.validate() {
+            tracing::warn!(
+                event_name = "monitor.initialization.failed",
+                stage = "configuration_validation",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "Monitoring daemon initialization failed"
+            );
+            return Err(error);
+        }
         let max_concurrent = config.monitor.max_concurrent_scans;
-        let alert_manager = Arc::new(AlertManager::from_config(&config).await?);
+        let alert_manager = match AlertManager::from_config(&config).await {
+            Ok(alert_manager) => Arc::new(alert_manager),
+            Err(error) => {
+                tracing::warn!(
+                    event_name = "monitor.initialization.failed",
+                    stage = "alert_manager",
+                    duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    error_type = "TlsError",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Monitoring daemon initialization failed"
+                );
+                return Err(error);
+            }
+        };
 
         Ok(Self {
             config,
