@@ -7,7 +7,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use std::collections::HashMap;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -52,6 +52,7 @@ where
         .build()
         .map_err(|_| crate::TlsError::Other("Failed to build OTLP exporter".to_string()))?;
     let provider = SdkTracerProvider::builder()
+        .with_resource(telemetry_resource())
         .with_batch_exporter(exporter)
         .build();
     global::set_tracer_provider(provider.clone());
@@ -62,13 +63,30 @@ where
     ))
 }
 
+fn telemetry_resource() -> Resource {
+    Resource::builder().with_service_name("cipherrun").build()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{context_from_traceparent, current_traceparent, traceparent_for_context};
+    use super::{
+        context_from_traceparent, current_traceparent, telemetry_resource, traceparent_for_context,
+    };
+    use opentelemetry::Key;
     use opentelemetry::trace::{TraceContextExt, Tracer, TracerProvider};
     use opentelemetry_sdk::trace::SdkTracerProvider;
     use tracing_opentelemetry::OpenTelemetrySpanExt;
     use tracing_subscriber::prelude::*;
+
+    #[test]
+    fn resource_identifies_the_service() {
+        let resource = telemetry_resource();
+        assert!(
+            resource
+                .get(&Key::from_static_str("service.name"))
+                .is_some()
+        );
+    }
 
     #[test]
     fn traceparent_round_trips_across_background_job_boundary() {
