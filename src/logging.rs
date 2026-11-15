@@ -571,6 +571,29 @@ mod tests {
     }
 
     #[test]
+    fn daily_rotation_writes_current_utc_bucket_separately_from_previous_day() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cipherrun.jsonl");
+        let log_dir = directory.path().join(".cipherrun.jsonl.d");
+        std::fs::create_dir(&log_dir).unwrap();
+        let now = chrono::Utc::now();
+        let current_day = now.format("%Y-%m-%d").to_string();
+        let previous_day = (now - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let previous_path = log_dir.join(format!("cipherrun.jsonl.{previous_day}"));
+        std::fs::write(&previous_path, b"previous day\n").unwrap();
+
+        let mut file = rolling_log_file(&path).unwrap();
+        file.write_all(b"current day\n").unwrap();
+        file.flush().unwrap();
+
+        let current_path = log_dir.join(format!("cipherrun.jsonl.{current_day}"));
+        assert_eq!(std::fs::read(&current_path).unwrap(), b"current day\n");
+        assert_eq!(std::fs::read(&previous_path).unwrap(), b"previous day\n");
+    }
+
+    #[test]
     fn rolling_log_retention_is_scoped_to_its_dedicated_directory() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cipherrun.jsonl");
