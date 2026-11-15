@@ -348,10 +348,24 @@ impl PhaseOrchestrator {
                     duration_ms = tracing::field::Empty,
                 );
                 let phase_start = Instant::now();
-                let phase_result = phase
-                    .execute(&mut context)
-                    .instrument(phase_span.clone())
-                    .await;
+                let phase_result = async {
+                    let result = phase.execute(&mut context).await;
+                    if let Err(error) = &result
+                        && !is_fatal_phase_error(error)
+                    {
+                        tracing::warn!(
+                            event_name = "scan.phase.failed",
+                            phase = phase.name(),
+                            error_type = "TlsError",
+                            error_code = error.observability_code(),
+                            outcome = "partial_error",
+                            "Scan phase failed"
+                        );
+                    }
+                    result
+                }
+                .instrument(phase_span.clone())
+                .await;
                 phase_span.record(
                     "duration_ms",
                     u64::try_from(phase_start.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -377,15 +391,6 @@ impl PhaseOrchestrator {
                     if fatal {
                         return Err(error);
                     }
-                    phase_span.in_scope(|| {
-                        tracing::warn!(
-                            event_name = "scan.phase.failed",
-                            phase = phase.name(),
-                            error_type = "TlsError",
-                            error_code = error.observability_code(),
-                            "Scan phase failed"
-                        );
-                    });
                     context.results.add_human_warning(format!(
                         "{} could not complete: {}",
                         phase.name(),
@@ -609,6 +614,8 @@ mod tests {
 
     #[test]
     fn phase_span_records_outcome_and_duration_without_raw_error() {
+        use tracing::instrument::WithSubscriber;
+
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
@@ -619,15 +626,21 @@ mod tests {
             error: crate::TlsError::Other("probe failed target=private.example".to_string()),
         }));
 
+        let dispatch = tracing::Dispatch::new(subscriber);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        tracing::subscriber::with_default(subscriber, || {
-            runtime
-                .block_on(orchestrator.execute(test_scan_context(ScanRequest::default())))
-                .expect("nonfatal phase errors should be recoverable");
-        });
+        runtime
+            .block_on(
+                async {
+                    orchestrator
+                        .execute(test_scan_context(ScanRequest::default()))
+                        .await
+                }
+                .with_subscriber(dispatch),
+            )
+            .expect("nonfatal phase errors should be recoverable");
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(output.contains("scan.phase"), "{output:?}");

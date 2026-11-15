@@ -552,6 +552,7 @@ mod tests {
     fn retry_events_are_structured_and_exclude_raw_errors() {
         use std::io::Write;
         use std::sync::Mutex;
+        use tracing::instrument::WithSubscriber;
         use tracing_subscriber::fmt::MakeWriter;
 
         struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -585,21 +586,27 @@ mod tests {
         let config = RetryConfig::new(1, Duration::ZERO, Duration::ZERO);
         let attempts = std::sync::atomic::AtomicUsize::new(0);
 
+        let dispatch = tracing::Dispatch::new(subscriber);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
             .unwrap();
-        let result = tracing::subscriber::with_default(subscriber, || {
-            runtime.block_on(retry_with_backoff(&config, || async {
-                if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                    Err(TlsError::Other(
-                        "Connection timed out for private.example secret=do-not-log".to_string(),
-                    ))
-                } else {
-                    Ok::<_, TlsError>(())
-                }
-            }))
-        });
+        let result = runtime.block_on(
+            async {
+                retry_with_backoff(&config, || async {
+                    if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        Err(TlsError::Other(
+                            "Connection timed out for private.example secret=do-not-log"
+                                .to_string(),
+                        ))
+                    } else {
+                        Ok::<_, TlsError>(())
+                    }
+                })
+                .await
+            }
+            .with_subscriber(dispatch),
+        );
 
         assert!(result.is_ok());
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();

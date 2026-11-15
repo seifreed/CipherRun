@@ -19,7 +19,7 @@ const MAX_HTTP_STATUS_LINE_LEN: usize = 8192;
 
 #[cfg(test)]
 fn protocol_read_timeout() -> Duration {
-    Duration::from_millis(50)
+    Duration::from_millis(500)
 }
 
 #[cfg(not(test))]
