@@ -2,12 +2,49 @@
 
 use axum::{Router, body::Bytes, extract::State, http::StatusCode, routing::post};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;
+
+static OTLP_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Clone)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+struct LogBufferWriter(Arc<Mutex<Vec<u8>>>);
+
+impl<'a> MakeWriter<'a> for LogBuffer {
+    type Writer = LogBufferWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        LogBufferWriter(self.0.clone())
+    }
+}
+
+impl std::io::Write for LogBufferWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 async fn receive_spans(State(sender): State<mpsc::Sender<usize>>, body: Bytes) -> StatusCode {
     let _ = sender.send(body.len());
     StatusCode::OK
+}
+
+async fn reject_spans(
+    State(sender): State<mpsc::Sender<(usize, StatusCode)>>,
+    body: Bytes,
+) -> (StatusCode, &'static str) {
+    let _ = sender.send((body.len(), StatusCode::SERVICE_UNAVAILABLE));
+    (StatusCode::SERVICE_UNAVAILABLE, "token=collector-secret")
 }
 
 struct EndpointEnvironment {
@@ -47,6 +84,7 @@ impl Drop for EndpointEnvironment {
 
 #[tokio::test(flavor = "current_thread")]
 async fn otlp_http_export_reaches_a_local_collector() {
+    let _environment_lock = OTLP_ENV_LOCK.lock().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let _environment = EndpointEnvironment::set(&endpoint);
@@ -77,5 +115,55 @@ async fn otlp_http_export_reaches_a_local_collector() {
             .await
             .unwrap();
     assert!(payload_size > 0);
+    collector.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn otlp_collector_failure_is_reported_without_panicking() {
+    let _environment_lock = OTLP_ENV_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _environment = EndpointEnvironment::set(&endpoint);
+    let (sender, receiver) = mpsc::channel();
+    let collector = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/traces", post(reject_spans))
+                .with_state(sender),
+        )
+        .await
+        .unwrap();
+    });
+
+    let (otel_layer, provider) = cipherrun::telemetry::layer().unwrap();
+    let output = LogBuffer(Arc::new(Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(output.clone())
+                .with_filter(EnvFilter::new("trace")),
+        )
+        .with(otel_layer);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    tracing::info_span!("otlp.failure.integration")
+        .in_scope(|| tracing::info!(event_name = "otlp.failure.test", "export failure test"));
+    let shutdown = tokio::task::spawn_blocking(move || provider.shutdown())
+        .await
+        .unwrap();
+
+    assert!(shutdown.is_ok());
+    let (payload_size, status) = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(payload_size > 0);
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "collector should receive the export before rejecting it"
+    );
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("BatchSpanProcessor.ExportError"), "{logs}");
+    assert!(logs.contains("HTTP export failed"), "{logs}");
+    assert!(!logs.contains("collector-secret"), "{logs}");
     collector.abort();
 }

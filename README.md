@@ -249,8 +249,9 @@ without that feature, no telemetry backend is contacted.
 CipherRun uses Rust `tracing`. Logs go to stderr; pass `--logfile FILE` to also
 write them to daily-rotated files in a dedicated `.<FILE>.d` directory beside
 the requested path. Up to seven daily files are retained. The default level is
-`info`; `-v` enables `debug` and `-vv` enables `trace`. `RUST_LOG` takes precedence and supports standard
-module directives, for example `RUST_LOG=warn,cipherrun::api=debug`. Invalid
+`info`; `-v` enables `debug` and `-vv` enables `trace`. `RUST_LOG` takes
+precedence and supports standard module directives, for example
+`RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
@@ -271,9 +272,9 @@ request bodies and authorization headers are not written to logs. Do not add cre
 webhook URLs, certificate contents, or alert message bodies to tracing fields.
 
 With the `otel` feature enabled, tracing spans are exported through OTLP over
-HTTP. Without it, logs and spans remain local and no telemetry service is
-required. File rotation and retention are managed by the operator or runtime;
-CipherRun currently appends to the configured file without rotating it.
+HTTP. Export failures produce sanitized SDK error events through `tracing`; the
+collector's response body is not included. Without `otel`, logs and spans remain
+local and no telemetry service is required.
 
 Native HTTPS is available by setting `tls_cert_file` and `tls_key_file` to a
 certificate chain and private-key PEM file. The two paths must be configured
