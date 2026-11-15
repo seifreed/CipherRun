@@ -422,9 +422,9 @@ impl InMemoryJobQueue {
             for id in expired {
                 jobs.remove(&id);
                 if let Some(storage) = &self.storage
-                    && let Err(error) = storage.delete_job(&id)
+                    && storage.delete_job(&id).is_err()
                 {
-                    tracing::warn!("Failed to remove expired persisted job {}: {}", id, error);
+                    tracing::warn!(job_id = %id, error_type = "queue_storage", "Failed to remove expired scan job");
                 }
             }
         }
@@ -448,9 +448,9 @@ impl InMemoryJobQueue {
         for (id, _) in terminal.into_iter().take(to_remove) {
             jobs.remove(&id);
             if let Some(storage) = &self.storage
-                && let Err(error) = storage.delete_job(&id)
+                && storage.delete_job(&id).is_err()
             {
-                tracing::warn!("Failed to remove pruned persisted job {}: {}", id, error);
+                tracing::warn!(job_id = %id, error_type = "queue_storage", "Failed to remove pruned scan job");
             }
         }
     }

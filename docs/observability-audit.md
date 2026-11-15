@@ -34,6 +34,7 @@ indexed source files was manually inspected.
 - `477a8e1`: bounded non-blocking `tracing-appender` sink for CLI and worker, retained `WorkerGuard` for shutdown flush, mirrored stderr/file writer test passed. Current validation: 8 CLI logger tests, all-features check, worker test target (0 tests), and local worker execution produced a JSON `worker.failed` event without raw error text.
 - Background scan jobs now use structured job IDs, attempt/outcome, duration and error categories; raw scan, queue, storage and webhook error strings are omitted from logs. `cargo test --lib api::jobs` passed (37 tests).
 - Periodic API queue cleanup and certificate monitoring now emit structured startup, shutdown, cycle duration, counts and signal events. Raw paths, domains, certificate expiry input and error strings are omitted. `cargo test --lib monitor::daemon` (12) and `cargo test --lib api::state` (17) passed.
+- Remaining API queue, TLS listener/handshake, WebSocket transport and rate-limit events no longer emit raw errors, peer addresses, credential IDs or client text. Validation passed: `cargo test --lib api::jobs` (37), `cargo test --lib api::middleware` (29), and `cargo test --test ws_progress` (3).
 
 ## Current known limitations
 

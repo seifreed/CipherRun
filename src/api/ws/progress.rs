@@ -97,8 +97,11 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                     );
                     // Could handle client commands here
                 }
-                Err(e) => {
-                    error!("WebSocket error: {}", e);
+                Err(_) => {
+                    error!(
+                        error_type = "websocket_transport",
+                        "WebSocket connection failed"
+                    );
                     break;
                 }
                 Ok(Message::Binary(_)) => {
@@ -256,7 +259,10 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                     debug!("Received pong");
                 }
                 Ok(Message::Text(text)) => {
-                    debug!("Received text message: {}", text);
+                    debug!(
+                        message_bytes = text.len(),
+                        "Received WebSocket text message"
+                    );
                 }
                 Err(e) => {
                     error!("WebSocket error: {}", e);

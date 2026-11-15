@@ -42,14 +42,14 @@ impl axum::serve::Listener for TlsListener {
         loop {
             let (stream, address) = match self.listener.accept().await {
                 Ok(connection) => connection,
-                Err(error) => {
-                    tracing::warn!("TLS listener accept failed: {error}");
+                Err(_) => {
+                    tracing::warn!(error_type = "tls_listener", "TLS listener accept failed");
                     continue;
                 }
             };
             match self.acceptor.accept(stream).await {
                 Ok(stream) => return (stream, address),
-                Err(error) => tracing::warn!(%address, "TLS handshake failed: {error}"),
+                Err(_) => tracing::warn!(error_type = "tls_handshake", "TLS handshake failed"),
             }
         }
     }

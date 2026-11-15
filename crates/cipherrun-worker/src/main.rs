@@ -6,8 +6,11 @@ async fn main() -> ExitCode {
     let _logging_guard = init_logging();
     let args = match Args::parse_with_sources() {
         Ok(args) => args,
-        Err(error) => {
-            tracing::error!(error = %error, "Failed to parse worker configuration");
+        Err(_error) => {
+            tracing::error!(
+                error_type = "cli_arguments",
+                "Failed to parse worker configuration"
+            );
             return ExitCode::from(2);
         }
     };

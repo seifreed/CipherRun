@@ -325,7 +325,7 @@ pub async fn rate_limit(
     if let Some(auth) = auth_ext {
         // Check if user is Admin - admins bypass rate limiting
         if auth.permission == Permission::Admin {
-            tracing::debug!("Admin key {} - bypassing rate limit", auth.key_id);
+            tracing::debug!("Administrator credential bypassed rate limiting");
             return Ok(next.run(req).await);
         }
 
