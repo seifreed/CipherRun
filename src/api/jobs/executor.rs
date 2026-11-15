@@ -167,8 +167,13 @@ impl ScanExecutor {
                     }
                     continue;
                 }
-                Err(_) => {
-                    error!(event_name = "scan_job.dequeue_failed", error_type = "queue");
+                Err(error) => {
+                    error!(
+                        event_name = "scan_job.dequeue_failed",
+                        error_type = "queue",
+                        error_code = error.observability_code(),
+                        "Failed to dequeue scan job"
+                    );
                     tokio::select! {
                         _ = shutdown_rx.changed() => {},
                         _ = tokio::time::sleep(Duration::from_secs(1)) => {},
@@ -182,8 +187,13 @@ impl ScanExecutor {
                 permit = Arc::clone(&self.semaphore).acquire_owned() => permit,
                 _ = shutdown_rx.changed() => {
                     job.mark_queued();
-                    if self.job_queue.enqueue(job).await.is_err() {
-                        error!(event_name = "scan_job.requeue_failed", error_type = "queue");
+                    if let Err(error) = self.job_queue.enqueue(job).await {
+                        error!(
+                            event_name = "scan_job.requeue_failed",
+                            error_type = "queue",
+                            error_code = error.observability_code(),
+                            "Failed to requeue scan job during shutdown"
+                        );
                     }
                     continue;
                 }
@@ -194,10 +204,21 @@ impl ScanExecutor {
                     // Semaphore closed — re-enqueue the job so it's not lost.
                     // dequeue already claimed it as Running, so reset it to
                     // Queued or a later dequeue would skip it as non-pending.
-                    error!(job_id = %job.id, error_type = "semaphore_closed", "Cannot acquire scan execution slot");
+                    error!(
+                        event_name = "scan_job.execution_slot.unavailable",
+                        job_id = %job.id,
+                        error_type = "semaphore_closed",
+                        outcome = "requeue_attempted",
+                        "Cannot acquire scan execution slot"
+                    );
                     job.mark_queued();
-                    if self.job_queue.enqueue(job).await.is_err() {
-                        error!(error_type = "queue", "Failed to re-enqueue scan job");
+                    if let Err(error) = self.job_queue.enqueue(job).await {
+                        error!(
+                            event_name = "scan_job.requeue_failed",
+                            error_type = "queue",
+                            error_code = error.observability_code(),
+                            "Failed to requeue scan job after semaphore closure"
+                        );
                     }
                     break;
                 }
@@ -239,14 +260,22 @@ impl ScanExecutor {
 
     /// Execute a scan job
     async fn execute_scan(&self, queue: Arc<dyn JobQueue>, mut job: ScanJob) {
-        if let Ok(Some(current)) = queue.get_job(&job.id).await
-            && matches!(current.status, ScanStatus::Cancelled)
-        {
-            info!(job_id = %job.id, "Skipping cancelled scan job");
-            return;
+        match queue.get_job(&job.id).await {
+            Ok(Some(current)) if matches!(current.status, ScanStatus::Cancelled) => {
+                info!(event_name = "scan_job.cancelled_before_start", job_id = %job.id, outcome = "skipped", "Skipping cancelled scan job");
+                return;
+            }
+            Err(error) => warn!(
+                event_name = "scan_job.status_check.failed",
+                job_id = %job.id,
+                error_type = "queue",
+                error_code = error.observability_code(),
+                "Failed to read scan job status before starting"
+            ),
+            _ => {}
         }
 
-        info!(job_id = %job.id, "Starting scan job");
+        info!(event_name = "scan_job.started", job_id = %job.id, "Starting scan job");
 
         // Mark job as started. Use update_job_preserving_cancelled so that a
         // cancellation arriving between the check above and this write is not
@@ -255,11 +284,11 @@ impl ScanExecutor {
         match queue.update_job_preserving_cancelled(&job).await {
             Ok(true) => {}
             Ok(false) => {
-                info!(job_id = %job.id, "Scan job cancelled before start");
+                info!(event_name = "scan_job.cancelled_before_start", job_id = %job.id, outcome = "skipped", "Scan job cancelled before start");
                 return;
             }
-            Err(_) => {
-                error!(job_id = %job.id, error_type = "queue", "Failed to persist scan job start");
+            Err(error) => {
+                error!(event_name = "scan_job.start_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist scan job start");
                 return;
             }
         }
@@ -271,7 +300,7 @@ impl ScanExecutor {
             .send_progress(queue.clone(), &mut job, 0, "Starting scan")
             .await
         {
-            info!(job_id = %job.id, "Scan job cancelled during startup");
+            info!(event_name = "scan_job.cancelled_during_startup", job_id = %job.id, outcome = "cancelled", "Scan job cancelled during startup");
             return;
         }
 
@@ -289,6 +318,7 @@ impl ScanExecutor {
             .await
         });
         let mut heartbeat = tokio::time::interval(JOB_HEARTBEAT_INTERVAL);
+        let mut status_check_failure_reported = false;
 
         let scan_result = loop {
             tokio::select! {
@@ -296,19 +326,42 @@ impl ScanExecutor {
                     break match joined {
                         Ok(result) => result,
                         Err(err) if err.is_cancelled() => {
-                            info!(job_id = %job.id, "Scan task aborted after cancellation");
+                            info!(event_name = "scan_job.task.cancelled", job_id = %job.id, outcome = "cancelled", "Scan task aborted after cancellation");
                             return;
                         }
-                        Err(_) => {
+                        Err(error) => {
+                            error!(
+                                event_name = "scan_job.task.join_failed",
+                                error_type = "join_error",
+                                error_code = if error.is_panic() { "panic" } else { "other" },
+                                "Scan task failed while joining"
+                            );
                             Err(TlsError::Other("Scan task join error".to_string()))
                         }
                     };
                 }
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                    if let Ok(Some(current)) = queue.get_job(&job.id).await
-                        && matches!(current.status, ScanStatus::Cancelled)
-                    {
-                        info!(job_id = %job.id, "Aborting scan after cancellation request");
+                    let current = match queue.get_job(&job.id).await {
+                        Ok(current) => {
+                            status_check_failure_reported = false;
+                            current
+                        }
+                        Err(error) => {
+                            if !status_check_failure_reported {
+                                warn!(
+                                    event_name = "scan_job.status_check.failed",
+                                    job_id = %job.id,
+                                    error_type = "queue",
+                                    error_code = error.observability_code(),
+                                    "Failed to poll scan job status"
+                                );
+                                status_check_failure_reported = true;
+                            }
+                            None
+                        }
+                    };
+                    if let Some(current) = current.filter(|current| matches!(current.status, ScanStatus::Cancelled)) {
+                        info!(event_name = "scan_job.cancellation_requested", job_id = %job.id, outcome = "aborting", "Aborting scan after cancellation request");
                         scan_task.abort();
                         match (&mut scan_task).await {
                             Ok(Ok(results)) => {
@@ -330,8 +383,8 @@ impl ScanExecutor {
                                     .unwrap_or_default();
                                 job = current;
                                 job.mark_completed(results);
-                                if queue.update_job(&job).await.is_err() {
-                                    error!(job_id = %job.id, error_type = "queue", "Failed to persist completed cancelled scan");
+                                if let Err(error) = queue.update_job(&job).await {
+                                    error!(event_name = "scan_job.result_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist completed scan after cancellation");
                                 }
                                 let _ = self.progress_tx.send(ProgressMessage::completed(&job.id));
                                 // The job is now Completed with results available, so it
@@ -350,8 +403,8 @@ impl ScanExecutor {
                             Ok(Err(e)) => {
                                 job = current;
                                 job.mark_failed(e.to_string());
-                                if queue.update_job(&job).await.is_err() {
-                                    error!(job_id = %job.id, error_type = "queue", "Failed to persist failed cancelled scan");
+                                if let Err(error) = queue.update_job(&job).await {
+                                    error!(event_name = "scan_job.failure_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist failed scan after cancellation");
                                 }
                                 let _ = self.progress_tx.send(ProgressMessage::failed(
                                     &job.id,
@@ -370,8 +423,8 @@ impl ScanExecutor {
                 _ = heartbeat.tick() => {
                     match queue.renew_lease(&job.id).await {
                         Ok(true) => {}
-                        Ok(false) => warn!(job_id = %job.id, outcome = "lease_lost", "Scan lease renewal skipped"),
-                        Err(_) => warn!(job_id = %job.id, error_type = "queue", "Failed to renew scan lease"),
+                        Ok(false) => warn!(event_name = "scan_job.lease_renewal.skipped", job_id = %job.id, outcome = "lease_lost", "Scan lease renewal skipped"),
+                        Err(error) => warn!(event_name = "scan_job.lease_renewal.failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to renew scan lease"),
                     }
                 }
             }
@@ -383,13 +436,14 @@ impl ScanExecutor {
         // must not leave the stats counting a completion/failure that the queue
         // records as Cancelled.
         let mut completed_duration: Option<u64> = None;
+        let mut outcome_error_code = "unknown";
         let mut failed = false;
 
         match scan_result {
             Ok(results) => {
-                info!(job_id = %job.id, "Scan completed successfully");
                 if let Err(error) = self.persist_results(&job, &results).await {
-                    error!(job_id = %job.id, error_type = "results_store", "Failed to persist scan results");
+                    outcome_error_code = error.observability_code();
+                    error!(event_name = "scan_job.result_persist_failed", job_id = %job.id, error_type = "results_store", error_code = error.observability_code(), "Failed to persist scan results");
                     job.mark_failed(error.to_string());
                     failed = true;
                     let _ = self.progress_tx.send(ProgressMessage::failed(
@@ -410,7 +464,7 @@ impl ScanExecutor {
                     if matches!(current.status, ScanStatus::Cancelled) {
                         cancelled = true;
                         job = current;
-                        info!(job_id = %job.id, "Scan finished after cancellation; preserving cancelled status");
+                        info!(event_name = "scan_job.cancelled", job_id = %job.id, outcome = "cancelled", "Scan finished after cancellation; preserving cancelled status");
                     } else {
                         if !failed {
                             job.mark_completed(results);
@@ -435,31 +489,33 @@ impl ScanExecutor {
                 }
             }
             Err(e) => {
+                outcome_error_code = e.observability_code();
                 let error_msg = e.to_string();
                 let mut cancelled = false;
                 if let Ok(Some(current)) = queue.get_job(&job.id).await {
                     if matches!(current.status, ScanStatus::Cancelled) {
                         cancelled = true;
                         job = current;
-                        info!(job_id = %job.id, "Scan failed after cancellation; preserving cancelled status");
+                        info!(event_name = "scan_job.cancelled", job_id = %job.id, outcome = "cancelled", "Scan failed after cancellation; preserving cancelled status");
                     } else {
                         match queue
                             .retry_or_dead_letter(&job, &error_msg, MAX_SCAN_ATTEMPTS)
                             .await
                         {
                             Ok(RetryDisposition::Requeued) => {
-                                info!(job_id = %job.id, attempt = job.attempts, max_attempts = MAX_SCAN_ATTEMPTS, outcome = "requeued", "Scan retry scheduled");
+                                info!(event_name = "scan_job.retry.scheduled", job_id = %job.id, attempt = job.attempts, max_attempts = MAX_SCAN_ATTEMPTS, error_code = outcome_error_code, outcome = "requeued", "Scan retry scheduled");
                                 let mut message = ProgressMessage::new(&job.id, 0, "retrying");
                                 message.details = Some(error_msg);
                                 let _ = self.progress_tx.send(message);
                                 return;
                             }
                             Ok(RetryDisposition::DeadLettered) => {
+                                error!(event_name = "scan_job.dead_lettered", job_id = %job.id, error_code = outcome_error_code, outcome = "failed", "Scan job exhausted retry attempts");
                                 job.mark_dead_letter(error_msg);
                                 failed = true;
                             }
-                            Err(_) => {
-                                error!(job_id = %job.id, error_type = "queue", "Failed to schedule scan retry");
+                            Err(error) => {
+                                error!(event_name = "scan_job.retry.schedule_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to schedule scan retry");
                                 job.mark_failed(error_msg);
                                 failed = true;
                             }
@@ -471,18 +527,19 @@ impl ScanExecutor {
                         .await
                     {
                         Ok(RetryDisposition::Requeued) => {
-                            info!(job_id = %job.id, attempt = job.attempts, max_attempts = MAX_SCAN_ATTEMPTS, outcome = "requeued", "Scan retry scheduled");
+                            info!(event_name = "scan_job.retry.scheduled", job_id = %job.id, attempt = job.attempts, max_attempts = MAX_SCAN_ATTEMPTS, error_code = outcome_error_code, outcome = "requeued", "Scan retry scheduled");
                             let mut message = ProgressMessage::new(&job.id, 0, "retrying");
                             message.details = Some(error_msg);
                             let _ = self.progress_tx.send(message);
                             return;
                         }
                         Ok(RetryDisposition::DeadLettered) => {
+                            error!(event_name = "scan_job.dead_lettered", job_id = %job.id, error_code = outcome_error_code, outcome = "failed", "Scan job exhausted retry attempts");
                             job.mark_dead_letter(error_msg);
                             failed = true;
                         }
-                        Err(_) => {
-                            error!(job_id = %job.id, error_type = "queue", "Failed to schedule scan retry");
+                        Err(error) => {
+                            error!(event_name = "scan_job.retry.schedule_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to schedule scan retry");
                             job.mark_failed(error_msg);
                             failed = true;
                         }
@@ -528,8 +585,8 @@ impl ScanExecutor {
                     "Preserving cancelled job status"
                 );
             }
-            Err(_) => {
-                error!(job_id = %job.id, error_type = "queue", "Failed to persist final scan status");
+            Err(error) => {
+                error!(event_name = "scan_job.final_status_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist final scan status");
             }
         }
 
@@ -537,9 +594,9 @@ impl ScanExecutor {
         if let (Some(webhook_url), Some(secret)) =
             (&job.webhook_url, self.webhook_signing_secret.as_deref())
             && !matches!(job.status, ScanStatus::Cancelled)
-            && Self::send_webhook(webhook_url, &job, secret).await.is_err()
+            && let Err(error) = Self::send_webhook(webhook_url, &job, secret).await
         {
-            warn!(job_id = %job.id, error_type = "webhook", "Failed to deliver scan webhook");
+            warn!(event_name = "scan_job.webhook.failed", job_id = %job.id, error_type = "webhook", error_code = error.observability_code(), "Failed to deliver scan webhook");
         }
 
         let duration_ms = job
@@ -550,10 +607,11 @@ impl ScanExecutor {
             })
             .unwrap_or_default();
         match &job.status {
-            ScanStatus::Failed => error!(
+            ScanStatus::Failed => info!(
                 event_name = "scan_job.finished",
                 job_id = %job.id,
                 duration_ms,
+                error_code = outcome_error_code,
                 outcome = "failed",
                 "Scan job finished"
             ),
@@ -639,15 +697,12 @@ impl ScanExecutor {
         let _ = progress_tx.send(ProgressMessage::new(&job.id, progress, stage));
         let mut snapshot = job.clone();
         snapshot.update_progress(progress, stage.to_string());
-        if queue
-            .update_job_preserving_cancelled(&snapshot)
-            .await
-            .is_err()
-        {
+        if let Err(error) = queue.update_job_preserving_cancelled(&snapshot).await {
             error!(
                 event_name = "scan_job.progress.persist_failed",
                 job_id = %job.id,
                 error_type = "queue",
+                error_code = error.observability_code(),
                 "Failed to persist running progress"
             );
         }
@@ -690,11 +745,12 @@ impl ScanExecutor {
         // matching the previous fire-and-forget behaviour.
         match queue.update_job_preserving_cancelled(job).await {
             Ok(updated) => updated,
-            Err(_) => {
+            Err(error) => {
                 error!(
                     event_name = "scan_job.progress.persist_failed",
                     job_id = %job.id,
                     error_type = "queue",
+                    error_code = error.observability_code(),
                     "Failed to persist scan progress"
                 );
                 true
@@ -810,7 +866,10 @@ impl ScanExecutor {
 
     /// Shutdown the executor gracefully
     pub async fn shutdown(&self) -> Result<()> {
-        info!("Initiating executor shutdown");
+        info!(
+            event_name = "scan_executor.shutdown_requested",
+            "Initiating executor shutdown"
+        );
         self.shutdown_tx
             .send(true)
             .map_err(|e| TlsError::Other(format!("Failed to send shutdown signal: {e}")))?;
