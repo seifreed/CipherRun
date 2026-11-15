@@ -103,11 +103,26 @@ impl ScanExecutor {
             "Scan executor started"
         );
 
-        let shutdown_rx = self.shutdown_rx.clone();
+        let mut shutdown_rx = self.shutdown_rx.clone();
+        let mut active_tasks = tokio::task::JoinSet::new();
 
         loop {
             // Check for shutdown signal
             if *shutdown_rx.borrow() {
+                info!(
+                    event_name = "scan_executor.draining",
+                    active_jobs = active_tasks.len(),
+                    "Waiting for active scan jobs to finish"
+                );
+                while let Some(result) = active_tasks.join_next().await {
+                    if result.is_err() {
+                        error!(
+                            event_name = "scan_job.task.join_failed",
+                            error_type = "join_error",
+                            "Scan job task failed"
+                        );
+                    }
+                }
                 info!(
                     event_name = "scan_executor.shutdown",
                     "Scan executor stopped"
@@ -118,21 +133,60 @@ impl ScanExecutor {
             // Try to dequeue a job FIRST, before acquiring a permit.
             // This avoids holding a permit while no work is available,
             // which would starve real jobs under high load.
-            let mut job = match self.job_queue.dequeue().await {
+            let result = tokio::select! {
+                result = self.job_queue.dequeue() => result,
+                _ = shutdown_rx.changed() => continue,
+                result = active_tasks.join_next(), if !active_tasks.is_empty() => {
+                    if matches!(result, Some(Err(_))) {
+                        error!(
+                            event_name = "scan_job.task.join_failed",
+                            error_type = "join_error",
+                            "Scan job task failed"
+                        );
+                    }
+                    continue;
+                }
+            };
+            let mut job = match result {
                 Ok(Some(job)) => job,
                 Ok(None) => {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::select! {
+                        _ = shutdown_rx.changed() => {},
+                        _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+                        result = active_tasks.join_next(), if !active_tasks.is_empty() => {
+                            if matches!(result, Some(Err(_))) {
+                                error!(
+                                    event_name = "scan_job.task.join_failed",
+                                    error_type = "join_error",
+                                    "Scan job task failed"
+                                );
+                            }
+                        }
+                    }
                     continue;
                 }
                 Err(_) => {
                     error!(event_name = "scan_job.dequeue_failed", error_type = "queue");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::select! {
+                        _ = shutdown_rx.changed() => {},
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+                    }
                     continue;
                 }
             };
 
             // Now acquire a permit to limit concurrency
-            let permit = match Arc::clone(&self.semaphore).acquire_owned().await {
+            let permit_result = tokio::select! {
+                permit = Arc::clone(&self.semaphore).acquire_owned() => permit,
+                _ = shutdown_rx.changed() => {
+                    job.mark_queued();
+                    if self.job_queue.enqueue(job).await.is_err() {
+                        error!(event_name = "scan_job.requeue_failed", error_type = "queue");
+                    }
+                    continue;
+                }
+            };
+            let permit = match permit_result {
                 Ok(p) => p,
                 Err(_) => {
                     // Semaphore closed — re-enqueue the job so it's not lost.
@@ -150,7 +204,7 @@ impl ScanExecutor {
             let executor = Arc::clone(&self);
             let queue = Arc::clone(&self.job_queue);
 
-            tokio::spawn(async move {
+            active_tasks.spawn(async move {
                 executor.execute_scan(queue, job).await;
                 drop(permit);
             });
