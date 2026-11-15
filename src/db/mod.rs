@@ -78,6 +78,12 @@ impl CipherRunDatabase {
         // Run migrations
         run_migrations(&pool).await?;
 
+        tracing::info!(
+            event_name = "database.initialized",
+            database_backend = ?pool.db_type(),
+            "Database connection and migrations are ready"
+        );
+
         let scan_repo = ScanRepositoryImpl::new(pool.clone());
 
         Ok(Self { pool, scan_repo })
@@ -134,12 +140,13 @@ impl CipherRunDatabase {
         // (e.g. "0 vulnerabilities"). The ON DELETE CASCADE on every child table
         // means deleting the scan row removes any rows already written.
         if let Err(error) = self.store_scan_children(scan_id, results).await {
-            if let Err(cleanup) = self.scan_repo.delete_scan(scan_id).await {
+            if self.scan_repo.delete_scan(scan_id).await.is_err() {
                 tracing::error!(
+                    event_name = "database.scan.rollback.failed",
                     scan_id,
-                    "failed to roll back partially-written scan after store error ({}): {}",
-                    error,
-                    cleanup
+                    error_type = "scan_child_persistence",
+                    cleanup_error_type = "scan_delete",
+                    "Failed to remove partially stored scan after persistence failure"
                 );
             }
             return Err(error);
@@ -174,6 +181,34 @@ impl CipherRunDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     async fn test_db() -> CipherRunDatabase {
         let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
@@ -189,6 +224,30 @@ mod tests {
         // Verify database was created
         assert!(matches!(db.pool.db_type(), DatabaseType::Sqlite));
 
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn database_initialization_logs_backend_without_config_path() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let directory = tempfile::tempdir().expect("test database directory should exist");
+        let db_path = directory.path().join("db.sqlite");
+        let config = DatabaseConfig::sqlite(db_path.clone());
+
+        let db = CipherRunDatabase::new(&config)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("database should initialize");
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("database.initialized"));
+        assert!(logs.contains("database_backend=Sqlite"));
+        assert!(!logs.contains(db_path.to_str().unwrap()));
         db.close().await;
     }
 

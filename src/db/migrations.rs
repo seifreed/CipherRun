@@ -257,7 +257,11 @@ async fn revert_sqlite_migration_manual(
             crate::TlsError::DatabaseError(format!("Failed to remove migration record: {}", e))
         })?;
 
-    tracing::info!("Reverted migration: {} (version {})", description, version);
+    tracing::info!(
+        event_name = "database.migration.reverted",
+        migration_version = version,
+        "Database migration reverted"
+    );
 
     Ok(())
 }

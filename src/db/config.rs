@@ -134,9 +134,9 @@ impl DatabaseConfig {
                 // Consider using environment variables or secret managers instead
                 if !password.is_empty() {
                     tracing::warn!(
-                        "Database password is embedded in connection string. \
-                         Consider using PostgreSQL .pgpass file or environment variables \
-                         for more secure credential management."
+                        event_name = "database.config.password_in_connection_string",
+                        database_backend = "postgres",
+                        "Database password is embedded in the connection string"
                     );
                 }
 
@@ -272,6 +272,33 @@ impl Default for RetentionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
@@ -298,6 +325,35 @@ mod tests {
             .connection_string()
             .expect("test assertion should succeed");
         assert_eq!(conn_str, "postgres://user:pass@localhost:5432/testdb");
+    }
+
+    #[test]
+    fn connection_string_warning_does_not_log_password() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let password = "sensitive-database-password";
+        let config = DatabaseConfig::postgres(
+            "localhost".to_string(),
+            5432,
+            "testdb".to_string(),
+            "user".to_string(),
+            password.to_string(),
+        );
+
+        let connection_string = tracing::subscriber::with_default(subscriber, || {
+            config
+                .connection_string()
+                .expect("connection string should build")
+        });
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+
+        assert!(connection_string.contains(password));
+        assert!(logs.contains("database.config.password_in_connection_string"));
+        assert!(!logs.contains(password));
     }
 
     #[test]
