@@ -272,35 +272,57 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
     } else {
         BoxMakeWriter::new(std::io::stderr)
     };
+    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
 
     #[cfg(feature = "otel")]
     {
         use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_writer(writer)
-            .with_filter(filter);
+        let fmt_layer = if json {
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer)
+                .with_filter(filter)
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer)
+                .with_filter(filter)
+                .boxed()
+        };
         let otel_layer = cipherrun::telemetry::layer()?;
-        tracing_subscriber::registry()
+        let result = tracing_subscriber::registry()
             .with(fmt_layer)
             .with(otel_layer)
-            .try_init()
-            .map_err(|e| {
-                cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
-            })?;
+            .try_init();
+        result.map_err(|e| {
+            cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
+        })?;
     }
 
     #[cfg(not(feature = "otel"))]
     {
-        let subscriber = FmtSubscriber::builder()
-            .with_env_filter(filter)
-            .with_writer(writer)
-            .finish();
-        tracing::subscriber::set_global_default(subscriber).map_err(|e| {
+        let result = if json {
+            FmtSubscriber::builder()
+                .json()
+                .with_env_filter(filter)
+                .with_writer(writer)
+                .try_init()
+        } else {
+            FmtSubscriber::builder()
+                .with_env_filter(filter)
+                .with_writer(writer)
+                .try_init()
+        };
+        result.map_err(|e| {
             cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
         })?;
     }
     Ok(())
+}
+
+fn json_logs_enabled(format: Option<&str>) -> bool {
+    format.is_some_and(|value| value.eq_ignore_ascii_case("json"))
 }
 
 fn resolve_log_filter(rust_log: Option<&str>, verbose: u8) -> EnvFilter {
@@ -364,7 +386,7 @@ impl std::io::Write for SharedFileGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{color_output_enabled, resolve_log_filter};
+    use super::{color_output_enabled, json_logs_enabled, resolve_log_filter};
 
     #[test]
     fn test_resolve_log_level_defaults_to_info() {
@@ -400,6 +422,14 @@ mod tests {
     fn test_resolve_log_filter_supports_module_directives() {
         let filter = resolve_log_filter(Some("warn,cipherrun::api=debug"), 0);
         assert!(filter.to_string().contains("cipherrun::api=debug"));
+    }
+
+    #[test]
+    fn test_json_log_format_is_opt_in() {
+        assert!(json_logs_enabled(Some("json")));
+        assert!(json_logs_enabled(Some("JSON")));
+        assert!(!json_logs_enabled(None));
+        assert!(!json_logs_enabled(Some("text")));
     }
 
     #[test]

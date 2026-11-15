@@ -29,12 +29,13 @@ indexed source files was manually inspected.
 - `2970340`: downstream API work runs inside an `http.request` span with request ID, method and path; 30 middleware tests passed.
 - `1ff58fd`: scan targets and alert message bodies removed from operational logs; 56 alert tests passed.
 - `1fd412f`: WebSocket text and redirect locations removed from logs; focused tests passed (1 WebSocket and 12 HTTP tester tests).
+- `b1e75d5`: updated vulnerable dependency families and patched SQLx SQLite to `libsqlite3-sys` 0.39.1; DB integration (19), library (3039), all-feature check, package verification passed; `cargo audit` reported zero vulnerabilities.
 
 ## Current known limitations
 
 - The audit has not yet classified every event or every executable entry point.
 - A local SQLx compatibility patch is now part of the workspace and needs maintenance until upstream widens its dependency constraint.
-- The default formatter is human-readable text, not JSON. Fields are structured at the event API but output configuration does not offer JSON selection.
+- `CIPHERRUN_LOG_FORMAT=json` selects newline-delimited JSON; text remains the default. A worker error was exercised and emitted valid JSON with UTC timestamp, level, target and fields.
 - API request IDs are generated locally. Incoming W3C `traceparent` is not extracted; distributed trace continuity is available only where an OTLP-enabled trace already exists.
 - The local file writer appends but does not rotate or enforce retention. Logging is synchronous and can block on disk I/O.
 - The worker has no dedicated regression test asserting emitted error events or initialization behavior.

@@ -251,6 +251,8 @@ and `-vv` enables `trace`. `RUST_LOG` takes precedence and supports standard
 module directives, for example `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
+Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
+default. This setting applies to both the CLI and standalone worker.
 
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and path around downstream request handling. The response's
