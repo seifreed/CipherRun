@@ -15,3 +15,6 @@ otel = ["cipherrun/otel"]
 cipherrun = { version = "0.4.0", path = "../.." }
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
+
+[dev-dependencies]
+serde_json = "1.0"
