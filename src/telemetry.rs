@@ -2,7 +2,7 @@
 
 use opentelemetry::{
     global,
-    propagation::{Extractor, Injector, TextMapPropagator},
+    propagation::{Extractor, TextMapPropagator},
     trace::{TraceContextExt, TracerProvider},
 };
 use opentelemetry_otlp::SpanExporter;
