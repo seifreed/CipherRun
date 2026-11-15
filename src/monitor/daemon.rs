@@ -56,7 +56,11 @@ impl MonitorDaemon {
         // The file format has no per-domain thresholds, so apply the configured
         // ones; otherwise the [thresholds] config section would be ignored.
         inventory.apply_default_thresholds(&(&self.config.monitor.thresholds).into());
-        tracing::info!("Loaded {} domains from {}", inventory.len(), path.display());
+        tracing::info!(
+            event_name = "monitor.inventory.loaded",
+            domains = inventory.len(),
+            "Monitoring inventory loaded"
+        );
         Ok(())
     }
 
@@ -122,7 +126,10 @@ impl MonitorDaemon {
 
     /// Start the monitoring daemon
     pub async fn start(&self) -> Result<()> {
-        tracing::info!("Starting CipherRun monitoring daemon");
+        tracing::info!(
+            event_name = "monitor.started",
+            "Certificate monitoring daemon started"
+        );
 
         self.running.store(true, Ordering::SeqCst);
 
@@ -134,15 +141,12 @@ impl MonitorDaemon {
         let enabled_count = inventory.enabled_domains().len();
         drop(inventory);
 
-        tracing::info!("Monitoring {} enabled domains", enabled_count);
         tracing::info!(
-            "Alert channels: {}",
-            self.config.enabled_channels().join(", ")
+            event_name = "monitor.inventory.ready",
+            domains = enabled_count,
+            "Monitoring inventory ready"
         );
-        tracing::info!(
-            "Max concurrent scans: {}",
-            self.config.monitor.max_concurrent_scans
-        );
+        tracing::info!(alert_channels = ?self.config.enabled_channels(), concurrency = self.config.monitor.max_concurrent_scans, "Monitoring configuration loaded");
 
         // Main monitoring loop
         let mut tick_interval = interval(crate::constants::MONITOR_POLL_INTERVAL);
@@ -150,23 +154,30 @@ impl MonitorDaemon {
         while self.running.load(Ordering::SeqCst) {
             tick_interval.tick().await;
 
-            if let Err(e) = self.run_scan_cycle().await {
-                tracing::error!("Error in scan cycle: {}", e);
+            if self.run_scan_cycle().await.is_err() {
+                tracing::error!(error_type = "scan_cycle", "Monitoring scan cycle failed");
             }
         }
 
-        tracing::info!("Monitoring daemon stopped");
+        tracing::info!(
+            event_name = "monitor.stopped",
+            "Certificate monitoring daemon stopped"
+        );
         Ok(())
     }
 
     /// Stop the daemon
     pub fn stop(&self) {
-        tracing::info!("Stopping monitoring daemon...");
+        tracing::info!(
+            event_name = "monitor.shutdown_requested",
+            "Monitoring shutdown requested"
+        );
         self.running.store(false, Ordering::SeqCst);
     }
 
     /// Run a single scan cycle
     async fn run_scan_cycle(&self) -> Result<()> {
+        let cycle_started = std::time::Instant::now();
         let inventory = self.inventory.lock().await;
         let enabled_domains = inventory.enabled_domains();
 
@@ -192,7 +203,11 @@ impl MonitorDaemon {
             return Ok(());
         }
 
-        tracing::info!("Scanning {} domains", due_count);
+        tracing::info!(
+            event_name = "monitor.scan_cycle.started",
+            domains = due_count,
+            "Monitoring scan cycle started"
+        );
 
         // Scan domains concurrently (limited by semaphore)
         // Acquire permits BEFORE spawning tasks to truly limit concurrency.
@@ -211,10 +226,7 @@ impl MonitorDaemon {
                 let _permit = match semaphore_clone.acquire().await {
                     Ok(permit) => permit,
                     Err(_) => {
-                        tracing::warn!(
-                            "Semaphore closed, skipping scan for {}",
-                            domain_clone.identifier()
-                        );
+                        tracing::warn!(error_type = "semaphore_closed", "Skipping monitoring scan");
                         return Ok(());
                     }
                 };
@@ -235,8 +247,8 @@ impl MonitorDaemon {
         for (domain, task) in tasks {
             match task.await {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => tracing::error!("Scan error: {}", e),
-                Err(e) => tracing::error!("Scan task panicked: {}", e),
+                Ok(Err(_)) => tracing::error!(error_type = "monitor_scan", "Domain scan failed"),
+                Err(_) => tracing::error!(error_type = "task_join", "Domain scan task failed"),
             }
 
             // Always clear in-progress and schedule next scan
@@ -244,6 +256,14 @@ impl MonitorDaemon {
             let mut scheduler = self.scheduler.lock().await;
             scheduler.mark_scan_completed(domain)?;
         }
+
+        tracing::info!(
+            event_name = "monitor.scan_cycle.completed",
+            domains = due_count,
+            duration_ms = u64::try_from(cycle_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "complete",
+            "Monitoring scan cycle completed"
+        );
 
         Ok(())
     }
@@ -257,21 +277,30 @@ impl MonitorDaemon {
     ) -> Result<()> {
         let identifier = domain.identifier();
 
-        tracing::debug!("Scanning {}", identifier);
+        tracing::debug!(
+            event_name = "monitor.domain_scan.started",
+            "Domain scan started"
+        );
 
         // Parse target
         let target = match Target::parse(&identifier).await {
             Ok(t) => t,
             Err(e) => {
-                tracing::error!("Failed to parse target {}: {}", identifier, e);
+                tracing::error!(
+                    error_type = "target_validation",
+                    "Monitoring target validation failed"
+                );
 
                 let alert = Alert::scan_failure(
                     identifier.clone(),
                     format!("Failed to parse target: {}", e),
                 );
 
-                if let Err(e) = alert_manager.send_alert(&alert).await {
-                    tracing::error!("Failed to send alert: {}", e);
+                if alert_manager.send_alert(&alert).await.is_err() {
+                    tracing::error!(
+                        error_type = "alert_delivery",
+                        "Failed to deliver monitoring alert"
+                    );
                 }
 
                 return Ok(());
@@ -284,7 +313,10 @@ impl MonitorDaemon {
         let current_cert = match parser.get_leaf_certificate().await {
             Ok(cert) => cert,
             Err(e) => {
-                tracing::error!("Failed to get certificate for {}: {}", identifier, e);
+                tracing::error!(
+                    error_type = "certificate_fetch",
+                    "Failed to fetch monitored certificate"
+                );
 
                 // Send scan failure alert if any monitoring threshold is enabled
                 if domain.alert_thresholds.on_change
@@ -298,8 +330,11 @@ impl MonitorDaemon {
                         format!("Failed to retrieve certificate: {}", e),
                     );
 
-                    if let Err(e) = alert_manager.send_alert(&alert).await {
-                        tracing::error!("Failed to send alert: {}", e);
+                    if alert_manager.send_alert(&alert).await.is_err() {
+                        tracing::error!(
+                            error_type = "alert_delivery",
+                            "Failed to deliver monitoring alert"
+                        );
                     }
                 }
 
@@ -321,7 +356,11 @@ impl MonitorDaemon {
             let changes = detector.detect_changes(&prev, &current_cert);
 
             if !changes.is_empty() {
-                tracing::info!("Detected {} changes for {}", changes.len(), identifier);
+                tracing::info!(
+                    event_name = "monitor.certificate_changes.detected",
+                    changes = changes.len(),
+                    "Certificate changes detected"
+                );
 
                 // Send change alert if configured
                 if domain.alert_thresholds.on_change {
@@ -335,8 +374,11 @@ impl MonitorDaemon {
 
                     let alert = Alert::certificate_change(identifier.clone(), changes, details);
 
-                    if let Err(e) = alert_manager.send_alert(&alert).await {
-                        tracing::error!("Failed to send change alert: {}", e);
+                    if alert_manager.send_alert(&alert).await.is_err() {
+                        tracing::error!(
+                            error_type = "alert_delivery",
+                            "Failed to deliver certificate change alert"
+                        );
                     }
                 }
             }
@@ -351,7 +393,10 @@ impl MonitorDaemon {
         )
         .await
         {
-            tracing::error!("Failed to check expiry warnings for {}: {}", identifier, e);
+            tracing::error!(
+                error_type = "expiry_check",
+                "Failed to check certificate expiry"
+            );
         }
 
         // Re-acquire lock to update inventory
@@ -360,7 +405,10 @@ impl MonitorDaemon {
             domain_mut.update_scan(Some(current_cert));
         }
 
-        tracing::debug!("Completed scan of {}", identifier);
+        tracing::debug!(
+            event_name = "monitor.domain_scan.completed",
+            "Domain scan completed"
+        );
 
         Ok(())
     }
@@ -376,9 +424,8 @@ impl MonitorDaemon {
             Some(dt) => dt,
             None => {
                 tracing::warn!(
-                    "Failed to parse certificate expiry date for {} (input was: {})",
-                    identifier,
-                    cert.not_after
+                    error_type = "certificate_expiry",
+                    "Failed to parse certificate expiry date"
                 );
                 // Alert on unparseable date if expiry warnings are enabled
                 if thresholds.expiry_1d
@@ -464,25 +511,33 @@ impl MonitorDaemon {
 
                 let mut sigterm = match signal(SignalKind::terminate()) {
                     Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!("Failed to setup SIGTERM handler: {}", e);
+                    Err(_) => {
+                        tracing::error!(
+                            error_type = "signal_handler",
+                            signal = "SIGTERM",
+                            "Failed to set up signal handler"
+                        );
                         return;
                     }
                 };
                 let mut sigint = match signal(SignalKind::interrupt()) {
                     Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!("Failed to setup SIGINT handler: {}", e);
+                    Err(_) => {
+                        tracing::error!(
+                            error_type = "signal_handler",
+                            signal = "SIGINT",
+                            "Failed to set up signal handler"
+                        );
                         return;
                     }
                 };
 
                 tokio::select! {
                     _ = sigterm.recv() => {
-                        tracing::info!("Received SIGTERM");
+                        tracing::info!(event_name = "monitor.signal.received", signal = "SIGTERM");
                     }
                     _ = sigint.recv() => {
-                        tracing::info!("Received SIGINT");
+                        tracing::info!(event_name = "monitor.signal.received", signal = "SIGINT");
                     }
                 }
 

@@ -519,8 +519,11 @@ impl AppState {
     pub async fn start_executor(self: Arc<Self>) -> Result<()> {
         let executor = self.executor.clone();
         tokio::spawn(async move {
-            if let Err(e) = executor.start().await {
-                tracing::error!("Executor error: {}", e);
+            if executor.start().await.is_err() {
+                tracing::error!(
+                    error_type = "executor",
+                    "Scan executor stopped unexpectedly"
+                );
             }
         });
 
@@ -534,10 +537,16 @@ impl AppState {
                 ticker.tick().await;
                 match job_queue.prune_expired().await {
                     Ok(removed) if removed > 0 => {
-                        tracing::info!("Removed {} expired scan jobs", removed);
+                        tracing::info!(
+                            event_name = "scan_jobs.pruned",
+                            removed,
+                            "Expired scan jobs pruned"
+                        );
                     }
                     Ok(_) => {}
-                    Err(error) => tracing::error!("Failed to prune expired scan jobs: {}", error),
+                    Err(_) => {
+                        tracing::error!(error_type = "queue", "Failed to prune expired scan jobs")
+                    }
                 }
             }
         });
