@@ -341,7 +341,7 @@ impl ScanExecutor {
                             error!(
                                 event_name = "scan_job.task.join_failed",
                                 error_type = "join_error",
-                                error_code = if error.is_panic() { "panic" } else { "other" },
+                                error_code = scan_task_join_error_code(&error),
                                 "Scan task failed while joining"
                             );
                             Err(TlsError::Other("Scan task join error".to_string()))
@@ -419,7 +419,15 @@ impl ScanExecutor {
                                     job.error.clone().unwrap_or_default(),
                                 ));
                             }
-                            _ => {
+                            Err(error) => {
+                                if error.is_panic() {
+                                    error!(
+                                        event_name = "scan_job.task.join_failed",
+                                        error_type = "join_error",
+                                        error_code = scan_task_join_error_code(&error),
+                                        "Scan task panicked while cancellation was being handled"
+                                    );
+                                }
                                 let _ = self
                                     .progress_tx
                                     .send(ProgressMessage::cancelled(&job.id, job.progress));
@@ -904,6 +912,10 @@ fn is_retryable_webhook_status(status: reqwest::StatusCode) -> bool {
         )
 }
 
+fn scan_task_join_error_code(error: &tokio::task::JoinError) -> &'static str {
+    if error.is_panic() { "panic" } else { "other" }
+}
+
 impl Clone for ScanExecutor {
     fn clone(&self) -> Self {
         Self {
@@ -932,6 +944,21 @@ mod tests {
         routing::post,
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn scan_task_join_errors_have_static_diagnostic_codes() {
+        let panic = tokio::spawn(async { panic!("test panic") })
+            .await
+            .expect_err("task should panic");
+        assert_eq!(scan_task_join_error_code(&panic), "panic");
+
+        let cancelled_task = tokio::spawn(std::future::pending::<()>());
+        cancelled_task.abort();
+        let cancelled = cancelled_task
+            .await
+            .expect_err("aborted task should be cancelled");
+        assert_eq!(scan_task_join_error_code(&cancelled), "other");
+    }
 
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
