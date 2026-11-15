@@ -645,11 +645,17 @@ impl AlertManager {
         let mut success_count = 0;
 
         for channel in &self.channels {
+            let started = std::time::Instant::now();
+            let channel_name = channel.channel_name();
             match channel.send_alert(alert).await {
                 Ok(_) => {
                     tracing::info!(
                         event_name = "monitor.alert.delivered",
+                        channel = channel_name,
                         alert_type = alert.alert_type.kind(),
+                        duration_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        outcome = "delivered",
                         "Alert sent"
                     );
                     success_count += 1;
@@ -657,9 +663,13 @@ impl AlertManager {
                 Err(error) => {
                     tracing::error!(
                         event_name = "monitor.alert.delivery.failed",
+                        channel = channel_name,
                         alert_type = alert.alert_type.kind(),
+                        duration_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         error_type = "alert_channel",
                         error_code = error.observability_code(),
+                        outcome = "failed",
                         "Failed to send alert"
                     );
                 }
@@ -852,6 +862,7 @@ mod tests {
 
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
+            .json()
             .without_time()
             .with_ansi(false)
             .with_max_level(tracing::Level::TRACE)
@@ -890,12 +901,39 @@ mod tests {
         .expect("test channel should accept the alert");
 
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        assert!(output.contains("monitor.alert.delivered"), "{output}");
-        assert!(output.contains("monitor.alert.delivery.failed"), "{output}");
-        assert!(output.contains("alert_type=\"scan_failure\""), "{output}");
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
         assert!(
-            output.contains("alert_type=\"validation_failure\""),
-            "{output}"
+            events.iter().any(|event| {
+                event["level"] == "INFO"
+                    && event["fields"]["event_name"] == "monitor.alert.delivered"
+                    && event["fields"]["channel"] == "test"
+                    && event["fields"]["duration_ms"].is_number()
+                    && event["fields"]["outcome"] == "delivered"
+                    && event["fields"]["alert_type"] == "scan_failure"
+            }),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event["level"] == "ERROR"
+                    && event["fields"]["event_name"] == "monitor.alert.delivery.failed"
+                    && event["fields"]["channel"] == "test"
+                    && event["fields"]["duration_ms"].is_number()
+                    && event["fields"]["outcome"] == "failed"
+                    && event["fields"]["alert_type"] == "scan_failure"
+                    && event["fields"]["error_code"].is_string()
+            }),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event["fields"]["event_name"] == "monitor.alert.delivered"
+                    && event["fields"]["alert_type"] == "validation_failure"
+            }),
+            "{events:?}"
         );
         assert!(!output.contains(sensitive), "{output}");
         assert!(!output.contains("Failed while parsing"), "{output}");
