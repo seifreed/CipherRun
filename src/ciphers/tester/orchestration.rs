@@ -27,8 +27,9 @@ impl CipherTester {
 
         if enetdown_count > 0 {
             tracing::info!(
-                "Completed cipher testing with {} ENETDOWN error(s) recovered via adaptive backoff",
-                enetdown_count
+                event_name = "cipher_test.network_errors_recovered",
+                recovered_errors = enetdown_count,
+                "Recovered network errors with adaptive backoff"
             );
         }
 
@@ -117,9 +118,10 @@ impl CipherTester {
     ) -> bool {
         if *retry_round >= max_retries {
             tracing::warn!(
-                "Max ENETDOWN retries ({}) reached, {} ciphers could not be tested",
+                event_name = "cipher_test.retry_exhausted",
                 max_retries,
-                retry_queue.len()
+                untested_cipher_count = retry_queue.len(),
+                "Cipher retries exhausted"
             );
             return false;
         }
@@ -127,10 +129,11 @@ impl CipherTester {
         let count = retry_queue.len();
         *cipher_queue = std::mem::take(retry_queue);
         tracing::info!(
-            "Retrying {} ciphers that failed with ENETDOWN (attempt {}/{})",
-            count,
-            retry_round,
-            max_retries
+            event_name = "cipher_test.retry_started",
+            cipher_count = count,
+            retry_round = *retry_round,
+            max_retries,
+            "Retrying ciphers after network errors"
         );
         tokio::time::sleep(std::time::Duration::from_secs(RETRY_BACKOFF_SECS)).await;
         true
@@ -178,11 +181,12 @@ impl CipherTester {
         }
 
         tracing::debug!(
-            "Testing {} compatible ciphers for {:?} with max {} concurrent connections (pool size: {})",
-            compatible_ciphers.len(),
-            protocol,
+            event_name = "cipher_test.batch_prepared",
+            protocol = ?protocol,
+            cipher_count = compatible_ciphers.len(),
             max_concurrent_tests,
-            self.connection_pool_size
+            connection_pool_size = self.connection_pool_size,
+            "Prepared cipher test batch"
         );
 
         let connection_pool = match self.target.socket_addrs().first().copied() {
@@ -195,7 +199,9 @@ impl CipherTester {
             Some(_) => None, // connection_pool_size is 0
             None => {
                 tracing::warn!(
-                    "No socket addresses available for target, connection pool disabled"
+                    event_name = "cipher_test.connection_pool.disabled",
+                    reason = "no_socket_addresses",
+                    "Connection pool disabled"
                 );
                 None
             }
@@ -292,7 +298,10 @@ impl CipherTester {
             let old_size = current_batch_size;
             if current_batch_size <= 1 {
                 // Already at minimum — can't reduce further, rely on retry_round limit
-                tracing::warn!("Batch size already at minimum (1), waiting for retry backoff");
+                tracing::warn!(
+                    event_name = "cipher_test.concurrency.minimum",
+                    "Concurrency is already at minimum; applying retry backoff"
+                );
             } else if batch_enetdown > current_batch_size / 2 {
                 current_batch_size = (current_batch_size / 3).max(1);
             } else {
@@ -307,24 +316,30 @@ impl CipherTester {
             let total_delay_ms = base_delay_ms + jitter;
 
             tracing::warn!(
-                "Detected {} ENETDOWN error(s), reducing concurrency from {} to {} with {}ms exponential backoff",
-                batch_enetdown,
-                old_size,
-                current_batch_size,
-                total_delay_ms
+                event_name = "cipher_test.concurrency.reduced",
+                network_error_count = batch_enetdown,
+                previous_concurrency = old_size,
+                concurrency = current_batch_size,
+                backoff_ms = total_delay_ms,
+                "Reduced concurrency after network errors"
             );
 
             tokio::time::sleep(std::time::Duration::from_millis(total_delay_ms)).await;
         } else if current_batch_size < max_concurrent_tests && batch_other_errors == 0 {
             current_batch_size = (current_batch_size + 1).min(max_concurrent_tests);
             tracing::debug!(
-                "Successful batch, increasing concurrency to {}",
-                current_batch_size
+                event_name = "cipher_test.concurrency.increased",
+                concurrency = current_batch_size,
+                "Increased concurrency after successful batch"
             );
         }
 
         if batch_other_errors > 0 {
-            tracing::debug!("Batch had {} other errors (ignored)", batch_other_errors);
+            tracing::debug!(
+                event_name = "cipher_test.batch.errors_ignored",
+                error_count = batch_other_errors,
+                "Batch contained errors that were not retried"
+            );
         }
 
         current_batch_size
@@ -365,9 +380,10 @@ impl CipherTester {
             .collect();
 
         tracing::debug!(
-            "Found {} supported ciphers for {:?}",
-            supported.len(),
-            protocol
+            event_name = "cipher_test.results_aggregated",
+            protocol = ?protocol,
+            supported_cipher_count = supported.len(),
+            "Aggregated cipher test results"
         );
 
         // Server-preference detection is a best-effort enhancement (cipher
@@ -375,11 +391,12 @@ impl CipherTester {
         // not abort the whole scan — fall back to "no detected ordering".
         let server_preference = match self.determine_server_preference(protocol, &supported).await {
             Ok(preference) => preference,
-            Err(error) => {
+            Err(_error) => {
                 tracing::debug!(
-                    "Server cipher preference undetermined for {:?}: {}",
-                    protocol,
-                    error
+                    event_name = "cipher_test.server_preference.unavailable",
+                    protocol = ?protocol,
+                    error_type = "server_preference_probe",
+                    "Could not determine server cipher preference"
                 );
                 Vec::new()
             }
