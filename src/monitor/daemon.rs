@@ -154,8 +154,14 @@ impl MonitorDaemon {
         while self.running.load(Ordering::SeqCst) {
             tick_interval.tick().await;
 
-            if self.run_scan_cycle().await.is_err() {
-                tracing::error!(error_type = "scan_cycle", "Monitoring scan cycle failed");
+            if let Err(error) = self.run_scan_cycle().await {
+                tracing::error!(
+                    event_name = "monitor.scan_cycle.failed",
+                    error_type = "TlsError",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Monitoring scan cycle failed"
+                );
             }
         }
 
@@ -226,7 +232,12 @@ impl MonitorDaemon {
                 let _permit = match semaphore_clone.acquire().await {
                     Ok(permit) => permit,
                     Err(_) => {
-                        tracing::warn!(error_type = "semaphore_closed", "Skipping monitoring scan");
+                        tracing::warn!(
+                            event_name = "monitor.scan.skipped",
+                            error_type = "semaphore_closed",
+                            outcome = "skipped",
+                            "Skipping monitoring scan"
+                        );
                         return Ok(());
                     }
                 };
@@ -247,8 +258,26 @@ impl MonitorDaemon {
         for (domain, task) in tasks {
             match task.await {
                 Ok(Ok(())) => {}
-                Ok(Err(_)) => tracing::error!(error_type = "monitor_scan", "Domain scan failed"),
-                Err(_) => tracing::error!(error_type = "task_join", "Domain scan task failed"),
+                Ok(Err(error)) => tracing::error!(
+                    event_name = "monitor.domain_scan.failed",
+                    error_type = "TlsError",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Domain scan failed"
+                ),
+                Err(error) => tracing::error!(
+                    event_name = "monitor.domain_scan.task_failed",
+                    error_type = "JoinError",
+                    error_code = if error.is_cancelled() {
+                        "cancelled"
+                    } else if error.is_panic() {
+                        "panic"
+                    } else {
+                        "other"
+                    },
+                    outcome = "failed",
+                    "Domain scan task failed"
+                ),
             }
 
             // Always clear in-progress and schedule next scan
@@ -287,7 +316,10 @@ impl MonitorDaemon {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!(
+                    event_name = "monitor.target_validation.failed",
                     error_type = "target_validation",
+                    error_code = e.observability_code(),
+                    outcome = "failed",
                     "Monitoring target validation failed"
                 );
 
@@ -296,12 +328,8 @@ impl MonitorDaemon {
                     format!("Failed to parse target: {}", e),
                 );
 
-                if alert_manager.send_alert(&alert).await.is_err() {
-                    tracing::error!(
-                        error_type = "alert_delivery",
-                        "Failed to deliver monitoring alert"
-                    );
-                }
+                // AlertManager logs per-channel failures; don't duplicate them here.
+                let _ = alert_manager.send_alert(&alert).await;
 
                 return Ok(());
             }
@@ -314,7 +342,10 @@ impl MonitorDaemon {
             Ok(cert) => cert,
             Err(e) => {
                 tracing::error!(
-                    error_type = "certificate_fetch",
+                    event_name = "monitor.certificate_fetch.failed",
+                    error_type = "TlsError",
+                    error_code = e.observability_code(),
+                    outcome = "failed",
                     "Failed to fetch monitored certificate"
                 );
 
@@ -330,12 +361,7 @@ impl MonitorDaemon {
                         format!("Failed to retrieve certificate: {}", e),
                     );
 
-                    if alert_manager.send_alert(&alert).await.is_err() {
-                        tracing::error!(
-                            error_type = "alert_delivery",
-                            "Failed to deliver monitoring alert"
-                        );
-                    }
+                    let _ = alert_manager.send_alert(&alert).await;
                 }
 
                 return Ok(());
@@ -374,12 +400,7 @@ impl MonitorDaemon {
 
                     let alert = Alert::certificate_change(identifier.clone(), changes, details);
 
-                    if alert_manager.send_alert(&alert).await.is_err() {
-                        tracing::error!(
-                            error_type = "alert_delivery",
-                            "Failed to deliver certificate change alert"
-                        );
-                    }
+                    let _ = alert_manager.send_alert(&alert).await;
                 }
             }
         }
@@ -797,6 +818,71 @@ mod tests {
             .expect("test assertion should succeed");
 
         daemon.run_scan_cycle().await.expect("scan cycle ok");
+    }
+
+    #[test]
+    fn failed_monitor_scan_logs_safe_error_codes() {
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let domain = MonitoredDomain::new("bad:host:secret".to_string(), 443);
+        let inventory = Arc::new(Mutex::new(CertificateInventory::new()));
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(FailingChannel));
+        let alert_manager = Arc::new(alert_manager);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+
+        tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(MonitorDaemon::scan_domain_static(
+                &domain,
+                inventory,
+                alert_manager,
+                Arc::new(ChangeDetector::new()),
+            ))
+        })
+        .expect("invalid targets are reported without failing the daemon");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "monitor.target_validation.failed"
+                && event["fields"]["error_type"] == "target_validation"
+                && event["fields"]["error_code"].is_string()
+                && event["fields"]["outcome"] == "failed"
+        }));
+        assert!(!output.contains("bad:host:secret"));
+        assert!(!output.contains("channel failed"));
     }
 
     #[tokio::test]

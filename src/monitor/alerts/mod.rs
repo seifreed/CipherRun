@@ -643,11 +643,12 @@ impl AlertManager {
                     );
                     success_count += 1;
                 }
-                Err(_) => {
+                Err(error) => {
                     tracing::error!(
                         event_name = "monitor.alert.delivery.failed",
                         alert_type = ?alert.alert_type,
                         error_type = "alert_channel",
+                        error_code = error.observability_code(),
                         "Failed to send alert"
                     );
                 }
