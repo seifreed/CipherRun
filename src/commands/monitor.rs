@@ -44,10 +44,7 @@ impl MonitorCommand {
         } else {
             for (channel_name, result) in results {
                 let status = if result.is_ok() { "✓" } else { "✗" };
-                let message = result
-                    .as_ref()
-                    .map(|_| "Success".to_string())
-                    .unwrap_or_else(|e| format!("Failed: {}", e));
+                let message = alert_test_message(&result);
                 println!("  {} {} - {}", status, channel_name, message);
             }
         }
@@ -118,6 +115,13 @@ impl MonitorCommand {
     }
 }
 
+fn alert_test_message(result: &Result<()>) -> String {
+    match result {
+        Ok(()) => "Success".to_string(),
+        Err(error) => format!("Failed (error_code={})", error.observability_code()),
+    }
+}
+
 #[async_trait]
 impl Command for MonitorCommand {
     async fn execute(&self) -> Result<CommandExit> {
@@ -147,6 +151,20 @@ mod tests {
     fn test_monitor_command_name() {
         let cmd = MonitorCommand::new(Args::default());
         assert_eq!(cmd.name(), "MonitorCommand");
+    }
+
+    #[test]
+    fn alert_test_message_does_not_expose_remote_error_body() {
+        let error = crate::TlsError::HttpError {
+            status: 503,
+            details: "token=do-not-print\ninjected=true".to_string(),
+        };
+
+        let message = alert_test_message(&Err(error));
+
+        assert_eq!(message, "Failed (error_code=http_error)");
+        assert!(!message.contains("do-not-print"));
+        assert!(!message.contains("injected=true"));
     }
 
     #[tokio::test]
