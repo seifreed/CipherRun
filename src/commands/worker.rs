@@ -65,6 +65,7 @@ pub async fn run_worker(args: &Args) -> Result<()> {
 
     if api_config.local_executor {
         warn!(
+            event_name = "worker.local_executor.enabled",
             "worker started with local_executor=true; disable it on the API server only when external workers should own all queue execution"
         );
     }
