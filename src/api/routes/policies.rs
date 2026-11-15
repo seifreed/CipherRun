@@ -57,6 +57,16 @@ fn authorize_policy(policy_path: &std::path::Path, auth: &AuthExtension) -> Resu
     }
 }
 
+fn audit_policy_transition(event_name: &'static str, auth: &AuthExtension, enabled: bool) {
+    tracing::info!(
+        event_name,
+        actor_permission = ?auth.permission,
+        tenant_scoped = auth.tenant_id.is_some(),
+        enabled,
+        "API policy configuration changed"
+    );
+}
+
 fn policy_id_from_request_name(name: &str) -> Result<String, ApiError> {
     if name.trim().is_empty() {
         return Err(ApiError::BadRequest(
@@ -145,6 +155,15 @@ pub async fn create_policy(
     } else {
         StatusCode::CREATED
     };
+    audit_policy_transition(
+        if existed {
+            "security.policy.updated"
+        } else {
+            "security.policy.created"
+        },
+        &auth,
+        request.enabled,
+    );
 
     Ok((
         status,
@@ -282,10 +301,36 @@ mod tests {
     use crate::api::state::{ApiStats, AppState};
     use axum::extract::{Path, State};
     use axum::{Extension, Json};
+    use std::io::Write;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
     use tokio::sync::RwLock;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn build_state(policy_dir: PathBuf) -> Arc<AppState> {
         let config = Arc::new(ApiConfig::default());
@@ -352,6 +397,35 @@ protocols:
 
     fn admin_auth() -> Extension<AuthExtension> {
         auth_for("admin-principal", Permission::Admin)
+    }
+
+    #[test]
+    fn policy_audit_events_exclude_policy_and_owner_identifiers() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let auth = AuthExtension {
+            permission: Permission::Admin,
+            key_id: "sensitive-key-id".to_string(),
+            principal_id: "sensitive-principal-id".to_string(),
+            tenant_id: Some("sensitive-tenant-id".to_string()),
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            audit_policy_transition("security.policy.created", &auth, true);
+            audit_policy_transition("security.policy.updated", &auth, false);
+        });
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("security.policy.created"));
+        assert!(logs.contains("security.policy.updated"));
+        assert!(logs.contains("tenant_scoped=true"));
+        assert!(!logs.contains("sensitive-key-id"));
+        assert!(!logs.contains("sensitive-principal-id"));
+        assert!(!logs.contains("sensitive-tenant-id"));
     }
 
     #[tokio::test]
