@@ -203,6 +203,14 @@ impl PerKeyRateLimiter {
         let cutoff = now - std::time::Duration::from_secs(MAX_AGE_SECS);
 
         let Ok(mut index) = self.access_index.write() else {
+            tracing::warn!(
+                event_name = "api.rate_limit.cleanup_failed",
+                operation = "cleanup",
+                error_type = "lock_poisoned",
+                error_code = "access_index_unavailable",
+                outcome = "skipped",
+                "Rate limit entry cleanup skipped"
+            );
             return;
         };
 
@@ -547,6 +555,31 @@ mod tests {
         assert!(!logs.contains("secret-key-id"));
         assert!(!logs.contains("secret-principal-id"));
         assert!(!logs.contains("secret-tenant-id"));
+    }
+
+    #[test]
+    fn cleanup_logs_poisoned_index_without_sensitive_context() {
+        let limiter = PerKeyRateLimiter::new(100);
+        let index = limiter.access_index.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = index.write().unwrap();
+            panic!("test-only lock poison");
+        })
+        .join();
+
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || limiter.cleanup());
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("api.rate_limit.cleanup_failed"), "{output}");
+        assert!(output.contains("access_index_unavailable"), "{output}");
+        assert!(!output.contains("test-only lock poison"), "{output}");
     }
 
     #[test]
