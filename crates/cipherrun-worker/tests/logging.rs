@@ -36,3 +36,29 @@ fn worker_parse_failure_reports_safe_code_without_reflecting_arguments() {
     assert!(stderr.contains("error_code=configuration_error"));
     assert!(!stderr.contains("secret-do-not-log"));
 }
+
+#[test]
+fn worker_continues_with_stderr_when_logfile_cannot_be_opened() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun-worker"))
+        .args(["--worker", "--logfile", "."])
+        .env("RUST_LOG", "info")
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .output()
+        .expect("worker process should start");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("logs should be UTF-8");
+    let events = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["level"] == "WARN"
+            && event["fields"]["event_name"] == "logging.file_destination.failed"
+            && event["fields"]["error_code"] == "filesystem_error"
+            && event["fields"]["outcome"] == "stderr_only"
+    }));
+    assert!(events.iter().any(|event| {
+        event["level"] == "ERROR" && event["fields"]["event_name"] == "worker.failed"
+    }));
+}

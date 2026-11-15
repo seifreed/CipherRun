@@ -14,17 +14,20 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
     );
-    let file = args
-        .output
-        .logfile
-        .as_ref()
-        .map(|path| rolling_log_file(path))
-        .transpose()?;
+    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
+    let file = args.output.logfile.as_ref().and_then(|path| {
+        rolling_log_file(path).map_or_else(
+            |_| {
+                report_log_file_fallback(json);
+                None
+            },
+            Some,
+        )
+    });
     let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)
         .finish(LogWriter { file });
     let dropped_log_lines = writer.error_counter();
-    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
 
     #[cfg(feature = "otel")]
     let tracer_provider = {
@@ -237,6 +240,33 @@ fn report_dropped_log_lines(dropped_lines: usize, json: bool) {
     }
 }
 
+fn report_log_file_fallback(json: bool) {
+    let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+    let line = format_log_file_fallback_event(json, &timestamp);
+    let _ = writeln!(io::stderr().lock(), "{line}");
+}
+
+fn format_log_file_fallback_event(json: bool, timestamp: &str) -> String {
+    if json {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "level": "WARN",
+            "fields": {
+                "event_name": "logging.file_destination.failed",
+                "operation": "open_log_file",
+                "error_type": "file_destination",
+                "error_code": "filesystem_error",
+                "outcome": "stderr_only",
+                "message": "Log file unavailable; continuing with stderr"
+            },
+            "target": "cipherrun::logging"
+        })
+        .to_string()
+    } else {
+        "WARN logging.file_destination.failed operation=open_log_file error_type=file_destination error_code=filesystem_error outcome=stderr_only Log file unavailable; continuing with stderr".to_string()
+    }
+}
+
 fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -> String {
     if json {
         serde_json::json!({
@@ -260,8 +290,8 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 #[cfg(test)]
 mod tests {
     use super::{
-        LogWriter, format_dropped_log_event, json_logs_enabled, monitor_dropped_log_lines,
-        resolve_log_filter, rolling_log_file, write_to_destinations,
+        LogWriter, format_dropped_log_event, format_log_file_fallback_event, json_logs_enabled,
+        monitor_dropped_log_lines, resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -414,6 +444,20 @@ mod tests {
         assert_eq!(event["fields"]["event_name"], "logging.events_dropped");
         assert_eq!(event["fields"]["dropped_lines"], 3);
         assert_eq!(event["timestamp"], "2026-11-15T12:00:00.000000Z");
+    }
+
+    #[test]
+    fn failed_file_destination_uses_safe_json_fallback_event() {
+        let serialized = format_log_file_fallback_event(true, "2026-11-15T12:00:00.000000Z");
+        let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "logging.file_destination.failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "filesystem_error");
+        assert_eq!(event["fields"]["outcome"], "stderr_only");
+        assert!(!serialized.contains("/private/path"));
     }
 
     #[test]
