@@ -122,20 +122,33 @@ struct LogWriter {
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::stderr().write_all(buf)?;
-        if let Some(file) = &mut self.file {
-            file.write_all(buf)?;
-        }
-        Ok(buf.len())
+        let mut stderr = io::stderr().lock();
+        let file = self.file.as_mut().map(|file| file as &mut dyn Write);
+        write_to_destinations(buf, &mut stderr, file)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()?;
-        if let Some(file) = &mut self.file {
-            file.flush()?;
-        }
-        Ok(())
+        let stderr = io::stderr();
+        let mut stderr = stderr.lock();
+        let stderr_result = stderr.flush();
+        let file_result = self.file.as_mut().map(Write::flush);
+        stderr_result?;
+        file_result.unwrap_or(Ok(()))
     }
+}
+
+fn write_to_destinations(
+    buf: &[u8],
+    stderr: &mut dyn Write,
+    file: Option<&mut dyn Write>,
+) -> io::Result<usize> {
+    let stderr_result = stderr.write_all(buf);
+    let file_result = file.map(|file| file.write_all(buf));
+    stderr_result?;
+    if let Some(result) = file_result {
+        result?;
+    }
+    Ok(buf.len())
 }
 
 fn rolling_log_file(path: &Path) -> io::Result<RollingFileAppender> {
@@ -248,7 +261,7 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 mod tests {
     use super::{
         LogWriter, format_dropped_log_event, json_logs_enabled, monitor_dropped_log_lines,
-        resolve_log_filter, rolling_log_file,
+        resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -299,6 +312,48 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "simulated destination failure",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "simulated destination failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn stderr_failure_does_not_skip_the_file_destination() {
+        let file_output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let mut file = BufferWriter(file_output.0.clone());
+
+        let error = write_to_destinations(b"event\n", &mut FailingWriter, Some(&mut file))
+            .expect_err("stderr failure should remain observable");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(*file_output.0.lock().unwrap(), b"event\n");
+    }
+
+    #[test]
+    fn file_failure_does_not_skip_stderr_destination() {
+        let stderr_output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let mut stderr = BufferWriter(stderr_output.0.clone());
+
+        let error = write_to_destinations(b"event\n", &mut stderr, Some(&mut FailingWriter))
+            .expect_err("file failure should remain observable");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(*stderr_output.0.lock().unwrap(), b"event\n");
     }
 
     #[test]
