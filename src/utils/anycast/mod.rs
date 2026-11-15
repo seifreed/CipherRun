@@ -59,20 +59,24 @@ impl AnycastScanner {
             });
         }
 
-        println!(
-            "  Resolved {} IP address(es) for {}",
-            ip_addresses.len(),
-            self.hostname
+        info!(
+            event_name = "anycast.dns_resolution.completed",
+            operation = "resolve_all_ips",
+            total_ips = ip_addresses.len(),
+            outcome = "success",
+            "Anycast addresses resolved"
         );
 
         // 2. Scan each IP individually
         let mut ip_results = Vec::new();
         for (index, ip) in ip_addresses.iter().enumerate() {
-            println!(
-                "  [{}/{}] Scanning IP: {}",
-                index + 1,
-                ip_addresses.len(),
-                ip
+            debug!(
+                event_name = "anycast.ip_scan.started",
+                operation = "scan_single_ip",
+                scan_index = index + 1,
+                total_ips = ip_addresses.len(),
+                outcome = "started",
+                "Starting Anycast scan for resolved address"
             );
 
             let ip_scan_started = Instant::now();
@@ -97,7 +101,6 @@ impl AnycastScanner {
                         outcome = "partial_failure",
                         "Anycast scan failed for one resolved address"
                     );
-                    println!("    Warning: Scan failed for {}: {}", ip, e);
                     ip_results.push(IpScanResult {
                         ip: *ip,
                         results: ScanResults::default(),
@@ -234,21 +237,34 @@ fn log_anycast_scan_summary(
     is_anycast: bool,
     duration_ms: u64,
 ) {
-    info!(
-        event_name = "anycast.scan.completed",
-        operation = "scan_all_ips",
-        total_ips,
-        successful_scans,
-        failed_scans = total_ips.saturating_sub(successful_scans),
-        is_anycast,
-        duration_ms,
-        outcome = if successful_scans == total_ips {
-            "success"
-        } else {
-            "partial_failure"
-        },
-        "Anycast scan completed"
-    );
+    let failed_scans = total_ips.saturating_sub(successful_scans);
+    if failed_scans == 0 {
+        info!(
+            event_name = "anycast.scan.completed",
+            operation = "scan_all_ips",
+            total_ips,
+            successful_scans,
+            failed_scans,
+            is_anycast,
+            duration_ms,
+            outcome = "success",
+            "Anycast scan completed"
+        );
+    } else {
+        tracing::warn!(
+            event_name = "anycast.scan.completed",
+            operation = "scan_all_ips",
+            total_ips,
+            successful_scans,
+            failed_scans,
+            is_anycast,
+            duration_ms,
+            error_type = "partial_scan",
+            error_code = "address_scan_failed",
+            outcome = "partial_failure",
+            "Anycast scan completed with address failures"
+        );
+    }
 }
 
 fn anycast_target_for_ip(ip: &IpAddr, port: u16) -> String {
@@ -344,6 +360,7 @@ mod tests {
         assert!(output.contains("failed_scans=1"), "{output}");
         assert!(output.contains("duration_ms=123"), "{output}");
         assert!(output.contains("partial_failure"), "{output}");
+        assert!(output.contains("WARN"), "{output}");
         assert!(!output.contains("example.com"), "{output}");
         assert!(!output.contains("203.0.113.1"), "{output}");
     }
