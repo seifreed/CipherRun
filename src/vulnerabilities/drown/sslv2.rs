@@ -18,6 +18,13 @@ pub(super) fn record_shape(data: &[u8]) -> Option<(usize, usize, usize)> {
 
 pub(super) fn analyze_response(data: &[u8]) -> Result<Sslv2Status> {
     if data.len() < 2 {
+        tracing::debug!(
+            event_name = "vulnerability.drown.sslv2.response_classified",
+            response_bytes = data.len(),
+            outcome = "inconclusive",
+            reason = "truncated_header",
+            "DROWN SSLv2 response is too short to classify"
+        );
         return Ok(Sslv2Status::Inconclusive);
     }
 
@@ -29,9 +36,17 @@ pub(super) fn analyze_response(data: &[u8]) -> Result<Sslv2Status> {
 
     if !is_reasonable_length || !has_enough_data {
         tracing::debug!(
-            "DROWN: SSLv2 header detected but response truncated (len={}, expected={})",
-            data.len(),
-            record_total
+            event_name = "vulnerability.drown.sslv2.response_classified",
+            response_bytes = data.len(),
+            expected_bytes = record_total,
+            record_bytes = record_len,
+            outcome = "suspicious",
+            reason = if is_reasonable_length {
+                "truncated_record"
+            } else {
+                "invalid_record_length"
+            },
+            "DROWN SSLv2 response is malformed or truncated"
         );
         return Ok(Sslv2Status::Suspicious);
     }
@@ -42,40 +57,60 @@ pub(super) fn analyze_response(data: &[u8]) -> Result<Sslv2Status> {
 
     match msg_type {
         0x04 => {
-            tracing::debug!("DROWN: SSLv2 ServerHello (0x04) confirmed");
+            tracing::debug!(
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "confirmed",
+                "DROWN SSLv2 ServerHello detected"
+            );
             Ok(Sslv2Status::Confirmed)
         }
         0x00 => {
             tracing::warn!(
-                "DROWN: SSLv2 Error (0x00) received - server speaks SSLv2 but rejected handshake, \
-                 manual review recommended. Server may still be DROWN-vulnerable with different ciphers."
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "probable",
+                reason = "sslv2_error_message",
+                "Server speaks SSLv2 but rejected the handshake"
             );
             Ok(Sslv2Status::Probable)
         }
         0x02 | 0x03 => {
             tracing::warn!(
-                "DROWN: Client-only SSLv2 message type 0x{:02x} received from server — protocol confusion, not SSLv2 support",
-                msg_type
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "suspicious",
+                reason = "client_message_from_server",
+                "Server returned a client-only SSLv2 message"
             );
             Ok(Sslv2Status::Suspicious)
         }
         0x05..=0x07 => {
             tracing::debug!(
-                "DROWN: SSLv2 message type 0x{:02x} detected - SSLv2 probable",
-                msg_type
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "probable",
+                "Probable SSLv2 response detected"
             );
             Ok(Sslv2Status::Probable)
         }
         0x08 => {
             tracing::warn!(
-                "DROWN: Client-only SSLv2 message 0x08 (ClientCertificate) received from server — protocol confusion"
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "suspicious",
+                reason = "client_message_from_server",
+                "Server returned a client-only SSLv2 message"
             );
             Ok(Sslv2Status::Suspicious)
         }
         _ => {
             tracing::debug!(
-                "DROWN: Suspicious SSLv2-like response with unknown message type 0x{:02x}",
-                msg_type
+                event_name = "vulnerability.drown.sslv2.response_classified",
+                message_type = msg_type,
+                outcome = "suspicious",
+                reason = "unknown_message_type",
+                "DROWN SSLv2-like response has an unknown message type"
             );
             Ok(Sslv2Status::Suspicious)
         }
