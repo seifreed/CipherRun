@@ -9,7 +9,7 @@ use crate::security::is_private_ip;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Maximum number of retries for network failures
 const MAX_RETRIES: u32 = 3;
@@ -40,10 +40,11 @@ impl CtClient {
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .build()
-            .unwrap_or_else(|e| {
+            .unwrap_or_else(|_| {
                 tracing::warn!(
-                    "Failed to build HTTP client with timeout settings: {}. Using default client.",
-                    e
+                    event_name = "ct_log.client.degraded_fallback",
+                    error_type = "client_builder",
+                    "HTTP client setup failed; using default client"
                 );
                 reqwest::Client::new()
             });
@@ -119,7 +120,12 @@ impl CtClient {
             .append_pair("start", &start.to_string())
             .append_pair("end", &end.to_string());
 
-        debug!("Fetching entries from {} to {}", start, end);
+        debug!(
+            event_name = "ct_log.entries.fetch_started",
+            start_index = start,
+            end_index = end,
+            "Fetching CT log entries"
+        );
 
         let mut response = self
             .retry_request(|| async { self.client.get(url.clone()).send().await })
@@ -194,11 +200,14 @@ impl CtClient {
                             });
                         }
                         // Rate limited - wait and retry
-                        warn!(
-                            "Rate limited (429), retrying after {:?} (attempt {}/{})",
-                            backoff,
-                            attempt + 1,
-                            MAX_RETRIES
+                        debug!(
+                            event_name = "ct_log.request.retry",
+                            retry_reason = "rate_limited",
+                            http_status = 429,
+                            backoff_ms = backoff.as_millis() as u64,
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            "Retrying CT log request"
                         );
                         tokio::time::sleep(backoff).await;
                         backoff = std::cmp::min(backoff * 2, Duration::from_millis(MAX_BACKOFF_MS));
@@ -216,12 +225,14 @@ impl CtClient {
                             });
                         }
                         // Server error - retry
-                        warn!(
-                            "Server error ({}), retrying after {:?} (attempt {}/{})",
-                            response.status(),
-                            backoff,
-                            attempt + 1,
-                            MAX_RETRIES
+                        debug!(
+                            event_name = "ct_log.request.retry",
+                            retry_reason = "server_error",
+                            http_status = response.status().as_u16(),
+                            backoff_ms = backoff.as_millis() as u64,
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            "Retrying CT log request"
                         );
                         tokio::time::sleep(backoff).await;
                         backoff = std::cmp::min(backoff * 2, Duration::from_millis(MAX_BACKOFF_MS));
@@ -237,12 +248,13 @@ impl CtClient {
                 }
                 Err(e) => {
                     if attempt < MAX_RETRIES - 1 {
-                        warn!(
-                            "Network error: {}, retrying after {:?} (attempt {}/{})",
-                            e,
-                            backoff,
-                            attempt + 1,
-                            MAX_RETRIES
+                        debug!(
+                            event_name = "ct_log.request.retry",
+                            retry_reason = "transport",
+                            backoff_ms = backoff.as_millis() as u64,
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            "Retrying CT log request"
                         );
                         tokio::time::sleep(backoff).await;
                         backoff = std::cmp::min(backoff * 2, Duration::from_millis(MAX_BACKOFF_MS));
