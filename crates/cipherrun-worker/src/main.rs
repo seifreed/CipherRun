@@ -6,7 +6,7 @@ async fn main() -> ExitCode {
     let args = match Args::parse_with_sources() {
         Ok(args) => args,
         Err(_) => {
-            eprintln!("Failed to parse worker configuration");
+            eprintln!("Failed to parse worker configuration (error_code=configuration_error)");
             return ExitCode::from(2);
         }
     };

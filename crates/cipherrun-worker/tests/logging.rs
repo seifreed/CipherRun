@@ -23,3 +23,16 @@ fn worker_emits_structured_failure_when_configuration_is_missing() {
     assert_eq!(event["fields"]["outcome"], "error");
     assert!(!stderr.contains("--worker requires --api-config"));
 }
+
+#[test]
+fn worker_parse_failure_reports_safe_code_without_reflecting_arguments() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun-worker"))
+        .args(["--worker", "--invalid-option=secret-do-not-log"])
+        .output()
+        .expect("worker process should start");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("diagnostic should be UTF-8");
+    assert!(stderr.contains("error_code=configuration_error"));
+    assert!(!stderr.contains("secret-do-not-log"));
+}
