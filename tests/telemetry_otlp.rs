@@ -53,7 +53,7 @@ async fn recover_spans(
     State((attempt, sender)): State<RetryState>,
     body: Bytes,
 ) -> (StatusCode, &'static str) {
-    let status = if attempt.fetch_add(1, Ordering::SeqCst) == 0 {
+    let status = if attempt.fetch_add(1, Ordering::SeqCst) < 5 {
         StatusCode::SERVICE_UNAVAILABLE
     } else {
         StatusCode::OK
@@ -65,19 +65,23 @@ async fn recover_spans(
 struct EndpointEnvironment {
     previous_endpoint: Option<std::ffi::OsString>,
     previous_trace_endpoint: Option<std::ffi::OsString>,
+    previous_batch_size: Option<std::ffi::OsString>,
 }
 
 impl EndpointEnvironment {
     fn set(endpoint: &str) -> Self {
         let previous_endpoint = std::env::var_os("OTEL_EXPORTER_OTLP_ENDPOINT");
         let previous_trace_endpoint = std::env::var_os("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+        let previous_batch_size = std::env::var_os("OTEL_BSP_MAX_EXPORT_BATCH_SIZE");
         unsafe {
             std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
             std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+            std::env::set_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1");
         }
         Self {
             previous_endpoint,
             previous_trace_endpoint,
+            previous_batch_size,
         }
     }
 }
@@ -92,6 +96,10 @@ impl Drop for EndpointEnvironment {
             match &self.previous_trace_endpoint {
                 Some(value) => std::env::set_var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", value),
                 None => std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+            }
+            match &self.previous_batch_size {
+                Some(value) => std::env::set_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", value),
+                None => std::env::remove_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE"),
             }
         }
     }
@@ -134,7 +142,7 @@ async fn otlp_http_export_reaches_a_local_collector() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn otlp_collector_failure_is_reported_without_panicking() {
+async fn otlp_collector_failure_is_reported_for_each_batch_without_panicking() {
     let _environment_lock = OTLP_ENV_LOCK.lock().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -162,14 +170,16 @@ async fn otlp_collector_failure_is_reported_without_panicking() {
         )
         .with(otel_layer);
     tracing::subscriber::set_global_default(subscriber).unwrap();
-    tracing::info_span!("otlp.failure.integration")
-        .in_scope(|| tracing::info!(event_name = "otlp.failure.test", "export failure test"));
+    for span_index in 0..3 {
+        tracing::info_span!("otlp.failure.integration", span_index)
+            .in_scope(|| tracing::info!(event_name = "otlp.failure.test", "export failure test"));
+    }
     let shutdown = tokio::task::spawn_blocking(move || provider.shutdown())
         .await
         .unwrap();
 
     assert!(shutdown.is_ok());
-    let attempts = (0..4)
+    let attempts = (0..12)
         .map(|_| receiver.recv_timeout(Duration::from_secs(5)).unwrap())
         .collect::<Vec<_>>();
     assert!(attempts.iter().all(|(payload_size, _)| *payload_size > 0));
@@ -183,7 +193,11 @@ async fn otlp_collector_failure_is_reported_without_panicking() {
         Err(mpsc::TryRecvError::Empty)
     ));
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-    assert!(logs.contains("BatchSpanProcessor.ExportError"), "{logs}");
+    assert_eq!(
+        logs.matches("BatchSpanProcessor.ExportError").count(),
+        3,
+        "{logs}"
+    );
     assert!(logs.contains("HTTP export failed"), "{logs}");
     assert!(!logs.contains("collector-secret"), "{logs}");
     collector.abort();
@@ -212,19 +226,25 @@ async fn otlp_http_retries_transient_failure_until_export_succeeds() {
     let (otel_layer, provider) = cipherrun::telemetry::layer().unwrap();
     let subscriber = tracing_subscriber::registry().with(otel_layer);
     tracing::subscriber::with_default(subscriber, || {
-        tracing::info_span!("otlp.retry.integration")
-            .in_scope(|| tracing::info!(event_name = "otlp.retry.test", "retry test span"));
+        for span_index in 0..2 {
+            tracing::info_span!("otlp.retry.integration", span_index)
+                .in_scope(|| tracing::info!(event_name = "otlp.retry.test", "retry test span"));
+        }
     });
     tokio::task::spawn_blocking(move || provider.shutdown().unwrap())
         .await
         .unwrap();
 
-    let attempts = (0..2)
+    let attempts = (0..6)
         .map(|_| receiver.recv_timeout(Duration::from_secs(5)).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(attempts[0].1, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(attempts[1].1, StatusCode::OK);
+    assert!(
+        attempts[..5]
+            .iter()
+            .all(|(_, status)| *status == StatusCode::SERVICE_UNAVAILABLE)
+    );
+    assert_eq!(attempts[5].1, StatusCode::OK);
     assert!(attempts.iter().all(|(payload_size, _)| *payload_size > 0));
-    assert_eq!(attempt.load(Ordering::SeqCst), 2);
+    assert_eq!(attempt.load(Ordering::SeqCst), 6);
     collector.abort();
 }
