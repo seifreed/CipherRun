@@ -120,8 +120,9 @@ impl RevocationChecker {
         let issuer_cert = parse_x509_der_exact(&issuer.der_bytes, "issuer certificate")?;
         if crl.verify_signature(issuer_cert.public_key()).is_err() {
             tracing::warn!(
-                "CRL signature verification failed for {}; not trusting it",
-                crl_url
+                event_name = "certificate.revocation.crl.signature.failed",
+                error_type = "signature_verification",
+                "CRL signature verification failed; not trusting it"
             );
             return Err(crate::error::TlsError::Other(
                 "CRL signature verification failed".into(),
@@ -133,9 +134,9 @@ impl RevocationChecker {
             let now = ASN1Time::now();
             if now > next_update {
                 tracing::warn!(
-                    "CRL from {} has expired (nextUpdate: {:?})",
-                    crl_url,
-                    next_update
+                    event_name = "certificate.revocation.crl.expired",
+                    error_type = "expired_crl",
+                    "CRL has expired; not trusting it"
                 );
                 return Err(crate::error::TlsError::Other(format!(
                     "CRL has expired (nextUpdate: {:?})",

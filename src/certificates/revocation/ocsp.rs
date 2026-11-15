@@ -108,9 +108,10 @@ impl RevocationChecker {
                 // HTTP error (connection failed, DNS resolution, etc.)
                 // Return Err to allow caller to fall back to CRL
                 tracing::warn!(
-                    "OCSP HTTP request failed for {}: {}",
-                    cert.subject,
-                    http_err
+                    event_name = "certificate.revocation.ocsp.request.failed",
+                    error_type = "transport",
+                    outcome = "fallback_to_crl",
+                    "OCSP HTTP request failed"
                 );
                 return Err(crate::error::TlsError::Other(format!(
                     "OCSP HTTP request failed: {}",
@@ -121,9 +122,10 @@ impl RevocationChecker {
                 // Timeout occurred - OCSP server might be slow
                 // Log and return Unknown status - caller may want to retry or use CRL
                 tracing::warn!(
-                    "OCSP request timed out for {} after {:?}",
-                    cert.subject,
-                    self.check_timeout
+                    event_name = "certificate.revocation.ocsp.request.timeout",
+                    outcome = "fallback_to_crl",
+                    timeout_ms = self.check_timeout.as_millis() as u64,
+                    "OCSP request timed out"
                 );
                 return Err(crate::error::TlsError::Timeout {
                     duration: Some(self.check_timeout),
@@ -277,10 +279,14 @@ impl RevocationChecker {
         let empty_chain = Stack::new().map_err(|e| {
             crate::error::TlsError::Other(format!("Failed to allocate OCSP cert stack: {}", e))
         })?;
-        if let Err(e) = basic_response.verify(&empty_chain, &store, OcspFlag::empty()) {
+        if basic_response
+            .verify(&empty_chain, &store, OcspFlag::empty())
+            .is_err()
+        {
             tracing::warn!(
-                "OCSP response signature could not be verified ({}); not trusting status",
-                e
+                event_name = "certificate.revocation.ocsp.signature.failed",
+                error_type = "signature_verification",
+                "OCSP response signature could not be verified; not trusting status"
             );
             return Ok(RevocationStatus::Error);
         }
@@ -309,7 +315,11 @@ impl RevocationChecker {
             // Check the certificate status
             match status.status {
                 openssl::ocsp::OcspCertStatus::GOOD => {
-                    tracing::debug!("OCSP response: Certificate status is GOOD");
+                    tracing::debug!(
+                        event_name = "certificate.revocation.ocsp.completed",
+                        outcome = "good",
+                        "OCSP revocation check completed"
+                    );
                     return Ok(RevocationStatus::Good);
                 }
                 openssl::ocsp::OcspCertStatus::REVOKED => {
@@ -321,18 +331,30 @@ impl RevocationChecker {
                     return Ok(RevocationStatus::Revoked);
                 }
                 openssl::ocsp::OcspCertStatus::UNKNOWN => {
-                    tracing::debug!("OCSP response: Certificate status is UNKNOWN");
+                    tracing::debug!(
+                        event_name = "certificate.revocation.ocsp.completed",
+                        outcome = "unknown",
+                        "OCSP revocation check completed"
+                    );
                     return Ok(RevocationStatus::Unknown);
                 }
                 _ => {
-                    tracing::warn!("OCSP response: Unexpected certificate status");
+                    tracing::warn!(
+                        event_name = "certificate.revocation.ocsp.unexpected_status",
+                        error_type = "unexpected_status",
+                        "OCSP responder returned an unexpected status"
+                    );
                     return Ok(RevocationStatus::Error);
                 }
             }
         }
 
         // No certificate status found in response for this cert_id
-        tracing::warn!("OCSP response contains no status for the requested certificate");
+        tracing::warn!(
+            event_name = "certificate.revocation.ocsp.status_missing",
+            outcome = "unknown",
+            "OCSP response contained no status for the certificate"
+        );
         Ok(RevocationStatus::Unknown)
     }
 }
