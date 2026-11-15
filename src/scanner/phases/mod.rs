@@ -614,8 +614,6 @@ mod tests {
 
     #[test]
     fn phase_span_records_outcome_and_duration_without_raw_error() {
-        use tracing::instrument::WithSubscriber;
-
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
@@ -626,21 +624,15 @@ mod tests {
             error: crate::TlsError::Other("probe failed target=private.example".to_string()),
         }));
 
-        let dispatch = tracing::Dispatch::new(subscriber);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        runtime
-            .block_on(
-                async {
-                    orchestrator
-                        .execute(test_scan_context(ScanRequest::default()))
-                        .await
-                }
-                .with_subscriber(dispatch),
-            )
-            .expect("nonfatal phase errors should be recoverable");
+        let results = tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(orchestrator.execute(test_scan_context(ScanRequest::default())))
+        })
+        .expect("nonfatal phase errors should be recoverable");
+        assert_eq!(results.scan_metadata.human_warnings.len(), 1);
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(output.contains("scan.phase"), "{output:?}");
