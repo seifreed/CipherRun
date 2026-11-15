@@ -136,6 +136,32 @@ fn json_logs_enabled(format: Option<&str>) -> bool {
 mod tests {
     use super::{LogWriter, json_logs_enabled, resolve_log_filter};
     use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+    struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for Buffer {
+        type Writer = BufferWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            BufferWriter(self.0.clone())
+        }
+    }
+
+    impl Write for BufferWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn filter_defaults_to_info_and_uses_verbosity() {
@@ -164,6 +190,27 @@ mod tests {
         assert!(json_logs_enabled(Some("JSON")));
         assert!(!json_logs_enabled(None));
         assert!(!json_logs_enabled(Some("text")));
+    }
+
+    #[test]
+    fn json_format_escapes_untrusted_control_characters() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let untrusted = "value\nlevel=ERROR\r\u{001b}[2J";
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(input = %untrusted, "test event");
+        });
+
+        let bytes = output.0.lock().unwrap().clone();
+        let serialized = std::str::from_utf8(&bytes).unwrap();
+        assert_eq!(serialized.lines().count(), 1);
+        let event: serde_json::Value = serde_json::from_str(serialized).unwrap();
+        assert_eq!(event["fields"]["input"], untrusted);
     }
 
     #[test]
