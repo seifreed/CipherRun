@@ -38,7 +38,11 @@ async fn main() -> ExitCode {
             ExitCode::from(u8_code)
         }
         Err(err) => {
-            eprintln!("Error: {}", err);
+            if tracing::dispatcher::has_been_set() {
+                tracing::error!(error_type = "TlsError", "CLI command failed");
+            } else {
+                eprintln!("Error: {}", err);
+            }
             ExitCode::from(1)
         }
     }
@@ -70,11 +74,12 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         args.output.color = 0;
     }
 
+    let _logging_guard = initialize_logging(&args)?;
+
     // Validate CLI arguments for conflicting flags
     args.validate()?;
 
     apply_output_preferences(&args);
-    let _logging_guard = initialize_logging(&args)?;
 
     // Handle --version (display version and exit)
     if args.version {
@@ -187,9 +192,27 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
     // Route to appropriate command and execute
     let command = CommandRouter::route(args)?;
-
-    info!("Executing command: {}", command.name());
-    command.execute().await
+    let operation = command.name();
+    let start = std::time::Instant::now();
+    let result = command.execute().await;
+    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match &result {
+        Ok(exit) => info!(
+            event_name = "cli.command.finished",
+            operation,
+            duration_ms,
+            exit_code = exit.code(),
+            outcome = "complete",
+        ),
+        Err(_) => tracing::error!(
+            event_name = "cli.command.failed",
+            operation,
+            duration_ms,
+            error_type = "TlsError",
+            outcome = "error",
+        ),
+    }
+    result
 }
 
 async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
@@ -400,7 +423,7 @@ mod tests {
     #[test]
     fn test_resolve_log_level_falls_back_on_invalid_rust_log() {
         assert!(
-            resolve_log_filter(Some("not-a-level"), 1)
+            resolve_log_filter(Some("cipherrun=not-a-level"), 1)
                 .to_string()
                 .contains("debug")
         );

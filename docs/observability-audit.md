@@ -31,6 +31,7 @@ indexed source files was manually inspected.
 - `1fd412f`: WebSocket text and redirect locations removed from logs; focused tests passed (1 WebSocket and 12 HTTP tester tests).
 - `b1e75d5`: updated vulnerable dependency families and patched SQLx SQLite to `libsqlite3-sys` 0.39.1; DB integration (19), library (3039), all-feature check, package verification passed; `cargo audit` reported zero vulnerabilities.
 - Request audit now records Axum's matched route template, shares the generated request ID with the response header and omits client IP from emitted logs; a middleware integration test verifies the ID/path relationship and that a domain parameter is not logged.
+- `477a8e1`: bounded non-blocking `tracing-appender` sink for CLI and worker, retained `WorkerGuard` for shutdown flush, mirrored stderr/file writer test passed. Current validation: 8 CLI logger tests, all-features check, worker test target (0 tests), and local worker execution produced a JSON `worker.failed` event without raw error text.
 
 ## Current known limitations
 

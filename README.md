@@ -256,6 +256,9 @@ default. This setting applies to both the CLI and standalone worker.
 Log writes use a bounded background writer and flush on process shutdown. If its
 queue fills, low-priority log events may be dropped rather than blocking scans;
 the writer guard remains alive for the full command/worker lifetime.
+Completed CLI commands and standalone worker runs emit one terminal event with
+operation, duration, outcome and exit/error type; they do not log scan targets
+or raw error text.
 
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and matched route template around downstream request handling.

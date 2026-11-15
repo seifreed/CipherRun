@@ -12,10 +12,23 @@ async fn main() -> ExitCode {
         }
     };
 
+    let started = std::time::Instant::now();
     match run_worker(&args).await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            tracing::error!(error = %error, "Worker terminated with an error");
+        Ok(()) => {
+            tracing::info!(
+                event_name = "worker.finished",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                outcome = "complete",
+            );
+            ExitCode::SUCCESS
+        }
+        Err(_error) => {
+            tracing::error!(
+                event_name = "worker.failed",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "TlsError",
+                outcome = "error",
+            );
             ExitCode::from(1)
         }
     }
