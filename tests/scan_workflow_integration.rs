@@ -8,8 +8,52 @@ use cipherrun::application::use_cases::{RunScan, ScanWorkflow};
 use cipherrun::compliance::{BuiltinFrameworkSource, engine::DefaultComplianceEvaluator};
 use cipherrun::scanner::ScanResults;
 use common::mock_scanner::MockScannerPort;
+use std::future::Future;
+use std::io::Write;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing_subscriber::fmt::MakeWriter;
+
+#[derive(Clone)]
+struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+impl<'a> MakeWriter<'a> for CapturedOutput {
+    type Writer = CapturedWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        CapturedWriter(self.0.clone())
+    }
+}
+
+impl Write for CapturedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn run_with_captured_logs<T>(future: impl Future<Output = T>) -> (T, String) {
+    let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .without_time()
+        .with_writer(output.clone())
+        .finish();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = tracing::subscriber::with_default(subscriber, || runtime.block_on(future));
+    let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    (result, output)
+}
 
 fn mock_services(scanner: Arc<MockScannerPort>) -> ScanWorkflowServices {
     ScanWorkflowServices {
@@ -35,8 +79,8 @@ impl ScannerPort for CountingScannerPort {
     }
 }
 
-#[tokio::test]
-async fn test_workflow_with_mock_scanner() {
+#[test]
+fn test_workflow_with_mock_scanner() {
     let mock = Arc::new(MockScannerPort::default_success());
     let services = mock_services(mock);
 
@@ -49,13 +93,48 @@ async fn test_workflow_with_mock_scanner() {
         ..Default::default()
     };
 
-    let report = ScanWorkflow::execute(input, &services)
-        .await
-        .expect("workflow should succeed");
+    let (report, output) = run_with_captured_logs(ScanWorkflow::execute(input, &services));
+    let report = report.expect("workflow should succeed");
     assert_eq!(report.results().target, "mock.example.com:443");
     assert!(report.compliance_report().is_none());
     assert!(report.policy_result().is_none());
     assert!(report.stored_scan_id().is_none());
+    let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+    assert_eq!(event["level"], "INFO");
+    assert_eq!(event["fields"]["event_name"], "scan.workflow.finished");
+    assert_eq!(event["fields"]["operation"], "scan_workflow");
+    assert_eq!(event["fields"]["outcome"], "success");
+    assert_eq!(event["fields"]["compliance_requested"], false);
+    assert_eq!(event["fields"]["policy_requested"], false);
+    assert_eq!(event["fields"]["persistence_requested"], false);
+    assert!(event["fields"]["duration_ms"].is_number());
+    assert!(!output.contains("mock.example.com"));
+}
+
+#[test]
+fn test_workflow_logs_expected_configuration_failure_safely() {
+    let scanner = Arc::new(MockScannerPort::default_success());
+    let services = mock_services(scanner);
+    let input = ScanWorkflowInput {
+        request: ScanRequest {
+            target: Some("private-target.example".to_string()),
+            ..Default::default()
+        },
+        store_results: true,
+        database_config_path: None,
+        ..Default::default()
+    };
+
+    let (result, output) = run_with_captured_logs(ScanWorkflow::execute(input, &services));
+    assert!(result.is_err());
+    let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+    assert_eq!(event["level"], "WARN");
+    assert_eq!(event["fields"]["event_name"], "scan.workflow.failed");
+    assert_eq!(event["fields"]["error_code"], "configuration_error");
+    assert_eq!(event["fields"]["outcome"], "failed");
+    assert!(event["fields"]["duration_ms"].is_number());
+    assert!(!output.contains("private-target.example"));
+    assert!(!output.contains("database_config_path"));
 }
 
 #[tokio::test]
