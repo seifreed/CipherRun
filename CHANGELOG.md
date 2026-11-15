@@ -13,6 +13,7 @@ All notable changes to CipherRun are documented here. The format follows
 - Change `Rule.custom_params` from `serde_yaml::Value` to `serde_json::Value`.
 - Upgrade Python SDK packaging to version 0.5.0 and remediate its Dependabot alerts.
 - Continue W3C trace context from HTTP requests into persisted scan jobs.
+- Return generic database and queue health states instead of exposing backend error details.
 
 ## [0.4.0] - 2026-08-25
 

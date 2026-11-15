@@ -29,20 +29,14 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
                 Some("connected".to_string()),
             ),
             (active_result, queued_result) => {
-                let mut errors = Vec::new();
-                if let Err(error) = active_result {
-                    errors.push(format!("active_scans failed: {}", error));
-                }
-                if let Err(error) = queued_result {
-                    errors.push(format!("queued_scans failed: {}", error));
-                }
-
-                (
-                    false,
-                    None,
-                    None,
-                    Some(format!("error: {}", errors.join("; "))),
-                )
+                tracing::warn!(
+                    event_name = "health.queue.unavailable",
+                    active_scans_failed = active_result.is_err(),
+                    queued_scans_failed = queued_result.is_err(),
+                    error_type = "queue_backend",
+                    "Queue health check failed"
+                );
+                (false, None, None, Some("unavailable".to_string()))
             }
         };
 
@@ -50,7 +44,14 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
     let (database_healthy, database_status) = if let Some(db) = &state.db_pool {
         match check_database_health(db).await {
             Ok(_) => (true, Some("connected".to_string())),
-            Err(e) => (false, Some(format!("error: {}", e))),
+            Err(_) => {
+                tracing::warn!(
+                    event_name = "health.database.unavailable",
+                    error_type = "database",
+                    "Database health check failed"
+                );
+                (false, Some("unavailable".to_string()))
+            }
         }
     } else {
         (true, Some("not_configured".to_string()))
@@ -122,7 +123,9 @@ mod tests {
         }
 
         async fn queue_length(&self) -> crate::Result<usize> {
-            Err(crate::TlsError::Other("queue backend failed".to_string()))
+            Err(crate::TlsError::Other(
+                "queue backend failed password=must-not-leak".to_string(),
+            ))
         }
 
         async fn list_jobs(&self) -> crate::Result<Vec<ScanJob>> {
@@ -130,7 +133,9 @@ mod tests {
         }
 
         async fn active_jobs_count(&self) -> crate::Result<usize> {
-            Err(crate::TlsError::Other("queue backend failed".to_string()))
+            Err(crate::TlsError::Other(
+                "queue backend failed password=must-not-leak".to_string(),
+            ))
         }
     }
 
@@ -173,13 +178,7 @@ mod tests {
 
         assert_eq!(response.status, "degraded");
         assert_eq!(response.queue.as_deref(), Some("connected"));
-        assert!(
-            response
-                .database
-                .as_deref()
-                .unwrap_or_default()
-                .contains("Database health check failed")
-        );
+        assert_eq!(response.database.as_deref(), Some("unavailable"));
     }
 
     #[tokio::test]
@@ -210,12 +209,13 @@ mod tests {
         assert_eq!(response.database.as_deref(), Some("not_configured"));
         assert_eq!(response.active_scans, None);
         assert_eq!(response.queued_scans, None);
+        assert_eq!(response.queue.as_deref(), Some("unavailable"));
         assert!(
-            response
+            !response
                 .queue
                 .as_deref()
                 .unwrap_or_default()
-                .contains("queue backend failed")
+                .contains("must-not-leak")
         );
     }
 }

@@ -112,11 +112,11 @@ pub struct HealthResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queued_scans: Option<usize>,
 
-    /// Database connection status
+    /// Database status: `connected`, `not_configured`, or `unavailable`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
 
-    /// Job queue health status
+    /// Job queue status: `connected` or `unavailable`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queue: Option<String>,
 }
