@@ -131,29 +131,67 @@ impl Scanner {
 
     /// Initialize target with DNS resolution
     pub async fn initialize(&self) -> Result<()> {
-        let target_str =
-            self.request
-                .target
-                .as_ref()
-                .ok_or_else(|| crate::error::TlsError::InvalidInput {
-                    message: "No target specified".into(),
-                })?;
-
-        let parsed_target = if let Some(ip_override) = self.request.ip.as_deref() {
-            let ip: IpAddr =
-                ip_override
-                    .parse()
-                    .map_err(|_| crate::error::TlsError::InvalidInput {
-                        message: format!("Invalid IP override: {}", ip_override),
-                    })?;
-            let (hostname, embedded_port) = split_target_host_port(target_str)?;
-            let port = Self::effective_port(&self.request, embedded_port);
-            Target::with_ips(hostname, port, vec![ip])?
+        let started = Instant::now();
+        let resolution_mode = if self.request.ip.is_some() {
+            "ip_override"
+        } else if self.request.network.resolvers.is_empty() {
+            "system_resolver"
         } else {
-            self.resolve_target_with_request_network(target_str).await?
+            "custom_resolver"
         };
-        *self.target.write() = parsed_target;
-        Ok(())
+        let initialized: Result<Target> = async {
+            let target_str = self.request.target.as_ref().ok_or_else(|| {
+                crate::error::TlsError::InvalidInput {
+                    message: "No target specified".into(),
+                }
+            })?;
+
+            if let Some(ip_override) = self.request.ip.as_deref() {
+                let ip: IpAddr =
+                    ip_override
+                        .parse()
+                        .map_err(|_| crate::error::TlsError::InvalidInput {
+                            message: format!("Invalid IP override: {}", ip_override),
+                        })?;
+                let (hostname, embedded_port) = split_target_host_port(target_str)?;
+                let port = Self::effective_port(&self.request, embedded_port);
+                Target::with_ips(hostname, port, vec![ip])
+            } else {
+                self.resolve_target_with_request_network(target_str).await
+            }
+        }
+        .await;
+
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match initialized {
+            Ok(target) => {
+                let resolved_address_count = target.ip_addresses.len();
+                *self.target.write() = target;
+                tracing::info!(
+                    event_name = "scanner.target.initialized",
+                    operation = "resolve_target",
+                    resolution_mode,
+                    resolved_address_count,
+                    duration_ms,
+                    outcome = "success",
+                    "Scanner target initialized"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event_name = "scanner.target.initialization_failed",
+                    operation = "resolve_target",
+                    resolution_mode,
+                    duration_ms,
+                    error_type = "TlsError",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Scanner target initialization failed"
+                );
+                Err(error)
+            }
+        }
     }
 
     /// Get an owned copy of the target
@@ -525,7 +563,52 @@ mod tests {
     use crate::application::scan_request::ScanRequestScan;
     use crate::protocols::{Protocol, ProtocolTestResult};
     use crate::scanner::SilentProgressReporter;
+    use std::io::Write;
     use std::sync::Arc;
+    use std::sync::Mutex;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn initialize_with_captured_logs(scanner: &Scanner) -> (Result<()>, String) {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(scanner.initialize())
+        });
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        (result, output)
+    }
 
     fn test_scanner() -> Scanner {
         Scanner::new(ScanRequest {
@@ -738,6 +821,46 @@ mod tests {
 
         assert!(reconciled.success);
         assert_eq!(reconciled.error_type, Some(ErrorType::Warning));
+    }
+
+    #[test]
+    fn initialize_logs_safe_outcome_and_address_count() {
+        let mut scanner = test_scanner();
+        scanner.request.target = Some("private-target.test".to_string());
+        scanner.request.ip = Some("8.8.8.8".to_string());
+
+        let (result, output) = initialize_with_captured_logs(&scanner);
+        result.expect("IP override initialization should succeed");
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(event["fields"]["event_name"], "scanner.target.initialized");
+        assert_eq!(event["fields"]["resolution_mode"], "ip_override");
+        assert_eq!(event["fields"]["resolved_address_count"], 1);
+        assert_eq!(event["fields"]["outcome"], "success");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("private-target.test"));
+        assert!(!output.contains("8.8.8.8"));
+    }
+
+    #[test]
+    fn initialize_logs_safe_error_without_target_data() {
+        let mut scanner = test_scanner();
+        scanner.request.target = None;
+
+        let (result, output) = initialize_with_captured_logs(&scanner);
+        assert!(result.is_err());
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scanner.target.initialization_failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "invalid_input");
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("example.com"));
     }
 
     #[tokio::test]
