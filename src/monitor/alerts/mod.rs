@@ -742,7 +742,27 @@ impl AlertManager {
                 timestamp: Utc::now(),
             };
 
+            let started = std::time::Instant::now();
             let result = channel.send_alert(&test_alert).await;
+            let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            match &result {
+                Ok(()) => tracing::info!(
+                    event_name = "monitor.alert.channel_test.completed",
+                    channel = channel.channel_name(),
+                    duration_ms,
+                    outcome = "passed",
+                    "Alert channel test completed"
+                ),
+                Err(error) => tracing::warn!(
+                    event_name = "monitor.alert.channel_test.failed",
+                    channel = channel.channel_name(),
+                    duration_ms,
+                    error_type = "alert_channel_test",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Alert channel test failed"
+                ),
+            }
             results.push((channel.channel_name().to_string(), result));
         }
 
@@ -894,6 +914,8 @@ mod tests {
             manager.send_alert(&alert).await?;
             manager.send_alert(&validation_alert).await?;
             assert!(failing_manager.send_alert(&failing_alert).await.is_err());
+            assert!(manager.test_channels().await[0].1.is_ok());
+            assert!(failing_manager.test_channels().await[0].1.is_err());
             Ok::<(), crate::TlsError>(())
         }
         .with_subscriber(dispatch)
@@ -932,6 +954,27 @@ mod tests {
             events.iter().any(|event| {
                 event["fields"]["event_name"] == "monitor.alert.delivered"
                     && event["fields"]["alert_type"] == "validation_failure"
+            }),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event["level"] == "INFO"
+                    && event["fields"]["event_name"] == "monitor.alert.channel_test.completed"
+                    && event["fields"]["channel"] == "test"
+                    && event["fields"]["duration_ms"].is_number()
+                    && event["fields"]["outcome"] == "passed"
+            }),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event["level"] == "WARN"
+                    && event["fields"]["event_name"] == "monitor.alert.channel_test.failed"
+                    && event["fields"]["channel"] == "test"
+                    && event["fields"]["duration_ms"].is_number()
+                    && event["fields"]["error_code"].is_string()
+                    && event["fields"]["outcome"] == "failed"
             }),
             "{events:?}"
         );
