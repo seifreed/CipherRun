@@ -235,10 +235,6 @@ impl HeaderAnalyzer {
                 .map(|value| header_value_to_string("location", value))
                 .transpose()?;
 
-            if let Some(ref location_str) = location {
-                tracing::info!("Redirect location: {}", location_str);
-            }
-
             location
         } else {
             None

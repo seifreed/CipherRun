@@ -91,7 +91,10 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                     debug!("Received pong");
                 }
                 Ok(Message::Text(text)) => {
-                    debug!("Received text message: {}", text);
+                    debug!(
+                        message_bytes = text.len(),
+                        "Received WebSocket text message"
+                    );
                     // Could handle client commands here
                 }
                 Err(e) => {
