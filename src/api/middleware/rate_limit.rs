@@ -256,9 +256,10 @@ impl PerKeyRateLimiter {
         index.retain(|_, keys| !keys.is_empty());
 
         tracing::info!(
-            "Rate limiter LRU cleanup: removed {} oldest entries, {} remaining",
-            victims.len(),
-            self.limiters.len()
+            event_name = "api.rate_limit.entries_evicted",
+            removed = victims.len(),
+            remaining = self.limiters.len(),
+            "Rate limiter LRU cleanup completed"
         );
     }
 
@@ -300,6 +301,37 @@ fn quota_scope(auth: &AuthExtension) -> String {
         .unwrap_or_else(|| format!("key:{}", auth.key_id))
 }
 
+fn quota_scope_type(auth: &AuthExtension) -> &'static str {
+    if auth.tenant_id.is_some() {
+        "tenant"
+    } else {
+        "credential"
+    }
+}
+
+fn log_rate_limit_result(scope_type: &str, result: &RateLimitResult) {
+    match result {
+        RateLimitResult::Allowed {
+            limit, remaining, ..
+        } => tracing::debug!(
+            event_name = "api.rate_limit.allowed",
+            quota_scope_type = scope_type,
+            limit,
+            remaining,
+            "Rate limit check passed"
+        ),
+        RateLimitResult::Limited {
+            limit, retry_after, ..
+        } => tracing::warn!(
+            event_name = "api.rate_limit.exceeded",
+            quota_scope_type = scope_type,
+            limit,
+            retry_after_seconds = retry_after,
+            "Rate limit exceeded"
+        ),
+    }
+}
+
 /// Rate limiting middleware function
 #[allow(clippy::result_large_err)]
 pub async fn rate_limit(
@@ -325,26 +357,24 @@ pub async fn rate_limit(
     if let Some(auth) = auth_ext {
         // Check if user is Admin - admins bypass rate limiting
         if auth.permission == Permission::Admin {
-            tracing::debug!("Administrator credential bypassed rate limiting");
+            tracing::debug!(
+                event_name = "api.rate_limit.admin_bypass",
+                "Administrator credential bypassed rate limiting"
+            );
             return Ok(next.run(req).await);
         }
 
         // Tenant credentials share one quota; unscoped credentials retain a
         // per-key quota so one tenant cannot consume another tenant's budget.
         let scope = quota_scope(&auth);
-        match state.rate_limiter.check(&scope) {
+        let result = state.rate_limiter.check(&scope);
+        log_rate_limit_result(quota_scope_type(&auth), &result);
+        match result {
             RateLimitResult::Allowed {
                 limit,
                 remaining,
                 reset_at,
             } => {
-                tracing::debug!(
-                    "Rate limit check passed for scope {}: {}/{} remaining",
-                    scope,
-                    remaining,
-                    limit
-                );
-
                 // Run the request and add rate limit headers to response
                 let mut response = next.run(req).await;
                 let headers = response.headers_mut();
@@ -368,13 +398,6 @@ pub async fn rate_limit(
                 retry_after,
                 reset_at,
             } => {
-                tracing::warn!(
-                    "Rate limit exceeded for scope {}: limit={}, retry_after={}s",
-                    scope,
-                    limit,
-                    retry_after
-                );
-
                 // Create error response
                 let error_body = RateLimitErrorResponse {
                     error: "Rate limit exceeded".to_string(),
@@ -410,7 +433,10 @@ pub async fn rate_limit(
     } else {
         // No authentication - this shouldn't happen as auth middleware runs first
         // But if it does, allow the request to proceed (will fail at auth check)
-        tracing::warn!("Rate limit middleware: No auth extension found in request");
+        tracing::warn!(
+            event_name = "api.rate_limit.auth_missing",
+            "Rate limit middleware has no auth extension"
+        );
         Ok(next.run(req).await)
     }
 }
@@ -430,6 +456,33 @@ impl Clone for PerKeyRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn tenant_credentials_share_quota_scope() {
@@ -444,6 +497,56 @@ mod tests {
         let mut unscoped = auth;
         unscoped.tenant_id = None;
         assert_eq!(quota_scope(&unscoped), "key:key-1");
+    }
+
+    #[test]
+    fn rate_limit_logs_scope_type_without_credentials_or_tenant_ids() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+        let tenant_auth = AuthExtension {
+            permission: Permission::User,
+            key_id: "secret-key-id".to_string(),
+            principal_id: "secret-principal-id".to_string(),
+            tenant_id: Some("secret-tenant-id".to_string()),
+        };
+        let credential_auth = AuthExtension {
+            tenant_id: None,
+            ..tenant_auth.clone()
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_rate_limit_result(
+                quota_scope_type(&tenant_auth),
+                &RateLimitResult::Allowed {
+                    limit: 100,
+                    remaining: 99,
+                    reset_at: 1,
+                },
+            );
+            log_rate_limit_result(
+                quota_scope_type(&credential_auth),
+                &RateLimitResult::Limited {
+                    limit: 100,
+                    window_seconds: 60,
+                    retry_after: 1,
+                    reset_at: 1,
+                },
+            );
+        });
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("api.rate_limit.allowed"));
+        assert!(logs.contains("api.rate_limit.exceeded"));
+        assert!(logs.contains("quota_scope_type=\"tenant\""));
+        assert!(logs.contains("quota_scope_type=\"credential\""));
+        assert!(!logs.contains("secret-key-id"));
+        assert!(!logs.contains("secret-principal-id"));
+        assert!(!logs.contains("secret-tenant-id"));
     }
 
     #[test]
