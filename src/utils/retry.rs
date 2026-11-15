@@ -9,7 +9,7 @@ use crate::error::TlsError;
 use crate::utils::adaptive::AdaptiveController;
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Configuration for retry behavior with exponential backoff.
 ///
@@ -162,6 +162,7 @@ where
     Fut: Future<Output = Result<T>>,
 {
     let mut retries = 0;
+    let started = Instant::now();
     let mut backoff = config
         .adaptive
         .as_ref()
@@ -172,7 +173,14 @@ where
         match operation().await {
             Ok(result) => {
                 if retries > 0 {
-                    tracing::debug!("Operation succeeded after {} retry(ies)", retries);
+                    tracing::debug!(
+                        event_name = "retry.recovered",
+                        retry_count = retries,
+                        duration_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        outcome = "success",
+                        "Operation recovered after retries"
+                    );
                 }
                 if let Some(adaptive) = &config.adaptive {
                     adaptive.on_success();
@@ -186,6 +194,8 @@ where
                         event_name = "retry.skipped",
                         attempts = retries,
                         reason = "non_retriable",
+                        error_type = "TlsError",
+                        error_code = e.observability_code(),
                         "Retry skipped"
                     );
                     if let Some(adaptive) = &config.adaptive {
@@ -200,6 +210,8 @@ where
                         event_name = "retry.exhausted",
                         attempts = retries,
                         max_attempts = config.max_retries,
+                        error_type = "TlsError",
+                        error_code = e.observability_code(),
                         "Retry attempts exhausted"
                     );
                     return Err(e);
@@ -208,11 +220,14 @@ where
                 // Log retry attempt
                 retries += 1;
                 tracing::warn!(
-                    "Attempt {}/{} failed: {}, retrying in {:?}",
-                    retries,
-                    config.max_retries,
-                    e,
-                    backoff
+                    event_name = "retry.attempt",
+                    attempt = retries,
+                    max_retries = config.max_retries,
+                    backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+                    error_type = "TlsError",
+                    error_code = e.observability_code(),
+                    outcome = "retrying",
+                    "Retrying transient operation"
                 );
 
                 if let Some(adaptive) = &config.adaptive {
@@ -370,7 +385,10 @@ fn is_io_error_retriable(error: &std::io::Error) -> bool {
             // It's retriable with backoff to allow the system to recover
             if msg.contains("network is down") || msg.contains("os error 50") {
                 tracing::debug!(
-                    "Detected ENETDOWN (error 50) - network saturation, will retry with backoff"
+                    event_name = "retry.error.classified",
+                    reason_code = "network_down",
+                    outcome = "retryable",
+                    "Transient network error classified for retry"
                 );
                 return true;
             }
@@ -528,6 +546,81 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn retry_events_are_structured_and_exclude_raw_errors() {
+        use std::io::Write;
+        use std::sync::Mutex;
+        use tracing::instrument::WithSubscriber;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let config = RetryConfig::new(1, Duration::ZERO, Duration::ZERO);
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+
+        let result = retry_with_backoff(&config, || async {
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                Err(TlsError::Other(
+                    "Connection timed out for private.example secret=do-not-log".to_string(),
+                ))
+            } else {
+                Ok::<_, TlsError>(())
+            }
+        })
+        .with_subscriber(subscriber)
+        .await;
+
+        assert!(result.is_ok());
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let retry = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "retry.attempt")
+            .expect("retry attempt event");
+        assert_eq!(retry["level"], "WARN");
+        assert_eq!(retry["fields"]["attempt"], 1);
+        assert_eq!(retry["fields"]["error_type"], "TlsError");
+        assert_eq!(retry["fields"]["error_code"], "other");
+        assert_eq!(retry["fields"]["outcome"], "retrying");
+        let recovered = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "retry.recovered")
+            .expect("recovery event");
+        assert_eq!(recovered["fields"]["retry_count"], 1);
+        assert!(recovered["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("do-not-log"));
     }
 
     #[tokio::test]
