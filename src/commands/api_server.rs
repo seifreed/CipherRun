@@ -83,8 +83,8 @@ impl ApiServerCommand {
         crate::db::run_migrations(&pool).await?;
 
         info!(
-            "API server database persistence enabled from {}",
-            db_config_path.display()
+            event_name = "api_server.persistence.enabled",
+            "API server database persistence enabled"
         );
 
         Ok(Some(std::sync::Arc::new(pool)))
@@ -96,7 +96,10 @@ impl Command for ApiServerCommand {
     async fn execute(&self) -> Result<CommandExit> {
         use crate::api::ApiServer;
 
-        info!("Starting CipherRun in API server mode");
+        info!(
+            event_name = "api_server.starting",
+            "Starting CipherRun API server"
+        );
 
         let config = load_effective_api_config(&self.args)?;
 

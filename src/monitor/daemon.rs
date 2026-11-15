@@ -385,13 +385,14 @@ impl MonitorDaemon {
         }
 
         // Check expiry warnings (don't propagate alert errors to avoid skipping inventory update)
-        if let Err(e) = Self::check_expiry_warnings(
+        if Self::check_expiry_warnings(
             &identifier,
             &current_cert,
             &domain.alert_thresholds,
             &alert_manager,
         )
         .await
+        .is_err()
         {
             tracing::error!(
                 error_type = "expiry_check",

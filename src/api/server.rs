@@ -396,18 +396,23 @@ impl ApiServer {
 
         let tls_enabled = self.config.tls_cert_file.is_some();
         info!(
-            "CipherRun API server listening on {} ({})",
-            addr,
-            if tls_enabled { "HTTPS" } else { "HTTP" }
+            event_name = "api_server.listening",
+            bind_address = %addr,
+            transport = if tls_enabled { "https" } else { "http" },
+            "API server listening"
         );
-        #[cfg(feature = "swagger")]
-        if self.config.enable_swagger {
+        let shutdown = async {
+            if tokio::signal::ctrl_c().await.is_err() {
+                tracing::warn!(
+                    error_type = "signal_handler",
+                    "Failed to receive shutdown signal"
+                );
+            }
             info!(
-                "OpenAPI documentation available at: http://{}/api/docs",
-                addr
+                event_name = "api_server.shutdown_requested",
+                "API server shutdown requested"
             );
-        }
-        info!("Health check endpoint: http://{}/health", addr);
+        };
 
         // Serve with native TLS when both certificate paths are configured.
         if let (Some(cert_file), Some(key_file)) =
@@ -425,15 +430,21 @@ impl ApiServer {
                 },
                 app.into_make_service_with_connect_info::<PeerAddr>(),
             )
+            .with_graceful_shutdown(shutdown)
             .await?;
         } else {
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<PeerAddr>(),
             )
+            .with_graceful_shutdown(shutdown)
             .await?;
         }
 
+        if self.config.local_executor {
+            self.state.executor.shutdown().await?;
+        }
+        info!(event_name = "api_server.stopped", "API server stopped");
         Ok(())
     }
 
