@@ -202,6 +202,15 @@ pub enum AlertType {
 }
 
 impl AlertType {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::CertificateChange { .. } => "certificate_change",
+            Self::ExpiryWarning { .. } => "expiry_warning",
+            Self::ValidationFailure { .. } => "validation_failure",
+            Self::ScanFailure { .. } => "scan_failure",
+        }
+    }
+
     /// Stable deduplication key for alert grouping (no timestamps).
     /// Same incident type for the same host produces the same key,
     /// enabling proper deduplication in PagerDuty and similar systems.
@@ -616,7 +625,7 @@ impl AlertManager {
         if self.is_duplicate(alert).await {
             tracing::debug!(
                 event_name = "monitor.alert.deduplicated",
-                alert_type = ?alert.alert_type,
+                alert_type = alert.alert_type.kind(),
                 "Duplicate alert suppressed"
             );
             return Ok(());
@@ -625,7 +634,7 @@ impl AlertManager {
         if self.channels.is_empty() {
             tracing::warn!(
                 event_name = "monitor.alert.not_delivered",
-                alert_type = ?alert.alert_type,
+                alert_type = alert.alert_type.kind(),
                 reason = "no_channels_configured",
                 "No alert channels configured; alert not delivered"
             );
@@ -640,7 +649,7 @@ impl AlertManager {
                 Ok(_) => {
                     tracing::info!(
                         event_name = "monitor.alert.delivered",
-                        alert_type = ?alert.alert_type,
+                        alert_type = alert.alert_type.kind(),
                         "Alert sent"
                     );
                     success_count += 1;
@@ -648,7 +657,7 @@ impl AlertManager {
                 Err(error) => {
                     tracing::error!(
                         event_name = "monitor.alert.delivery.failed",
-                        alert_type = ?alert.alert_type,
+                        alert_type = alert.alert_type.kind(),
                         error_type = "alert_channel",
                         error_code = error.observability_code(),
                         "Failed to send alert"
@@ -734,6 +743,45 @@ impl AlertManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{io::Write, sync::Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct SuccessChannel;
+
+    #[async_trait::async_trait]
+    impl AlertChannel for SuccessChannel {
+        async fn send_alert(&self, _alert: &Alert) -> Result<()> {
+            Ok(())
+        }
+
+        fn channel_name(&self) -> &str {
+            "test"
+        }
+    }
 
     #[test]
     fn test_alert_dedup_key() {
@@ -781,6 +829,52 @@ mod tests {
 
         // Same alert should now be duplicate
         assert!(manager.is_duplicate(&alert).await);
+    }
+
+    #[tokio::test]
+    async fn alert_events_redact_failure_details() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+        let mut manager = AlertManager::new(24).expect("valid dedup window");
+        manager.add_channel(Box::new(SuccessChannel));
+        let sensitive = "customer-private.example";
+        let alert = Alert::scan_failure(
+            "example.com".to_string(),
+            format!("Failed while parsing {sensitive}"),
+        );
+        let validation_alert = Alert {
+            alert_type: AlertType::ValidationFailure {
+                reason: sensitive.to_string(),
+            },
+            message: format!("Invalid target {sensitive}"),
+            ..alert.clone()
+        };
+        let dispatch = tracing::Dispatch::new(subscriber);
+
+        async {
+            manager.send_alert(&alert).await?;
+            manager.send_alert(&validation_alert).await
+        }
+        .with_subscriber(dispatch)
+        .await
+        .expect("test channel should accept the alert");
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("monitor.alert.delivered"), "{output}");
+        assert!(output.contains("alert_type=\"scan_failure\""), "{output}");
+        assert!(
+            output.contains("alert_type=\"validation_failure\""),
+            "{output}"
+        );
+        assert!(!output.contains(sensitive), "{output}");
+        assert!(!output.contains("Failed while parsing"), "{output}");
     }
 
     #[test]
