@@ -43,48 +43,73 @@ impl AsnCidrParser {
 
     /// Query RIPEstat API for ASN prefixes
     async fn query_ripestat_api(asn: u32) -> Result<Vec<IpNetwork>> {
-        let url = format!(
-            "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{}",
-            asn
-        );
+        let started = std::time::Instant::now();
+        let result = async {
+            let url = format!(
+                "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{}",
+                asn
+            );
 
-        let client = reqwest::Client::builder()
-            .user_agent("CipherRun/1.0")
-            .timeout(crate::constants::HTTP_CLIENT_TIMEOUT)
-            .build()
-            .map_err(|e| TlsError::ConfigError {
-                message: format!("Failed to create HTTP client: {}", e),
-            })?;
+            let client = reqwest::Client::builder()
+                .user_agent("CipherRun/1.0")
+                .timeout(crate::constants::HTTP_CLIENT_TIMEOUT)
+                .build()
+                .map_err(|e| TlsError::ConfigError {
+                    message: format!("Failed to create HTTP client: {}", e),
+                })?;
 
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| TlsError::HttpError {
-                status: 0,
-                details: format!("RIPEstat API request failed: {}", e),
-            })?;
+            let response = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| TlsError::HttpError {
+                    status: 0,
+                    details: format!("RIPEstat API request failed: {}", e),
+                })?;
 
-        if !response.status().is_success() {
-            return Err(TlsError::HttpError {
-                status: response.status().as_u16(),
-                details: format!("RIPEstat API returned error: {}", response.status()),
-            });
+            if !response.status().is_success() {
+                return Err(TlsError::HttpError {
+                    status: response.status().as_u16(),
+                    details: format!("RIPEstat API returned error: {}", response.status()),
+                });
+            }
+
+            const MAX_RIPESTAT_BYTES: u64 = 16 * 1024 * 1024;
+            let body = crate::utils::http::read_response_body_capped(
+                response,
+                MAX_RIPESTAT_BYTES,
+                "RIPEstat response",
+            )
+            .await?;
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
+                    message: format!("Failed to parse RIPEstat response: {}", e),
+                })?;
+
+            Self::parse_ripestat_prefixes(asn, &json)
         }
+        .await;
 
-        const MAX_RIPESTAT_BYTES: u64 = 16 * 1024 * 1024;
-        let body = crate::utils::http::read_response_body_capped(
-            response,
-            MAX_RIPESTAT_BYTES,
-            "RIPEstat response",
-        )
-        .await?;
-        let json: serde_json::Value =
-            serde_json::from_slice(&body).map_err(|e| TlsError::ParseError {
-                message: format!("Failed to parse RIPEstat response: {}", e),
-            })?;
-
-        Self::parse_ripestat_prefixes(asn, &json)
+        let duration_ms = started.elapsed().as_millis() as u64;
+        match &result {
+            Ok(prefixes) => tracing::info!(
+                event_name = "external_lookup.completed",
+                operation = "ripestat.announced_prefixes",
+                outcome = "success",
+                prefix_count = prefixes.len(),
+                duration_ms,
+                "RIPEstat lookup completed"
+            ),
+            Err(_) => tracing::warn!(
+                event_name = "external_lookup.failed",
+                operation = "ripestat.announced_prefixes",
+                outcome = "error",
+                error_type = "external_lookup",
+                duration_ms,
+                "RIPEstat lookup failed"
+            ),
+        }
+        result
     }
 
     fn parse_ripestat_prefixes(asn: u32, json: &serde_json::Value) -> Result<Vec<IpNetwork>> {
