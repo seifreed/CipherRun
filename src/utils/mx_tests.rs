@@ -4,6 +4,31 @@ use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
 use crate::scanner::{RatingResults, ScanResults};
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+
+struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+
+struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+impl Write for CapturedLogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+    type Writer = CapturedLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        CapturedLogWriter(self.0.clone())
+    }
+}
 
 fn mx(priority: u16, hostname: &str) -> MxRecord {
     MxRecord {
@@ -18,6 +43,35 @@ fn assert_mx_records(records: &[MxRecord], expected: &[(u16, &str)]) {
         assert_eq!(record.priority, *priority);
         assert_eq!(record.hostname, *hostname);
     }
+}
+
+#[test]
+fn mx_scan_failure_events_include_outcome_and_redact_host_and_error() {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(CapturedLog(output.clone()))
+        .finish();
+    let result = Err(TlsError::Other("password=must-not-appear".into()));
+    let success = Ok(ScanResults::default());
+
+    tracing::subscriber::with_default(subscriber, || {
+        log_mx_server_scan(1, 3, 5, std::time::Duration::from_millis(8), &success);
+        log_mx_server_scan(2, 3, 10, std::time::Duration::from_millis(12), &result);
+        log_mx_scan_summary(3, 2, 123);
+    });
+
+    let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert!(output.contains("dns.mx.server_scan.completed"), "{output}");
+    assert!(output.contains("dns.mx.server_scan.failed"), "{output}");
+    assert!(output.contains("scan_index=2"), "{output}");
+    assert!(output.contains("total_records=3"), "{output}");
+    assert!(output.contains("priority=10"), "{output}");
+    assert!(output.contains("dns.mx.scan.completed"), "{output}");
+    assert!(output.contains("failed_scans=1"), "{output}");
+    assert!(output.contains("partial_failure"), "{output}");
+    assert!(!output.contains("mx.private.example"), "{output}");
+    assert!(!output.contains("password=must-not-appear"), "{output}");
 }
 
 #[test]

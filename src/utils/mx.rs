@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::process::Command;
 use std::str;
+use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 
 /// MX record information
 #[derive(Debug, Clone)]
@@ -44,17 +46,17 @@ impl MxTester {
 
     /// Query MX records for the domain
     pub async fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         crate::security::validate_hostname(&self.domain).map_err(|error| {
             crate::error::TlsError::InvalidInput {
                 message: format!("Invalid MX domain: {error}"),
             }
         })?;
 
-        println!(
-            "\n{} MX records for {}...",
-            "Querying".cyan().bold(),
-            self.domain.yellow()
+        debug!(
+            event_name = "dns.mx.lookup.started",
+            operation = "query_mx_records",
+            "Starting MX record lookup"
         );
 
         let (mx_records, resolver) = if self.resolvers.is_empty() {
@@ -126,19 +128,6 @@ impl MxTester {
             outcome = "success",
             "MX lookup completed"
         );
-
-        println!(
-            "\n{} Found {} MX record(s):",
-            "✓".green().bold(),
-            sorted_records.len()
-        );
-        for record in &sorted_records {
-            println!(
-                "  Priority: {:<3} | Host: {}",
-                record.priority.to_string().cyan(),
-                record.hostname.yellow()
-            );
-        }
 
         Ok(sorted_records)
     }
@@ -229,27 +218,31 @@ impl MxTester {
         parallel: bool,
         max_parallel: usize,
     ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
+        let started = Instant::now();
         let mx_records = self.query_mx_records().await?;
 
-        println!("\n{}", "=".repeat(80).cyan());
-        println!(
-            "{} Scanning {} mail servers (port 25 - SMTP)",
-            "Starting".cyan().bold(),
-            mx_records.len()
+        info!(
+            event_name = "dns.mx.scan.started",
+            operation = "scan_all_mx",
+            record_count = mx_records.len(),
+            parallel,
+            max_parallel = max_parallel.max(1),
+            "Starting MX server scans"
         );
-        println!("{}\n", "=".repeat(80).cyan());
 
         let results = if parallel {
-            println!(
-                "{} Running MX scans in parallel (max {} concurrent)\n",
-                "[*]".cyan(),
-                max_parallel.max(1)
-            );
             self.scan_all_mx_parallel(&mx_records, base_request, max_parallel.max(1))
                 .await?
         } else {
             self.scan_all_mx_serial(&mx_records, base_request).await?
         };
+
+        let successful_scans = results.iter().filter(|(_, result)| result.is_ok()).count();
+        log_mx_scan_summary(
+            results.len(),
+            successful_scans,
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
 
         Ok(results)
     }
@@ -262,19 +255,25 @@ impl MxTester {
         let mut results = Vec::new();
 
         for (idx, record) in mx_records.iter().enumerate() {
-            println!(
-                "{} Scanning MX {}/{}: {} (priority {})",
-                "[+]".green(),
-                idx + 1,
-                mx_records.len(),
-                record.hostname.yellow(),
-                record.priority
+            debug!(
+                event_name = "dns.mx.server_scan.started",
+                operation = "scan_mx_record",
+                scan_index = idx + 1,
+                total_records = mx_records.len(),
+                priority = record.priority,
+                "Starting MX server scan"
             );
 
+            let started = Instant::now();
             let result = Self::scan_mx_record(base_request, record).await;
-            Self::print_scan_result(&result);
+            log_mx_server_scan(
+                idx + 1,
+                mx_records.len(),
+                record.priority,
+                started.elapsed(),
+                &result,
+            );
             results.push((record.clone(), result));
-            println!();
         }
 
         Ok(results)
@@ -286,13 +285,29 @@ impl MxTester {
         base_request: &ScanRequest,
         max_parallel: usize,
     ) -> Result<Vec<(MxRecord, Result<ScanResults>)>> {
-        let mut completed = 0usize;
+        let total_records = mx_records.len();
 
         let mut results =
             stream::iter(mx_records.iter().cloned().enumerate().map(|(idx, record)| {
                 let request = base_request.clone();
                 async move {
+                    let started = Instant::now();
+                    debug!(
+                        event_name = "dns.mx.server_scan.started",
+                        operation = "scan_mx_record",
+                        scan_index = idx + 1,
+                        total_records,
+                        priority = record.priority,
+                        "Starting MX server scan"
+                    );
                     let result = Self::scan_mx_record(&request, &record).await;
+                    log_mx_server_scan(
+                        idx + 1,
+                        total_records,
+                        record.priority,
+                        started.elapsed(),
+                        &result,
+                    );
                     (idx, record, result)
                 }
             }))
@@ -300,17 +315,6 @@ impl MxTester {
 
         let mut collected = Vec::with_capacity(mx_records.len());
         while let Some((idx, record, result)) = results.next().await {
-            completed += 1;
-            println!(
-                "{} Completed MX {}/{}: {} (priority {})",
-                "[+]".green(),
-                completed,
-                mx_records.len(),
-                record.hostname.yellow(),
-                record.priority
-            );
-            Self::print_scan_result(&result);
-            println!();
             collected.push((idx, record, result));
         }
 
@@ -328,20 +332,6 @@ impl MxTester {
         match Scanner::new(request) {
             Ok(scanner) => scanner.run().await,
             Err(e) => Err(e),
-        }
-    }
-
-    fn print_scan_result(result: &Result<ScanResults>) {
-        match result {
-            Ok(scan_results) => {
-                println!("  {} Scan completed", "✓".green());
-                if let Some(rating) = scan_results.ssl_rating() {
-                    println!("  {} SSL Labs Grade: {}", "→".blue(), rating.grade);
-                }
-            }
-            Err(e) => {
-                println!("  {} Scan failed: {}", "✗".red(), e);
-            }
         }
     }
 
@@ -657,6 +647,69 @@ fn aggregate_vulnerabilities(
 
     aggregated.sort_by_key(|vulnerability| vulnerability.vuln_type.sort_key());
     aggregated
+}
+
+fn log_mx_server_scan(
+    scan_index: usize,
+    total_records: usize,
+    priority: u16,
+    duration: Duration,
+    result: &Result<ScanResults>,
+) {
+    let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    match result {
+        Ok(_) => info!(
+            event_name = "dns.mx.server_scan.completed",
+            operation = "scan_mx_record",
+            scan_index,
+            total_records,
+            priority,
+            duration_ms,
+            outcome = "success",
+            "MX server scan completed"
+        ),
+        Err(error) => warn!(
+            event_name = "dns.mx.server_scan.failed",
+            operation = "scan_mx_record",
+            scan_index,
+            total_records,
+            priority,
+            duration_ms,
+            error_type = "scan",
+            error_code = error.observability_code(),
+            outcome = "failed",
+            "MX server scan failed"
+        ),
+    }
+}
+
+fn log_mx_scan_summary(total_records: usize, successful_scans: usize, duration_ms: u64) {
+    let failed_scans = total_records.saturating_sub(successful_scans);
+    if failed_scans == 0 {
+        info!(
+            event_name = "dns.mx.scan.completed",
+            operation = "scan_all_mx",
+            total_records,
+            successful_scans,
+            failed_scans,
+            duration_ms,
+            outcome = "success",
+            "MX scan completed"
+        );
+    } else {
+        warn!(
+            event_name = "dns.mx.scan.completed",
+            operation = "scan_all_mx",
+            total_records,
+            successful_scans,
+            failed_scans,
+            duration_ms,
+            error_type = "partial_scan",
+            error_code = "mx_server_scan_failed",
+            outcome = "partial_failure",
+            "MX scan completed with server failures"
+        );
+    }
 }
 
 #[cfg(test)]
