@@ -1,6 +1,11 @@
 use crate::api::middleware::{AuthExtension, proxy::client_ip};
 use crate::api::state::{AppState, AuditEvent};
-use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use axum::{
+    extract::{MatchedPath, State},
+    http::Request,
+    middleware::Next,
+    response::Response,
+};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::Instrument;
@@ -14,7 +19,12 @@ pub async fn metrics(
     let start = Instant::now();
     let request_id = Uuid::new_v4().to_string();
     let method = request.method().to_string();
-    let path = request.uri().path().to_string();
+    let path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str())
+        .unwrap_or("<unmatched>")
+        .to_string();
     let client_ip = client_ip(&request, &state).map(|ip| ip.to_string());
     let owner = request
         .extensions()
@@ -68,11 +78,48 @@ pub async fn metrics(
         path = %path,
         status,
         duration_ms,
-        client_ip = client_ip.as_deref().unwrap_or("unknown"),
         "api request"
     );
     if let Ok(value) = request_id.parse() {
         response.headers_mut().insert("X-Request-ID", value);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metrics;
+    use crate::api::{ApiConfig, state::AppState};
+    use axum::{Router, body::Body, middleware, routing::get};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn request_id_matches_audit_event_and_path_is_route_template() {
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route("/history/{domain}", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(state.clone(), metrics));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/history/private.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let stats = state.stats.read().await;
+        let event = stats.audit_events.back().unwrap();
+        assert_eq!(event.request_id, request_id);
+        assert_eq!(event.path, "/history/{domain}");
+        assert!(!event.path.contains("private.example"));
+    }
 }

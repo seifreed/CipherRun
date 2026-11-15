@@ -30,6 +30,7 @@ indexed source files was manually inspected.
 - `1ff58fd`: scan targets and alert message bodies removed from operational logs; 56 alert tests passed.
 - `1fd412f`: WebSocket text and redirect locations removed from logs; focused tests passed (1 WebSocket and 12 HTTP tester tests).
 - `b1e75d5`: updated vulnerable dependency families and patched SQLx SQLite to `libsqlite3-sys` 0.39.1; DB integration (19), library (3039), all-feature check, package verification passed; `cargo audit` reported zero vulnerabilities.
+- Request audit now records Axum's matched route template, shares the generated request ID with the response header and omits client IP from emitted logs; a middleware integration test verifies the ID/path relationship and that a domain parameter is not logged.
 
 ## Current known limitations
 

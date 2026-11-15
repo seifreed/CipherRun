@@ -255,10 +255,11 @@ Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
 default. This setting applies to both the CLI and standalone worker.
 
 API middleware creates a `http.request` span with the generated `request_id`,
-HTTP method, and path around downstream request handling. The response's
+HTTP method, and matched route template around downstream request handling.
+The response's
 `X-Request-ID` can be used to find that request's structured audit event and
-related spans. The request path is logged without its query string; request
-bodies and authorization headers are not logged. Do not add credentials,
+related spans. Unmatched paths use a fixed marker; client IPs, query strings,
+request bodies and authorization headers are not written to logs. Do not add credentials,
 webhook URLs, certificate contents, or alert message bodies to tracing fields.
 
 With the `otel` feature enabled, tracing spans are exported through OTLP over
