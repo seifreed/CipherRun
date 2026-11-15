@@ -164,7 +164,7 @@ impl ScanExecutor {
             return;
         }
 
-        info!("Starting scan job {} for target {}", job.id, job.target);
+        info!(job_id = %job.id, "Starting scan job");
 
         // Mark job as started. Use update_job_preserving_cancelled so that a
         // cancellation arriving between the check above and this write is not

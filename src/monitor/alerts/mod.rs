@@ -620,8 +620,8 @@ impl AlertManager {
 
         if self.channels.is_empty() {
             tracing::warn!(
-                "No alert channels configured — alert not delivered: {}",
-                alert.message
+                alert_type = ?alert.alert_type,
+                "No alert channels configured; alert not delivered"
             );
             return Ok(());
         }
@@ -633,11 +633,11 @@ impl AlertManager {
             let channel_name = channel.channel_name();
             match channel.send_alert(alert).await {
                 Ok(_) => {
-                    tracing::info!("Alert sent via {}: {}", channel_name, alert.message);
+                    tracing::info!(channel = %channel_name, alert_type = ?alert.alert_type, "Alert sent");
                     success_count += 1;
                 }
-                Err(e) => {
-                    tracing::error!("Failed to send alert via {}: {}", channel_name, e);
+                Err(_) => {
+                    tracing::error!(channel = %channel_name, alert_type = ?alert.alert_type, "Failed to send alert");
                 }
             }
         }

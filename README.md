@@ -243,6 +243,27 @@ Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;
 without that feature, no telemetry backend is contacted.
 
+### Logging and diagnosis
+
+CipherRun uses Rust `tracing`. Logs go to stderr; pass `--logfile FILE` to also
+append them to a local file. The default level is `info`; `-v` enables `debug`
+and `-vv` enables `trace`. `RUST_LOG` takes precedence and supports standard
+module directives, for example `RUST_LOG=warn,cipherrun::api=debug`. Invalid
+filters fall back to the selected verbosity. The standalone worker uses the
+same `RUST_LOG` filter and defaults to `info`.
+
+API middleware creates a `http.request` span with the generated `request_id`,
+HTTP method, and path around downstream request handling. The response's
+`X-Request-ID` can be used to find that request's structured audit event and
+related spans. The request path is logged without its query string; request
+bodies and authorization headers are not logged. Do not add credentials,
+webhook URLs, certificate contents, or alert message bodies to tracing fields.
+
+With the `otel` feature enabled, tracing spans are exported through OTLP over
+HTTP. Without it, logs and spans remain local and no telemetry service is
+required. File rotation and retention are managed by the operator or runtime;
+CipherRun currently appends to the configured file without rotating it.
+
 Native HTTPS is available by setting `tls_cert_file` and `tls_key_file` to a
 certificate chain and private-key PEM file. The two paths must be configured
 together; otherwise the API remains HTTP for local development. TLS handshakes

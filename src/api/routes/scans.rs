@@ -102,7 +102,7 @@ pub async fn create_scan(
     headers: HeaderMap,
     Json(request): Json<ScanRequest>,
 ) -> Result<(StatusCode, Json<ScanResponse>), ApiError> {
-    info!("Creating new scan for target: {}", request.target);
+    info!("Creating scan request");
 
     // Basic empty check
     if request.target.is_empty() {
@@ -130,7 +130,7 @@ pub async fn create_scan(
         }
     }
 
-    info!("Validated target: {}", final_target);
+    info!("Scan target validated");
 
     // Create scan job with validated target
     let idempotency_key = idempotency_key(&headers)?;
