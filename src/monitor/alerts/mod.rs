@@ -624,7 +624,9 @@ impl AlertManager {
 
         if self.channels.is_empty() {
             tracing::warn!(
+                event_name = "monitor.alert.not_delivered",
                 alert_type = ?alert.alert_type,
+                reason = "no_channels_configured",
                 "No alert channels configured; alert not delivered"
             );
             return Ok(());

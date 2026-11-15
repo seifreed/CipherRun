@@ -146,7 +146,12 @@ impl MonitorDaemon {
             domains = enabled_count,
             "Monitoring inventory ready"
         );
-        tracing::info!(alert_channels = ?self.config.enabled_channels(), concurrency = self.config.monitor.max_concurrent_scans, "Monitoring configuration loaded");
+        tracing::info!(
+            event_name = "monitor.configuration.loaded",
+            alert_channels = ?self.config.enabled_channels(),
+            concurrency = self.config.monitor.max_concurrent_scans,
+            "Monitoring configuration loaded"
+        );
 
         // Main monitoring loop
         let mut tick_interval = interval(crate::constants::MONITOR_POLL_INTERVAL);
@@ -305,6 +310,7 @@ impl MonitorDaemon {
         detector: Arc<ChangeDetector>,
     ) -> Result<()> {
         let identifier = domain.identifier();
+        let scan_started = std::time::Instant::now();
 
         tracing::debug!(
             event_name = "monitor.domain_scan.started",
@@ -406,17 +412,18 @@ impl MonitorDaemon {
         }
 
         // Check expiry warnings (don't propagate alert errors to avoid skipping inventory update)
-        if Self::check_expiry_warnings(
+        if let Err(error) = Self::check_expiry_warnings(
             &identifier,
             &current_cert,
             &domain.alert_thresholds,
             &alert_manager,
         )
         .await
-        .is_err()
         {
             tracing::error!(
+                event_name = "monitor.expiry_check.failed",
                 error_type = "expiry_check",
+                error_code = error.observability_code(),
                 "Failed to check certificate expiry"
             );
         }
@@ -429,6 +436,8 @@ impl MonitorDaemon {
 
         tracing::debug!(
             event_name = "monitor.domain_scan.completed",
+            duration_ms = u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "complete",
             "Domain scan completed"
         );
 
@@ -446,6 +455,7 @@ impl MonitorDaemon {
             Some(dt) => dt,
             None => {
                 tracing::warn!(
+                    event_name = "monitor.certificate_expiry.parse_failed",
                     error_type = "certificate_expiry",
                     "Failed to parse certificate expiry date"
                 );
@@ -535,6 +545,7 @@ impl MonitorDaemon {
                     Ok(s) => s,
                     Err(_) => {
                         tracing::error!(
+                            event_name = "monitor.signal_handler.setup_failed",
                             error_type = "signal_handler",
                             signal = "SIGTERM",
                             "Failed to set up signal handler"
@@ -546,6 +557,7 @@ impl MonitorDaemon {
                     Ok(s) => s,
                     Err(_) => {
                         tracing::error!(
+                            event_name = "monitor.signal_handler.setup_failed",
                             error_type = "signal_handler",
                             signal = "SIGINT",
                             "Failed to set up signal handler"

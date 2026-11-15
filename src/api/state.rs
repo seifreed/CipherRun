@@ -595,9 +595,11 @@ impl AppState {
         let mut tasks = Vec::with_capacity(3);
         let executor = self.executor.clone();
         tasks.push(tokio::spawn(async move {
-            if executor.start().await.is_err() {
+            if let Err(error) = executor.start().await {
                 tracing::error!(
+                    event_name = "scan_executor.stopped_unexpectedly",
                     error_type = "executor",
+                    error_code = error.observability_code(),
                     "Scan executor stopped unexpectedly"
                 );
             }
@@ -628,8 +630,13 @@ impl AppState {
                         );
                     }
                     Ok(_) => {}
-                    Err(_) => {
-                        tracing::error!(error_type = "queue", "Failed to prune expired scan jobs")
+                    Err(error) => {
+                        tracing::error!(
+                            event_name = "scan_jobs.prune_failed",
+                            error_type = "queue",
+                            error_code = error.observability_code(),
+                            "Failed to prune expired scan jobs"
+                        )
                     }
                 }
             }

@@ -439,6 +439,7 @@ impl InMemoryJobQueue {
     /// result shortly after completion; only the oldest beyond that cap are
     /// dropped. The caller must already hold the `jobs` write lock.
     fn prune_terminal_jobs(&self, jobs: &mut HashMap<String, ScanJob>) {
+        let mut persistence_failures = 0;
         if let Some(retention) = self.retention {
             let now = Utc::now();
             let expired: Vec<String> = jobs
@@ -456,7 +457,7 @@ impl InMemoryJobQueue {
                 if let Some(storage) = &self.storage
                     && storage.delete_job(&id).is_err()
                 {
-                    tracing::warn!(job_id = %id, error_type = "queue_storage", "Failed to remove expired scan job");
+                    persistence_failures += 1;
                 }
             }
         }
@@ -466,6 +467,14 @@ impl InMemoryJobQueue {
             .filter(|j| Self::is_terminal(j.status))
             .count();
         if terminal_count <= self.max_capacity {
+            if persistence_failures > 0 {
+                tracing::warn!(
+                    event_name = "scan_jobs.prune_storage_failed",
+                    failure_count = persistence_failures,
+                    error_type = "queue_storage",
+                    "Failed to remove pruned scan jobs from storage"
+                );
+            }
             return;
         }
 
@@ -482,8 +491,16 @@ impl InMemoryJobQueue {
             if let Some(storage) = &self.storage
                 && storage.delete_job(&id).is_err()
             {
-                tracing::warn!(job_id = %id, error_type = "queue_storage", "Failed to remove pruned scan job");
+                persistence_failures += 1;
             }
+        }
+        if persistence_failures > 0 {
+            tracing::warn!(
+                event_name = "scan_jobs.prune_storage_failed",
+                failure_count = persistence_failures,
+                error_type = "queue_storage",
+                "Failed to remove pruned scan jobs from storage"
+            );
         }
     }
 }
@@ -671,7 +688,92 @@ impl JobQueue for InMemoryJobQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::jobs::FileJobStorage;
+    use crate::api::jobs::{FileJobStorage, JobStorage};
+    use std::io::Write;
+
+    #[test]
+    fn prune_storage_failures_are_aggregated_without_job_ids() {
+        struct FailingDeleteStorage;
+
+        impl JobStorage for FailingDeleteStorage {
+            fn save_job(&self, _: &ScanJob) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn load_job(&self, _: &str) -> crate::Result<Option<ScanJob>> {
+                Ok(None)
+            }
+
+            fn load_all_jobs(&self) -> crate::Result<Vec<ScanJob>> {
+                Ok(Vec::new())
+            }
+
+            fn delete_job(&self, _: &str) -> crate::Result<()> {
+                Err(crate::TlsError::Other(
+                    "synthetic delete failure".to_string(),
+                ))
+            }
+        }
+
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let queue = InMemoryJobQueue::with_storage(1, Arc::new(FailingDeleteStorage)).unwrap();
+        let mut jobs = HashMap::new();
+        let mut job_ids = Vec::new();
+        for index in 0..4 {
+            let mut job = ScanJob::new(
+                format!("target-{index}.example:443"),
+                ScanOptions::default(),
+                None,
+            );
+            job.mark_completed(ScanResults::default());
+            job_ids.push(job.id.clone());
+            jobs.insert(job.id.clone(), job);
+        }
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            queue.prune_terminal_jobs(&mut jobs);
+        });
+
+        assert_eq!(jobs.len(), 1);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "scan_jobs.prune_storage_failed"
+        );
+        assert_eq!(events[0]["fields"]["failure_count"], 3);
+        assert!(job_ids.iter().all(|id| !output.contains(id)));
+    }
 
     #[cfg(feature = "otel")]
     #[test]

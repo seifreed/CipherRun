@@ -43,13 +43,21 @@ impl axum::serve::Listener for TlsListener {
             let (stream, address) = match self.listener.accept().await {
                 Ok(connection) => connection,
                 Err(_) => {
-                    tracing::warn!(error_type = "tls_listener", "TLS listener accept failed");
+                    tracing::warn!(
+                        event_name = "api.tls_listener.accept_failed",
+                        error_type = "tls_listener",
+                        "TLS listener accept failed"
+                    );
                     continue;
                 }
             };
             match self.acceptor.accept(stream).await {
                 Ok(stream) => return (stream, address),
-                Err(_) => tracing::warn!(error_type = "tls_handshake", "TLS handshake failed"),
+                Err(_) => tracing::debug!(
+                    event_name = "api.tls_listener.handshake_rejected",
+                    error_type = "tls_handshake",
+                    "TLS handshake rejected"
+                ),
             }
         }
     }
@@ -410,7 +418,9 @@ impl ApiServer {
                 Ok(signal) => signal,
                 Err(_) => {
                     tracing::warn!(
+                        event_name = "api_server.shutdown_signal.failed",
                         error_type = "signal_handler",
+                        error_code = "signal_wait_failed",
                         "Failed to receive shutdown signal"
                     );
                     "unknown"

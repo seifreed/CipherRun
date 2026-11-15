@@ -92,6 +92,7 @@ pub async fn metrics(
     });
     tracing::info!(
         target: "audit",
+        event_name = "api.request.completed",
         request_id = %request_id,
         method = %method,
         path = %path,

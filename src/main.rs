@@ -35,12 +35,16 @@ async fn main() -> ExitCode {
         Err(error) => {
             if tracing::dispatcher::has_been_set() {
                 tracing::error!(
+                    event_name = "cli.command.failed",
                     error_type = "TlsError",
                     error_code = error.observability_code(),
                     "CLI command failed"
                 );
             } else {
-                eprintln!("Error: CipherRun failed before logging was initialized");
+                eprintln!(
+                    "Error: CipherRun failed before logging was initialized (error_code={})",
+                    error.observability_code()
+                );
             }
             ExitCode::from(1)
         }
