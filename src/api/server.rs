@@ -382,10 +382,12 @@ impl ApiServer {
     pub async fn run(self) -> Result<()> {
         // API-only deployments can hand the shared database queue to external
         // workers instead of running a local executor.
-        if self.config.local_executor {
+        let background_tasks = if self.config.local_executor {
             let state = self.state.clone();
-            state.start_executor().await?;
-        }
+            Some(state.start_executor().await?)
+        } else {
+            None
+        };
 
         // Build router
         let app = self.router()?;
@@ -445,8 +447,8 @@ impl ApiServer {
             .await?;
         }
 
-        if self.config.local_executor {
-            self.state.executor.shutdown().await?;
+        if let Some(background_tasks) = background_tasks {
+            background_tasks.shutdown().await?;
         }
         info!(event_name = "api_server.stopped", "API server stopped");
         Ok(())

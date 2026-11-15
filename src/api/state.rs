@@ -13,7 +13,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 
 /// Maximum number of timestamps to keep in memory
 /// How often the per-key rate-limiter is swept to evict stale entries. Without
@@ -66,6 +67,48 @@ pub struct AppState {
 
     /// Optional durable analytics store for completed API scans.
     pub results_store: Option<Arc<dyn crate::application::ScanResultsStore>>,
+}
+
+pub struct ApiBackgroundTasks {
+    shutdown: watch::Sender<bool>,
+    executor: Arc<ScanExecutor>,
+    tasks: Vec<JoinHandle<()>>,
+    stopped: bool,
+}
+
+impl ApiBackgroundTasks {
+    pub async fn shutdown(mut self) -> Result<()> {
+        let executor_result = self.executor.shutdown().await;
+        let _ = self.shutdown.send(true);
+        self.stopped = true;
+        for task in self.tasks.drain(..) {
+            task.await.map_err(|_| {
+                crate::TlsError::Other("API background task failed during shutdown".to_string())
+            })?;
+        }
+        executor_result
+    }
+}
+
+impl Drop for ApiBackgroundTasks {
+    fn drop(&mut self) {
+        if self.stopped {
+            return;
+        }
+        let _ = self.shutdown.send(true);
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let executor = self.executor.clone();
+            runtime.spawn(async move {
+                if executor.shutdown().await.is_err() {
+                    tracing::warn!(
+                        event_name = "api_server.executor_shutdown.failed",
+                        error_type = "executor",
+                        "Failed to stop API scan executor"
+                    );
+                }
+            });
+        }
+    }
 }
 
 /// API statistics
@@ -516,25 +559,35 @@ impl AppState {
     }
 
     /// Start the executor
-    pub async fn start_executor(self: Arc<Self>) -> Result<()> {
+    pub async fn start_executor(self: Arc<Self>) -> Result<ApiBackgroundTasks> {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let mut tasks = Vec::with_capacity(3);
         let executor = self.executor.clone();
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             if executor.start().await.is_err() {
                 tracing::error!(
                     error_type = "executor",
                     "Scan executor stopped unexpectedly"
                 );
             }
-        });
+        }));
 
         let job_queue = self.job_queue.clone();
-        tokio::spawn(async move {
+        let mut queue_shutdown = shutdown_rx.clone();
+        tasks.push(tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 JOB_RETENTION_CLEANUP_INTERVAL_SECS,
             ));
             ticker.tick().await;
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    changed = queue_shutdown.changed() => {
+                        if changed.is_err() || *queue_shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    _ = ticker.tick() => {}
+                }
                 match job_queue.prune_expired().await {
                     Ok(removed) if removed > 0 => {
                         tracing::info!(
@@ -549,25 +602,37 @@ impl AppState {
                     }
                 }
             }
-        });
+        }));
 
         // Periodically evict stale rate-limiter entries. cleanup() is the only
         // mechanism that bounds the limiter's maps; without this sweeper they
         // grow for the lifetime of the process (one entry per distinct API key,
         // never freed) — a slow memory leak.
         let rate_limiter = self.rate_limiter.clone();
-        tokio::spawn(async move {
+        let mut rate_limit_shutdown = shutdown_rx;
+        tasks.push(tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 RATE_LIMITER_CLEANUP_INTERVAL_SECS,
             ));
             ticker.tick().await; // first tick fires immediately; skip it
             loop {
-                ticker.tick().await;
-                rate_limiter.cleanup();
+                tokio::select! {
+                    changed = rate_limit_shutdown.changed() => {
+                        if changed.is_err() || *rate_limit_shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    _ = ticker.tick() => rate_limiter.cleanup(),
+                }
             }
-        });
+        }));
 
-        Ok(())
+        Ok(ApiBackgroundTasks {
+            shutdown: shutdown_tx,
+            executor: self.executor.clone(),
+            tasks,
+            stopped: false,
+        })
     }
 
     /// Get uptime in seconds
@@ -750,6 +815,13 @@ pub(crate) fn load_webhook_signing_secret(path: &std::path::Path) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_background_tasks_stop_and_join() {
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let tasks = state.clone().start_executor().await.unwrap();
+        tasks.shutdown().await.unwrap();
+    }
 
     fn owner_only(path: &std::path::Path) {
         #[cfg(unix)]
