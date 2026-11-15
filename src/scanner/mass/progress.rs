@@ -2,6 +2,7 @@ use crate::Result;
 use crate::scanner::ScanResults;
 use colored::Colorize;
 use std::time::Duration;
+use tracing::debug;
 
 /// Progress information for a completed target scan.
 #[derive(Debug)]
@@ -76,8 +77,18 @@ impl MassScanProgressCallback for TerminalMassProgress {
                     println!("  {} SSL Labs Grade: {}", "INFO".blue(), rating.grade);
                 }
             }
-            Err(e) => {
-                println!("  {} Scan failed: {}", "ERR".red(), e);
+            Err(error) => {
+                debug!(
+                    event_name = "mass_scan.target.failed",
+                    scan_index = progress.index,
+                    total_targets = progress.total,
+                    duration_ms = u64::try_from(progress.duration.as_millis()).unwrap_or(u64::MAX),
+                    error_type = "scan",
+                    error_code = error.observability_code(),
+                    outcome = "failed",
+                    "Mass scan target failed"
+                );
+                println!("  {} Scan failed", "ERR".red());
             }
         }
         println!();

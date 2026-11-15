@@ -11,7 +11,8 @@ use crate::{Args, Result, TlsError};
 use async_trait::async_trait;
 use colored::Colorize;
 use std::net::IpAddr;
-use tracing::info;
+use std::time::Instant;
+use tracing::{info, warn};
 
 /// Upper bound on the number of hosts a single `--asn`/`--cidr` expansion may
 /// produce. This guards against accidentally launching millions of TLS
@@ -180,11 +181,20 @@ impl Command for MassScanCommand {
             "Loaded mass scan targets"
         );
 
+        let started = Instant::now();
         let results = if self.args.network.parallel {
             mass_scanner.scan_parallel().await?
         } else {
             mass_scanner.scan_serial().await?
         };
+        let successful_scans = results.iter().filter(|(_, result)| result.is_ok()).count();
+        log_mass_scan_summary(
+            source_type,
+            self.args.network.parallel,
+            results.len(),
+            successful_scans,
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
         let exit = exit_for_result_list(&results);
 
         // Apply certificate filters if active
@@ -262,9 +272,97 @@ impl Command for MassScanCommand {
     }
 }
 
+fn log_mass_scan_summary(
+    source_type: &'static str,
+    parallel: bool,
+    total_targets: usize,
+    successful_targets: usize,
+    duration_ms: u64,
+) {
+    let failed_targets = total_targets.saturating_sub(successful_targets);
+    if failed_targets == 0 {
+        info!(
+            event_name = "mass_scan.completed",
+            operation = "scan_targets",
+            source_type,
+            parallel,
+            total_targets,
+            successful_targets,
+            failed_targets,
+            duration_ms,
+            outcome = "success",
+            "Mass scan completed"
+        );
+    } else {
+        warn!(
+            event_name = "mass_scan.completed",
+            operation = "scan_targets",
+            source_type,
+            parallel,
+            total_targets,
+            successful_targets,
+            failed_targets,
+            duration_ms,
+            error_type = "partial_scan",
+            error_code = "target_scan_failed",
+            outcome = "partial_failure",
+            "Mass scan completed with target failures"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+        type Writer = CapturedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogWriter(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn mass_scan_summary_logs_partial_outcome_without_target_names() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedLog(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_mass_scan_summary("file", true, 4, 3, 456);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("mass_scan.completed"), "{output}");
+        assert!(output.contains("source_type=\"file\""), "{output}");
+        assert!(output.contains("total_targets=4"), "{output}");
+        assert!(output.contains("successful_targets=3"), "{output}");
+        assert!(output.contains("failed_targets=1"), "{output}");
+        assert!(output.contains("duration_ms=456"), "{output}");
+        assert!(output.contains("partial_failure"), "{output}");
+        assert!(output.contains("WARN"), "{output}");
+        assert!(!output.contains("private.example"), "{output}");
+    }
 
     async fn build_scanner(args: Args) -> (MassScanner, &'static str) {
         MassScanCommand::new(args)
