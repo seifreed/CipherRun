@@ -149,6 +149,10 @@ pub async fn create_scan(
     );
     job.idempotency_key = idempotency_key;
     job.request_fingerprint = request_fingerprint;
+    #[cfg(feature = "otel")]
+    {
+        job.traceparent = crate::telemetry::current_traceparent();
+    }
 
     // Enqueue via adapter
     let scan_id = scan_adapter::enqueue_scan(state.job_queue.as_ref(), job).await?;

@@ -84,6 +84,11 @@ pub struct ScanJob {
     /// True when retries were exhausted and the job was moved to the dead-letter queue.
     #[serde(default)]
     pub dead_letter: bool,
+
+    /// W3C parent context to continue tracing after this job leaves the request.
+    #[cfg(feature = "otel")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traceparent: Option<String>,
 }
 
 impl ScanJob {
@@ -111,6 +116,8 @@ impl ScanJob {
             eta_seconds: None,
             attempts: 0,
             dead_letter: false,
+            #[cfg(feature = "otel")]
+            traceparent: None,
         }
     }
 
@@ -644,6 +651,19 @@ impl JobQueue for InMemoryJobQueue {
 mod tests {
     use super::*;
     use crate::api::jobs::FileJobStorage;
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn scan_job_persists_traceparent_for_background_execution() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.traceparent =
+            Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string());
+
+        let encoded = serde_json::to_string(&job).unwrap();
+        let restored: ScanJob = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(restored.traceparent, job.traceparent);
+    }
 
     #[tokio::test]
     async fn test_enqueue_dequeue() {

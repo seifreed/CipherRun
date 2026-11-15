@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore, broadcast};
 use tracing::{Instrument, error, info, info_span, warn};
+#[cfg(feature = "otel")]
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 const WEBHOOK_MAX_ATTEMPTS: u8 = 3;
 const WEBHOOK_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -209,6 +211,19 @@ impl ScanExecutor {
                 operation = "scan",
                 job_id = %job.id,
             );
+            #[cfg(feature = "otel")]
+            if let Some(parent) = job
+                .traceparent
+                .as_deref()
+                .and_then(crate::telemetry::context_from_traceparent)
+                && job_span.set_parent(parent).is_err()
+            {
+                warn!(
+                    event_name = "trace_context.rejected",
+                    job_id = %job.id,
+                    "Failed to apply scan job trace parent"
+                );
+            }
 
             active_tasks.spawn(
                 async move {
