@@ -113,7 +113,12 @@ impl CcsInjectionTester {
                         return Ok(TestStatus::HandshakeFailed);
                     }
                     Ok(Err(e)) => {
-                        tracing::debug!("CCS test read error during ServerHello: {}", e);
+                        tracing::debug!(
+                            event_name = "vulnerability.ccs.server_hello.read_failed",
+                            error_type = "TlsError",
+                            error_code = e.observability_code(),
+                            "CCS ServerHello read failed"
+                        );
                         return Ok(TestStatus::HandshakeFailed);
                     }
                     Err(_) => {

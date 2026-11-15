@@ -272,9 +272,10 @@ impl CertificateValidator {
                 return (false, None);
             } else {
                 tracing::warn!(
-                    "SECURITY: Weak certificate validation enabled - signature verification skipped for root CA '{}'. \
-                     This reduces security. Remove CIPHERUN_ALLOW_WEAK_CERT_VALIDATION to restore strict validation.",
-                    last_cert.issuer
+                    event_name = "certificate.validation.weak_mode",
+                    certificate_role = "root_ca",
+                    error_type = "signature_verification_skipped",
+                    "Weak certificate validation is enabled; remove CIPHERUN_ALLOW_WEAK_CERT_VALIDATION to restore strict validation"
                 );
                 issues.push(ValidationIssue {
                     severity: IssueSeverity::High,

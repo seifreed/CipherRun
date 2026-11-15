@@ -135,9 +135,11 @@ impl<'a> CipherRule<'a> {
                         // Fail closed: a misconfigured prohibited pattern must not silently
                         // allow forbidden ciphers to pass the policy. Surface it as a violation.
                         tracing::warn!(
-                            "Invalid prohibited cipher pattern '{}': {} — treating as a policy violation (fail-closed)",
-                            pattern,
-                            e
+                            event_name = "policy.cipher_pattern.invalid",
+                            pattern_kind = "prohibited",
+                            error_code = "invalid_pattern",
+                            outcome = "fail_closed",
+                            "Invalid cipher policy pattern"
                         );
                         violations.push(
                             PolicyViolation::new(
@@ -194,9 +196,11 @@ impl<'a> CipherRule<'a> {
                             // Fail closed: an invalid required pattern means we cannot confirm
                             // the required cipher is present, so the requirement is unmet.
                             tracing::warn!(
-                                "Invalid required cipher pattern '{}': {} — treating requirement as unmet (fail-closed)",
-                                pattern,
-                                e
+                                event_name = "policy.cipher_pattern.invalid",
+                                pattern_kind = "required",
+                                error_code = "invalid_pattern",
+                                outcome = "fail_closed",
+                                "Invalid cipher policy pattern"
                             );
                             violations.push(
                                 PolicyViolation::new(
@@ -370,6 +374,77 @@ mod tests {
             assert_eq!(violations[0].rule_path, rule_path, "{case}");
             assert!(violations[0].description.contains(description), "{case}");
         }
+    }
+
+    #[test]
+    fn invalid_cipher_policy_logs_redact_patterns_and_parser_errors() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let sensitive_pattern = "[private.example secret=do-not-log\ninjected=true";
+        let results = tls12_results(test_summary(
+            vec![create_test_cipher("TLS_AES_128_GCM_SHA256")],
+            CipherCounts::default(),
+        ));
+        let policies = [
+            ("prohibited", prohibited_pattern(sensitive_pattern)),
+            ("required", required_pattern(sensitive_pattern)),
+        ];
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            for (kind, policy) in &policies {
+                assert_eq!(violations(policy, &results).len(), 1, "{kind}");
+            }
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2, "captured events: {output:?}");
+        for (event, pattern_kind) in events.iter().zip(["prohibited", "required"]) {
+            assert_eq!(event["level"], "WARN");
+            assert_eq!(
+                event["fields"]["event_name"],
+                "policy.cipher_pattern.invalid"
+            );
+            assert_eq!(event["fields"]["pattern_kind"], pattern_kind);
+            assert_eq!(event["fields"]["error_code"], "invalid_pattern");
+            assert_eq!(event["fields"]["outcome"], "fail_closed");
+        }
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("do-not-log"));
+        assert!(!output.contains("injected=true"));
     }
 
     #[test]

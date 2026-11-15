@@ -181,10 +181,11 @@ impl ProtocolTester {
         // enumeration and the whole vulnerability phase (0 results).
         match ServerHelloParser::parse(&response) {
             Ok(server_hello) => Ok(Some(server_hello)),
-            Err(error) => {
+            Err(_) => {
                 tracing::debug!(
-                    "non-ServerHello response during feature detection ({});                      reporting feature status as unknown",
-                    error
+                    event_name = "protocol.feature_detection.parse_failed",
+                    outcome = "unknown",
+                    "Non-ServerHello response during feature detection"
                 );
                 Ok(None)
             }

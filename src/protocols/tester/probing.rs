@@ -46,9 +46,12 @@ impl ProtocolTester {
                     Ok(result) => result,
                     Err(error) => {
                         tracing::warn!(
-                            "Protocol {:?} probe failed; marking inconclusive so                              other protocols' results are preserved: {}",
-                            protocol,
-                            error
+                            event_name = "protocol.probe.failed",
+                            protocol = %protocol,
+                            error_type = "TlsError",
+                            error_code = error.observability_code(),
+                            outcome = "inconclusive",
+                            "Protocol probe failed; other protocol results are preserved"
                         );
                         ProtocolTestResult {
                             protocol,

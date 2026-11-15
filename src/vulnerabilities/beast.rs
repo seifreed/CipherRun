@@ -227,7 +227,11 @@ impl BeastTester {
                         Ok(BeastProbeStatus::Inconclusive)
                     } else if err_str.contains("ssl3") || err_str.contains("version") {
                         // SSL 3.0 not supported - treat as not vulnerable
-                        tracing::debug!("SSL 3.0 connection failed (likely not supported): {}", e);
+                        tracing::debug!(
+                            event_name = "vulnerability.beast.ssl3_probe.unsupported",
+                            outcome = "not_supported",
+                            "SSL 3.0 connection failed; protocol is likely unsupported"
+                        );
                         Ok(BeastProbeStatus::NotSupported)
                     } else {
                         // Other error - server might not support SSL 3.0

@@ -377,13 +377,15 @@ impl PhaseOrchestrator {
                     if fatal {
                         return Err(error);
                     }
-                    tracing::warn!(
-                        event_name = "scan.phase.failed",
-                        phase = phase.name(),
-                        error_type = "TlsError",
-                        error_code = error.observability_code(),
-                        "Scan phase failed"
-                    );
+                    phase_span.in_scope(|| {
+                        tracing::warn!(
+                            event_name = "scan.phase.failed",
+                            phase = phase.name(),
+                            error_type = "TlsError",
+                            error_code = error.observability_code(),
+                            "Scan phase failed"
+                        );
+                    });
                     context.results.add_human_warning(format!(
                         "{} could not complete: {}",
                         phase.name(),
@@ -426,7 +428,6 @@ mod tests {
     use std::io::Write;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tracing::instrument::WithSubscriber;
     use tracing_subscriber::fmt::MakeWriter;
 
     #[derive(Clone)]
@@ -606,8 +607,8 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn phase_span_records_outcome_and_duration_without_raw_error() {
+    #[test]
+    fn phase_span_records_outcome_and_duration_without_raw_error() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
@@ -618,11 +619,15 @@ mod tests {
             error: crate::TlsError::Other("probe failed target=private.example".to_string()),
         }));
 
-        orchestrator
-            .execute(test_scan_context(ScanRequest::default()))
-            .with_subscriber(subscriber)
-            .await
-            .expect("nonfatal phase errors should be recoverable");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            runtime
+                .block_on(orchestrator.execute(test_scan_context(ScanRequest::default())))
+                .expect("nonfatal phase errors should be recoverable");
+        });
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(output.contains("scan.phase"), "{output:?}");

@@ -121,11 +121,13 @@ impl Rule {
                         return true;
                     }
                 }
-                Err(e) => {
+                Err(_) => {
                     tracing::warn!(
-                        "Invalid allowed_pattern '{}': {}; treating as no match (fail-closed)",
-                        pattern,
-                        e
+                        event_name = "compliance.pattern.invalid",
+                        pattern_kind = "allowed",
+                        error_code = "invalid_pattern",
+                        outcome = "fail_closed",
+                        "Invalid compliance pattern"
                     );
                     return false;
                 }
@@ -150,6 +152,7 @@ impl Rule {
                     tracing::warn!(
                         event_name = "compliance.pattern.invalid",
                         pattern_kind = "denied",
+                        error_code = "invalid_pattern",
                         outcome = "fail_closed",
                         "Invalid compliance pattern"
                     );
@@ -168,6 +171,8 @@ impl Rule {
                 Err(_) => tracing::warn!(
                     event_name = "compliance.pattern.invalid",
                     pattern_kind = "preferred",
+                    error_code = "invalid_pattern",
+                    outcome = "ignored",
                     "Invalid compliance pattern"
                 ),
                 _ => {}
@@ -270,6 +275,76 @@ mod tests {
         };
 
         assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+    }
+
+    #[test]
+    fn invalid_pattern_events_are_structured_and_redact_configuration() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let sensitive_pattern = "[private.example secret=do-not-log\ninjected=true".to_string();
+        let rule = Rule {
+            allowed_patterns: vec![sensitive_pattern.clone()],
+            denied_patterns: vec![sensitive_pattern.clone()],
+            preferred_patterns: vec![sensitive_pattern],
+            ..base_rule("CipherSuite")
+        };
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(!rule.matches_allowed_pattern("TLS_AES_128_GCM_SHA256"));
+            assert!(rule.matches_denied_pattern("TLS_AES_128_GCM_SHA256"));
+            assert!(!rule.matches_preferred_pattern("TLS_AES_128_GCM_SHA256"));
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 3);
+        for (event, (pattern_kind, outcome)) in events.iter().zip([
+            ("allowed", "fail_closed"),
+            ("denied", "fail_closed"),
+            ("preferred", "ignored"),
+        ]) {
+            assert_eq!(event["level"], "WARN");
+            assert_eq!(event["fields"]["event_name"], "compliance.pattern.invalid");
+            assert_eq!(event["fields"]["pattern_kind"], pattern_kind);
+            assert_eq!(event["fields"]["error_code"], "invalid_pattern");
+            assert_eq!(event["fields"]["outcome"], outcome);
+        }
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("do-not-log"));
+        assert!(!output.contains("injected=true"));
     }
 
     #[test]
