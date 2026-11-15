@@ -76,141 +76,156 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
     let _logging_guard = initialize_logging(&args)?;
 
-    // Validate CLI arguments for conflicting flags
-    args.validate()?;
+    let mut command_failure_logged = false;
+    let result = async {
+        // Validate CLI arguments for conflicting flags
+        args.validate()?;
 
-    apply_output_preferences(&args);
+        apply_output_preferences(&args);
 
-    // Handle --version (display version and exit)
-    if args.version {
-        println!("CipherRun v{}", env!("CARGO_PKG_VERSION"));
-        println!("Fast, Modular TLS/SSL Security Scanner");
-        println!("Copyright (C) 2025 Marc Rivero (@seifreed)");
-        println!("Licensed under GPL-3.0");
-        return Ok(CommandExit::success());
-    }
-
-    if args.starttls.only {
-        return run_starttls_only(&args).await;
-    }
-
-    // Handle --api-config-example (generate API config example and exit)
-    if let Some(config_path) = &args.api_server.config_example {
-        #[cfg(feature = "api")]
-        {
-            use cipherrun::api::ApiConfig;
-            let token_path = ApiConfig::create_example(config_path)?;
-            println!(
-                "✓ Example API configuration saved to: {}",
-                config_path.display()
-            );
-            println!("✓ Bootstrap token saved to: {}", token_path.display());
+        // Handle --version (display version and exit)
+        if args.version {
+            println!("CipherRun v{}", env!("CARGO_PKG_VERSION"));
+            println!("Fast, Modular TLS/SSL Security Scanner");
+            println!("Copyright (C) 2025 Marc Rivero (@seifreed)");
+            println!("Licensed under GPL-3.0");
             return Ok(CommandExit::success());
         }
 
-        #[cfg(not(feature = "api"))]
-        {
-            let _ = config_path;
-            return Err(cipherrun::TlsError::ConfigError {
-                message: "API configuration requires the `api` feature".to_string(),
-            });
+        if args.starttls.only {
+            return run_starttls_only(&args).await;
         }
-    }
 
-    // Handle --list-compliance (list available frameworks and exit)
-    if args.compliance.list_frameworks {
-        use cipherrun::compliance::BuiltinFrameworkSource;
+        // Handle --api-config-example (generate API config example and exit)
+        if let Some(config_path) = &args.api_server.config_example {
+            #[cfg(feature = "api")]
+            {
+                use cipherrun::api::ApiConfig;
+                let token_path = ApiConfig::create_example(config_path)?;
+                println!(
+                    "✓ Example API configuration saved to: {}",
+                    config_path.display()
+                );
+                println!("✓ Bootstrap token saved to: {}", token_path.display());
+                return Ok(CommandExit::success());
+            }
 
-        println!("Available Compliance Frameworks:\n");
-        let frameworks = BuiltinFrameworkSource::list_frameworks();
+            #[cfg(not(feature = "api"))]
+            {
+                let _ = config_path;
+                return Err(cipherrun::TlsError::ConfigError {
+                    message: "API configuration requires the `api` feature".to_string(),
+                });
+            }
+        }
 
-        for (id, description) in frameworks {
-            println!("  {} - {}", id, description);
-            let metadata = BuiltinFrameworkSource::metadata(id)?;
+        // Handle --list-compliance (list available frameworks and exit)
+        if args.compliance.list_frameworks {
+            use cipherrun::compliance::BuiltinFrameworkSource;
+
+            println!("Available Compliance Frameworks:\n");
+            let frameworks = BuiltinFrameworkSource::list_frameworks();
+
+            for (id, description) in frameworks {
+                println!("  {} - {}", id, description);
+                let metadata = BuiltinFrameworkSource::metadata(id)?;
+                println!(
+                    "    rule pack {} | source {} | sha256 {}",
+                    metadata.version, metadata.source.version, metadata.content_sha256
+                );
+                println!("    {}", metadata.source.url);
+            }
+
+            println!("\nUsage: cipherrun --compliance <FRAMEWORK_ID> <TARGET>");
+            println!("Example: cipherrun --compliance pci-dss-v4 example.com:443");
+            return Ok(CommandExit::success());
+        }
+
+        // Handle --db-config-example (generate example config and exit)
+        if let Some(config_path) = &args.database.config_example {
+            use cipherrun::db::DatabaseConfig;
+            DatabaseConfig::create_example_config(config_path)?;
             println!(
-                "    rule pack {} | source {} | sha256 {}",
-                metadata.version, metadata.source.version, metadata.content_sha256
+                "✓ Example database configuration saved to: {}",
+                config_path.display()
             );
-            println!("    {}", metadata.source.url);
+            return Ok(CommandExit::success());
         }
 
-        println!("\nUsage: cipherrun --compliance <FRAMEWORK_ID> <TARGET>");
-        println!("Example: cipherrun --compliance pci-dss-v4 example.com:443");
-        return Ok(CommandExit::success());
-    }
-
-    // Handle --db-config-example (generate example config and exit)
-    if let Some(config_path) = &args.database.config_example {
-        use cipherrun::db::DatabaseConfig;
-        DatabaseConfig::create_example_config(config_path)?;
-        println!(
-            "✓ Example database configuration saved to: {}",
-            config_path.display()
-        );
-        return Ok(CommandExit::success());
-    }
-
-    // Handle --show-ciphers (list ciphers and exit)
-    if args.scan.show_ciphers {
-        use cipherrun::data::cipher_db;
-        println!(
-            "CipherRun v{} - Supported Cipher Suites\n",
-            env!("CARGO_PKG_VERSION")
-        );
-
-        let all_ciphers = cipher_db()?.get_all_ciphers();
-        println!("Total: {} cipher suites\n", all_ciphers.len());
-
-        for cipher in all_ciphers {
+        // Handle --show-ciphers (list ciphers and exit)
+        if args.scan.show_ciphers {
+            use cipherrun::data::cipher_db;
             println!(
-                "  0x{} - {} / {}",
-                cipher.hexcode, cipher.openssl_name, cipher.iana_name
+                "CipherRun v{} - Supported Cipher Suites\n",
+                env!("CARGO_PKG_VERSION")
             );
+
+            let all_ciphers = cipher_db()?.get_all_ciphers();
+            println!("Total: {} cipher suites\n", all_ciphers.len());
+
+            for cipher in all_ciphers {
+                println!(
+                    "  0x{} - {} / {}",
+                    cipher.hexcode, cipher.openssl_name, cipher.iana_name
+                );
+            }
+
+            return Ok(CommandExit::success());
         }
 
-        return Ok(CommandExit::success());
-    }
+        // Handle --local (list local OpenSSL ciphers and exit)
+        if args.tls.local {
+            let openssl = if let Some(path) = &args.tls.openssl_path {
+                OpenSslClient::with_path(path.as_os_str())
+            } else {
+                OpenSslClient::new()
+            };
 
-    // Handle --local (list local OpenSSL ciphers and exit)
-    if args.tls.local {
-        let openssl = if let Some(path) = &args.tls.openssl_path {
-            OpenSslClient::with_path(path.as_os_str())
-        } else {
-            OpenSslClient::new()
-        };
+            println!("OpenSSL: {}", openssl.get_version()?);
+            for cipher in openssl.list_local_ciphers()? {
+                println!("{}", cipher);
+            }
 
-        println!("OpenSSL: {}", openssl.get_version()?);
-        for cipher in openssl.list_local_ciphers()? {
-            println!("{}", cipher);
+            return Ok(CommandExit::success());
         }
 
-        return Ok(CommandExit::success());
+        // Validate routing before creating command
+        CommandRouter::validate_routing(&args)?;
+
+        // Route to appropriate command and execute
+        let command = CommandRouter::route(args)?;
+        let operation = command.name();
+        let start = std::time::Instant::now();
+        let result = command.execute().await;
+        let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match &result {
+            Ok(exit) => info!(
+                event_name = "cli.command.finished",
+                operation,
+                duration_ms,
+                exit_code = exit.code(),
+                outcome = "complete",
+            ),
+            Err(_) => {
+                command_failure_logged = true;
+                tracing::error!(
+                    event_name = "cli.command.failed",
+                    operation,
+                    duration_ms,
+                    error_type = "TlsError",
+                    outcome = "error",
+                );
+            }
+        }
+        result
     }
-
-    // Validate routing before creating command
-    CommandRouter::validate_routing(&args)?;
-
-    // Route to appropriate command and execute
-    let command = CommandRouter::route(args)?;
-    let operation = command.name();
-    let start = std::time::Instant::now();
-    let result = command.execute().await;
-    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    match &result {
-        Ok(exit) => info!(
-            event_name = "cli.command.finished",
-            operation,
-            duration_ms,
-            exit_code = exit.code(),
-            outcome = "complete",
-        ),
-        Err(_) => tracing::error!(
-            event_name = "cli.command.failed",
-            operation,
-            duration_ms,
+    .await;
+    if result.is_err() && !command_failure_logged {
+        tracing::error!(
+            event_name = "cli.failed",
             error_type = "TlsError",
-            outcome = "error",
-        ),
+            "CLI command failed"
+        );
     }
     result
 }
@@ -279,9 +294,7 @@ async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
     })
 }
 
-fn initialize_logging(
-    args: &Args,
-) -> cipherrun::Result<tracing_appender::non_blocking::WorkerGuard> {
+fn initialize_logging(args: &Args) -> cipherrun::Result<LoggingGuard> {
     let filter = resolve_log_filter(
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
@@ -300,9 +313,8 @@ fn initialize_logging(
         .lossy(true)
         .finish(LogWriter { file });
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
-
     #[cfg(feature = "otel")]
-    {
+    let tracer_provider = {
         use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
         let fmt_layer = if json {
@@ -317,7 +329,7 @@ fn initialize_logging(
                 .with_filter(filter)
                 .boxed()
         };
-        let otel_layer = cipherrun::telemetry::layer()?;
+        let (otel_layer, provider) = cipherrun::telemetry::layer()?;
         let result = tracing_subscriber::registry()
             .with(fmt_layer)
             .with(otel_layer)
@@ -325,7 +337,8 @@ fn initialize_logging(
         result.map_err(|e| {
             cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
         })?;
-    }
+        Some(provider)
+    };
 
     #[cfg(not(feature = "otel"))]
     {
@@ -345,7 +358,31 @@ fn initialize_logging(
             cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
         })?;
     }
-    Ok(guard)
+    Ok(LoggingGuard {
+        _writer_guard: guard,
+        #[cfg(feature = "otel")]
+        tracer_provider,
+    })
+}
+
+struct LoggingGuard {
+    _writer_guard: tracing_appender::non_blocking::WorkerGuard,
+    #[cfg(feature = "otel")]
+    tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+}
+
+#[cfg(feature = "otel")]
+impl Drop for LoggingGuard {
+    fn drop(&mut self) {
+        if let Some(provider) = &self.tracer_provider
+            && provider.shutdown().is_err()
+        {
+            tracing::warn!(
+                event_name = "telemetry.flush.failed",
+                "Failed to flush OpenTelemetry spans during shutdown"
+            );
+        }
+    }
 }
 
 struct LogWriter {
