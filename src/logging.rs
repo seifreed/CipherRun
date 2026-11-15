@@ -261,6 +261,12 @@ mod tests {
 
     struct BufferWriter(Arc<Mutex<Vec<u8>>>);
 
+    struct GatedWriter {
+        started: mpsc::SyncSender<()>,
+        release: mpsc::Receiver<()>,
+        blocked: bool,
+    }
+
     impl<'a> MakeWriter<'a> for Buffer {
         type Writer = BufferWriter;
 
@@ -272,6 +278,21 @@ mod tests {
     impl Write for BufferWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Write for GatedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if !self.blocked {
+                self.blocked = true;
+                let _ = self.started.send(());
+                let _ = self.release.recv();
+            }
             Ok(bytes.len())
         }
 
@@ -365,6 +386,37 @@ mod tests {
         shutdown_tx.send(()).unwrap();
         assert_eq!(reported_rx.recv_timeout(Duration::from_secs(1)).unwrap(), 3);
         assert_eq!(monitor.join().unwrap(), 7);
+    }
+
+    #[test]
+    fn bounded_queue_counts_events_dropped_while_writer_is_blocked() {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let (writer, worker_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .buffered_lines_limit(1)
+            .lossy(true)
+            .finish(GatedWriter {
+                started: started_tx,
+                release: release_rx,
+                blocked: false,
+            });
+        let dropped_lines = writer.error_counter();
+        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(event_name = "logging.queue.first", "first event");
+            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            tracing::info!(event_name = "logging.queue.second", "second event");
+            tracing::info!(
+                event_name = "logging.queue.dropped",
+                "event under saturation"
+            );
+            assert!(dropped_lines.dropped_lines() > 0);
+        });
+
+        release_tx.send(()).unwrap();
+        drop(worker_guard);
+        assert!(dropped_lines.dropped_lines() > 0);
     }
 
     #[test]
