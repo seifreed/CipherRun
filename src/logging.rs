@@ -253,7 +253,7 @@ mod tests {
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, mpsc};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tracing_subscriber::fmt::MakeWriter;
 
     #[derive(Clone)]
@@ -461,6 +461,93 @@ mod tests {
         assert_eq!(
             output.iter().filter(|byte| **byte == b'\n').count(),
             PRODUCERS * EVENTS_PER_PRODUCER
+        );
+    }
+
+    #[test]
+    #[ignore = "manual 30-second rolling-file logging soak"]
+    fn rolling_file_writer_accounts_for_sustained_concurrent_logging() {
+        const PRODUCERS: usize = 4;
+        const SOAK: Duration = Duration::from_secs(30);
+
+        let directory = tempfile::tempdir().unwrap();
+        let logfile = directory.path().join("soak.jsonl");
+        let file = rolling_log_file(&logfile).unwrap();
+        let (writer, worker_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .lossy(true)
+            .finish(file);
+        let dropped_lines = writer.error_counter();
+        let (stop_monitor, shutdown) = mpsc::sync_channel(1);
+        let (reported_tx, reported_rx) = mpsc::channel();
+        let monitor_dropped_lines = dropped_lines.clone();
+        let monitor = std::thread::spawn(move || {
+            monitor_dropped_log_lines(
+                || monitor_dropped_lines.dropped_lines(),
+                shutdown,
+                Duration::from_secs(30),
+                |delta| {
+                    if delta > 0 {
+                        reported_tx.send(delta).unwrap();
+                    }
+                },
+            )
+        });
+        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let attempted = Arc::new(AtomicUsize::new(0));
+        let started = Instant::now();
+        let deadline = started + SOAK;
+        let producers = (0..PRODUCERS)
+            .map(|producer| {
+                let dispatch = dispatch.clone();
+                let attempted = attempted.clone();
+                std::thread::spawn(move || {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        let mut event = 0_u64;
+                        while Instant::now() < deadline {
+                            tracing::info!(
+                                event_name = "logging.soak",
+                                producer,
+                                event,
+                                "sustained log event"
+                            );
+                            attempted.fetch_add(1, Ordering::Relaxed);
+                            event += 1;
+                        }
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for producer in producers {
+            producer.join().unwrap();
+        }
+        drop(dispatch);
+        drop(worker_guard);
+        stop_monitor.send(()).unwrap();
+        monitor.join().unwrap();
+
+        let log_directory = directory.path().join(".soak.jsonl.d");
+        let written = std::fs::read_dir(log_directory)
+            .unwrap()
+            .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+            .map(|bytes| bytes.iter().filter(|byte| **byte == b'\n').count())
+            .sum::<usize>();
+        let attempted = attempted.load(Ordering::Relaxed);
+        let dropped = dropped_lines.dropped_lines();
+        let reported = reported_rx.iter().sum::<usize>();
+        assert_eq!(attempted, written + dropped);
+        assert_eq!(dropped, reported);
+        assert!(written > 0);
+
+        eprintln!(
+            "logging soak: duration_ms={}, attempted={}, written={}, dropped={}, reported_dropped={}, events_per_second={}",
+            started.elapsed().as_millis(),
+            attempted,
+            written,
+            dropped,
+            reported,
+            (attempted as u128 * 1_000) / started.elapsed().as_millis().max(1)
         );
     }
 
