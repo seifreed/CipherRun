@@ -73,6 +73,7 @@ impl CipherRunDatabase {
 
     /// Create new database instance
     pub async fn new(config: &DatabaseConfig) -> crate::Result<Self> {
+        let started = std::time::Instant::now();
         let pool = DatabasePool::new(config).await?;
 
         // Run migrations
@@ -81,6 +82,7 @@ impl CipherRunDatabase {
         tracing::info!(
             event_name = "database.initialized",
             database_backend = ?pool.db_type(),
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "Database connection and migrations are ready"
         );
 
@@ -271,6 +273,7 @@ mod tests {
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         assert!(logs.contains("database.initialized"));
         assert!(logs.contains("database_backend=Sqlite"));
+        assert!(logs.contains("duration_ms="));
         assert!(!logs.contains(db_path.to_str().unwrap()));
         db.close().await;
     }
