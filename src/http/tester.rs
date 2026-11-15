@@ -213,6 +213,7 @@ impl HeaderAnalyzer {
             request = request.header(name, value);
         }
 
+        let request_started = std::time::Instant::now();
         let response = request
             .send()
             .await
@@ -220,13 +221,20 @@ impl HeaderAnalyzer {
 
         // Capture HTTP status code
         let status_code = response.status().as_u16();
+        tracing::debug!(
+            event_name = "http.headers.fetch.completed",
+            http_status = status_code,
+            duration_ms = request_started.elapsed().as_millis() as u64,
+            "HTTP header request completed"
+        );
 
         // Capture redirect location if this is a redirect (3xx status code)
         let redirect_location = if response.status().is_redirection() {
             tracing::info!(
-                "HTTP redirect detected: {} {}",
-                status_code,
-                response.status().canonical_reason().unwrap_or("Unknown")
+                event_name = "http.headers.redirect.detected",
+                http_status = status_code,
+                reason = response.status().canonical_reason().unwrap_or("Unknown"),
+                "HTTP redirect detected"
             );
 
             response
