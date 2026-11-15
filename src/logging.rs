@@ -420,6 +420,51 @@ mod tests {
     }
 
     #[test]
+    fn bounded_queue_flushes_concurrent_sustained_burst_without_drops() {
+        const PRODUCERS: usize = 8;
+        const EVENTS_PER_PRODUCER: usize = 1_000;
+
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let (writer, worker_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .buffered_lines_limit(PRODUCERS * EVENTS_PER_PRODUCER)
+            .lossy(true)
+            .finish(BufferWriter(output.0.clone()));
+        let dropped_lines = writer.error_counter();
+        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let producers = (0..PRODUCERS)
+            .map(|producer| {
+                let dispatch = dispatch.clone();
+                std::thread::spawn(move || {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        for event in 0..EVENTS_PER_PRODUCER {
+                            tracing::info!(
+                                event_name = "logging.load_test",
+                                producer,
+                                event,
+                                "concurrent load event"
+                            );
+                        }
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for producer in producers {
+            producer.join().unwrap();
+        }
+        drop(dispatch);
+        drop(worker_guard);
+
+        assert_eq!(dropped_lines.dropped_lines(), 0);
+        let output = output.0.lock().unwrap();
+        assert_eq!(
+            output.iter().filter(|byte| **byte == b'\n').count(),
+            PRODUCERS * EVENTS_PER_PRODUCER
+        );
+    }
+
+    #[test]
     fn log_writer_mirrors_events_to_configured_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cipherrun.jsonl");
