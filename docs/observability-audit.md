@@ -33,11 +33,12 @@ indexed source files was manually inspected.
 ## Current known limitations
 
 - The audit has not yet classified every event or every executable entry point.
+- A local SQLx compatibility patch is now part of the workspace and needs maintenance until upstream widens its dependency constraint.
 - The default formatter is human-readable text, not JSON. Fields are structured at the event API but output configuration does not offer JSON selection.
 - API request IDs are generated locally. Incoming W3C `traceparent` is not extracted; distributed trace continuity is available only where an OTLP-enabled trace already exists.
 - The local file writer appends but does not rotate or enforce retention. Logging is synchronous and can block on disk I/O.
 - The worker has no dedicated regression test asserting emitted error events or initialization behavior.
-- A local `cargo audit` run on 2026-11-15 initially reported 44 findings. Compatible updates have removed the Hickory, Rustls, Quinn, zstd and `zip` findings. Resolving `zip` required upgrading optional Swagger UI to 10 and Utoipa to 6; `cargo check --features swagger` passed. One finding remains: `libsqlite3-sys`. The SQLite advisory applies to bundled SQLite before 3.54.0. SQLx currently constrains `libsqlite3-sys` below 0.38, so the fixed 0.39 line is not resolvable without a coordinated upstream or local SQLx integration change.
+- A local `cargo audit` run on 2026-11-15 initially reported 44 findings. Compatible updates removed the Hickory, Rustls, Quinn, zstd and `zip` findings. Resolving `zip` required upgrading optional Swagger UI to 10 and Utoipa to 6; `cargo check --features swagger` passed. The SQLite advisory was resolved by vendoring the 476 KB `sqlx-sqlite` 0.8.6 source and changing only its `libsqlite3-sys` range from `^0.30.1` to `^0.39`; SQLx's API code remains unchanged. `cargo test --test database_integration_tests` passed (19 tests), and `cargo audit` now reports zero vulnerabilities (six allowed informational warnings remain). Revisit and remove this patch as soon as upstream SQLx accepts the patched `libsqlite3-sys` line; validate all database backends on any SQLx update.
 
 The current score remains **unrated** until the remaining event inventory and
 validation are complete. The initial 5.6 score must not be treated as the final
