@@ -102,7 +102,15 @@ impl CipherRunDatabase {
 
     /// Close database connection
     pub async fn close(self) {
+        let started = std::time::Instant::now();
         self.pool.close().await;
+        tracing::info!(
+            event_name = "database.closed",
+            database_backend = ?self.pool.db_type(),
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "closed",
+            "Database connection closed"
+        );
     }
 
     /// Store complete scan results
@@ -265,6 +273,29 @@ mod tests {
         assert!(logs.contains("database_backend=Sqlite"));
         assert!(!logs.contains(db_path.to_str().unwrap()));
         db.close().await;
+    }
+
+    #[tokio::test]
+    async fn database_shutdown_logs_backend_and_duration() {
+        let db = test_db().await;
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+
+        db.close()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(logs.trim()).unwrap();
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(event["fields"]["event_name"], "database.closed");
+        assert_eq!(event["fields"]["database_backend"], "Sqlite");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert_eq!(event["fields"]["outcome"], "closed");
     }
 
     #[tokio::test]
