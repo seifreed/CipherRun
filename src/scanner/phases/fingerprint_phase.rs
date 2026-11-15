@@ -318,31 +318,40 @@ impl ScanPhase for FingerprintPhase {
         self.validate_requested_databases(context)?;
 
         // Capture JA3 if requested
-        if context.args.should_run_ja3_fingerprint() && self.capture_ja3(context).await.is_err() {
+        if context.args.should_run_ja3_fingerprint()
+            && let Err(error) = self.capture_ja3(context).await
+        {
             tracing::warn!(
                 event_name = "fingerprint.failed",
                 fingerprint = "ja3",
                 error_type = "TlsError",
+                error_code = error.observability_code(),
                 "Failed to generate fingerprint"
             );
         }
 
         // Capture JA3S if requested
-        if context.args.should_run_ja3s_fingerprint() && self.capture_ja3s(context).await.is_err() {
+        if context.args.should_run_ja3s_fingerprint()
+            && let Err(error) = self.capture_ja3s(context).await
+        {
             tracing::warn!(
                 event_name = "fingerprint.failed",
                 fingerprint = "ja3s",
                 error_type = "TlsError",
+                error_code = error.observability_code(),
                 "Failed to generate fingerprint"
             );
         }
 
         // Capture JARM if requested
-        if context.args.should_run_jarm_fingerprint() && self.capture_jarm(context).await.is_err() {
+        if context.args.should_run_jarm_fingerprint()
+            && let Err(error) = self.capture_jarm(context).await
+        {
             tracing::warn!(
                 event_name = "fingerprint.failed",
                 fingerprint = "jarm",
                 error_type = "TlsError",
+                error_code = error.observability_code(),
                 "Failed to generate fingerprint"
             );
         }

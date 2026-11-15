@@ -381,6 +381,7 @@ impl PhaseOrchestrator {
                         event_name = "scan.phase.failed",
                         phase = phase.name(),
                         error_type = "TlsError",
+                        error_code = error.observability_code(),
                         "Scan phase failed"
                     );
                     context.results.add_human_warning(format!(
@@ -627,6 +628,7 @@ mod tests {
         assert!(output.contains("scan.phase"), "{output:?}");
         assert!(output.contains("outcome=\"partial_error\""), "{output:?}");
         assert!(output.contains("duration_ms="), "{output:?}");
+        assert!(output.contains("error_code=\"other\""), "{output:?}");
         assert!(!output.contains("private.example"), "{output:?}");
     }
 }

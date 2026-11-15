@@ -34,6 +34,7 @@ pub(super) fn collect_result(
                 event_name = "vulnerability.test.failed",
                 test = test_name,
                 error_type = "TlsError",
+                error_code = e.observability_code(),
                 "Vulnerability test failed"
             );
             // Add inconclusive result so user knows the test was attempted but failed
@@ -57,6 +58,7 @@ pub(super) fn collect_results(
                 event_name = "vulnerability.test.failed",
                 test = test_name,
                 error_type = "TlsError",
+                error_code = e.observability_code(),
                 "Vulnerability test failed"
             );
             // Add inconclusive results for each expected vulnerability type
@@ -82,6 +84,7 @@ pub(super) fn collect_optional_result(
                 event_name = "vulnerability.test.failed",
                 test = test_name,
                 error_type = "TlsError",
+                error_code = e.observability_code(),
                 "Vulnerability test failed"
             );
             // Add inconclusive result so user knows the test was attempted but failed
