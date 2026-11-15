@@ -44,7 +44,7 @@ fn api_key_from_query(query: &str) -> Result<Option<String>, ApiError> {
     Ok(api_key)
 }
 
-fn is_stream_path(path: &str) -> bool {
+pub(super) fn is_stream_path(path: &str) -> bool {
     let segments: Vec<_> = path.trim_matches('/').split('/').collect();
     matches!(segments.as_slice(), ["api", "v1", "scan", scan_id, "stream"] if !scan_id.is_empty())
 }

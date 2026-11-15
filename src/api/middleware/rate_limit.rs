@@ -1,7 +1,9 @@
 // Rate Limiting Middleware
 
 use crate::api::{
-    config::Permission, middleware::auth::AuthExtension, models::error::RateLimitErrorResponse,
+    config::Permission,
+    middleware::auth::{AuthExtension, is_stream_path},
+    models::error::RateLimitErrorResponse,
     state::AppState,
 };
 use axum::{
@@ -452,9 +454,15 @@ pub async fn rate_limit(
                 Err(response)
             }
         }
+    } else if is_stream_path(req.uri().path()) {
+        tracing::debug!(
+            event_name = "api.rate_limit.stream_ticket",
+            "One-use stream ticket request bypassed per-key rate limiting"
+        );
+        Ok(next.run(req).await)
     } else {
         // No authentication - this shouldn't happen as auth middleware runs first
-        // But if it does, allow the request to proceed (will fail at auth check)
+        // except for one-use stream tickets.
         tracing::warn!(
             event_name = "api.rate_limit.auth_missing",
             "Rate limit middleware has no auth extension"
