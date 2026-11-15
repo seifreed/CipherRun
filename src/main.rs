@@ -19,7 +19,7 @@ use clap::CommandFactory;
 use colored::control;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
-use tracing::{Level, info};
+use tracing::info;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};

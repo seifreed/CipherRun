@@ -37,7 +37,7 @@ indexed source files was manually inspected.
 - API request IDs are generated locally. Incoming W3C `traceparent` is not extracted; distributed trace continuity is available only where an OTLP-enabled trace already exists.
 - The local file writer appends but does not rotate or enforce retention. Logging is synchronous and can block on disk I/O.
 - The worker has no dedicated regression test asserting emitted error events or initialization behavior.
-- A local `cargo audit` run on 2026-11-15 initially reported 44 findings. Compatible updates have removed the Hickory, Rustls, Quinn and zstd findings; the latest run reports 5 remaining findings: `libsqlite3-sys` and `zip`. The SQLite advisory applies to bundled SQLite before 3.54.0. SQLx currently constrains `libsqlite3-sys` below 0.38, so the fixed 0.39 line is not resolvable without a coordinated upstream or local SQLx integration change. `zip` is pulled only by the optional Swagger UI build dependency and requires a major-version-compatible update or removal of that feature path.
+- A local `cargo audit` run on 2026-11-15 initially reported 44 findings. Compatible updates have removed the Hickory, Rustls, Quinn, zstd and `zip` findings. Resolving `zip` required upgrading optional Swagger UI to 10 and Utoipa to 6; `cargo check --features swagger` passed. One finding remains: `libsqlite3-sys`. The SQLite advisory applies to bundled SQLite before 3.54.0. SQLx currently constrains `libsqlite3-sys` below 0.38, so the fixed 0.39 line is not resolvable without a coordinated upstream or local SQLx integration change.
 
 The current score remains **unrated** until the remaining event inventory and
 validation are complete. The initial 5.6 score must not be treated as the final
