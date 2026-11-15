@@ -17,6 +17,7 @@ use cipherrun::external::openssl_client::OpenSslClient;
 use clap::CommandFactory;
 use colored::control;
 use std::process::ExitCode;
+use tracing::Instrument;
 use tracing::info;
 
 #[tokio::main]
@@ -190,7 +191,8 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         let command = CommandRouter::route(args)?;
         let operation = command.name();
         let start = std::time::Instant::now();
-        let result = command.execute().await;
+        let command_span = tracing::info_span!("cli.command", operation);
+        let result = command.execute().instrument(command_span).await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         match &result {
             Ok(exit) => info!(
