@@ -30,7 +30,12 @@ pub(super) fn collect_result(
     match result {
         Ok(r) => results.push(r),
         Err(e) => {
-            tracing::warn!("{} test failed: {}", test_name, e);
+            tracing::warn!(
+                event_name = "vulnerability.test.failed",
+                test = test_name,
+                error_type = "TlsError",
+                "Vulnerability test failed"
+            );
             // Add inconclusive result so user knows the test was attempted but failed
             results.push(inconclusive_test_error(vuln_type, &e));
         }
@@ -48,7 +53,12 @@ pub(super) fn collect_results(
     match result {
         Ok(r) => results.extend(r),
         Err(e) => {
-            tracing::warn!("{} test failed: {}", test_name, e);
+            tracing::warn!(
+                event_name = "vulnerability.test.failed",
+                test = test_name,
+                error_type = "TlsError",
+                "Vulnerability test failed"
+            );
             // Add inconclusive results for each expected vulnerability type
             // so users know these tests were attempted but failed
             for vuln_type in vuln_types {
@@ -68,7 +78,12 @@ pub(super) fn collect_optional_result(
         Ok(Some(r)) => results.push(r),
         Ok(None) => {}
         Err(e) => {
-            tracing::warn!("{} test failed: {}", test_name, e);
+            tracing::warn!(
+                event_name = "vulnerability.test.failed",
+                test = test_name,
+                error_type = "TlsError",
+                "Vulnerability test failed"
+            );
             // Add inconclusive result so user knows the test was attempted but failed
             results.push(inconclusive_test_error(vuln_type, &e));
         }

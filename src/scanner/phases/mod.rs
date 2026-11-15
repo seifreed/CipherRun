@@ -350,7 +350,12 @@ impl PhaseOrchestrator {
                     if is_fatal_phase_error(&error) {
                         return Err(error);
                     }
-                    tracing::warn!("Phase '{}' failed: {}", phase.name(), error);
+                    tracing::warn!(
+                        event_name = "scan.phase.failed",
+                        phase = phase.name(),
+                        error_type = "TlsError",
+                        "Scan phase failed"
+                    );
                     context.results.add_human_warning(format!(
                         "{} could not complete: {}",
                         phase.name(),
