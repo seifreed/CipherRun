@@ -297,10 +297,11 @@ impl RevocationChecker {
             // long past its nextUpdate) could be replayed over the plaintext AIA
             // fetch and trusted, producing a false-negative revocation verdict.
             // This mirrors the CRL path, which rejects an expired nextUpdate.
-            if let Err(e) = status.check_validity(OCSP_CLOCK_SKEW_SECS, None) {
+            if status.check_validity(OCSP_CLOCK_SKEW_SECS, None).is_err() {
                 tracing::warn!(
-                    "OCSP single response is outside its validity window ({}); not trusting status",
-                    e
+                    event_name = "certificate.revocation.ocsp.invalid_window",
+                    error_type = "validity_window",
+                    "OCSP response is outside its validity window"
                 );
                 return Ok(RevocationStatus::Error);
             }
@@ -312,14 +313,10 @@ impl RevocationChecker {
                     return Ok(RevocationStatus::Good);
                 }
                 openssl::ocsp::OcspCertStatus::REVOKED => {
-                    tracing::warn!("OCSP response: Certificate status is REVOKED");
-
-                    // Revocation reason is available
-                    tracing::warn!("Revocation reason: {:?}", status.reason);
-
-                    if let Some(revocation_time) = status.revocation_time {
-                        tracing::warn!("Revocation time: {}", revocation_time);
-                    }
+                    tracing::warn!(
+                        event_name = "certificate.revocation.ocsp.revoked",
+                        "OCSP reports certificate revoked"
+                    );
 
                     return Ok(RevocationStatus::Revoked);
                 }

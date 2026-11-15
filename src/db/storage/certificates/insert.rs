@@ -21,8 +21,12 @@ pub(crate) struct CertificateInsertParams<'a> {
 
 impl CipherRunDatabase {
     fn serialize_certificate_list(values: &[String]) -> String {
-        serde_json::to_string(values).unwrap_or_else(|e| {
-            tracing::error!("Failed to serialize certificate list: {}", e);
+        serde_json::to_string(values).unwrap_or_else(|_| {
+            tracing::error!(
+                event_name = "certificate_inventory.serialize.failed",
+                error_type = "serialization",
+                "Failed to serialize certificate list"
+            );
             "[]".to_string()
         })
     }

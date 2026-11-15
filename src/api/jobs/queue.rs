@@ -132,7 +132,12 @@ impl ScanJob {
     /// Update progress
     pub fn update_progress(&mut self, progress: u8, stage: String) {
         if progress > 100 {
-            tracing::warn!("Ignoring out-of-range job progress: {}", progress);
+            tracing::warn!(
+                event_name = "scan_job.progress.rejected",
+                progress,
+                error_type = "out_of_range",
+                "Ignoring out-of-range job progress"
+            );
             return;
         }
 

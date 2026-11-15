@@ -614,7 +614,11 @@ impl AlertManager {
     pub async fn send_alert(&self, alert: &Alert) -> Result<()> {
         // Skip if an identical alert was already delivered within the dedup window.
         if self.is_duplicate(alert).await {
-            tracing::debug!("Alert deduplicated: {}", alert.dedup_key());
+            tracing::debug!(
+                event_name = "monitor.alert.deduplicated",
+                alert_type = ?alert.alert_type,
+                "Duplicate alert suppressed"
+            );
             return Ok(());
         }
 
@@ -630,14 +634,22 @@ impl AlertManager {
         let mut success_count = 0;
 
         for channel in &self.channels {
-            let channel_name = channel.channel_name();
             match channel.send_alert(alert).await {
                 Ok(_) => {
-                    tracing::info!(channel = %channel_name, alert_type = ?alert.alert_type, "Alert sent");
+                    tracing::info!(
+                        event_name = "monitor.alert.delivered",
+                        alert_type = ?alert.alert_type,
+                        "Alert sent"
+                    );
                     success_count += 1;
                 }
                 Err(_) => {
-                    tracing::error!(channel = %channel_name, alert_type = ?alert.alert_type, "Failed to send alert");
+                    tracing::error!(
+                        event_name = "monitor.alert.delivery.failed",
+                        alert_type = ?alert.alert_type,
+                        error_type = "alert_channel",
+                        "Failed to send alert"
+                    );
                 }
             }
         }

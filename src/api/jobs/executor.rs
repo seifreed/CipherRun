@@ -444,7 +444,11 @@ impl ScanExecutor {
             }
             Ok(false) => {
                 // Job was cancelled while we were processing - this is expected.
-                tracing::info!("Job {} was cancelled, preserving cancelled status", job.id);
+                tracing::info!(
+                    event_name = "scan_job.cancelled",
+                    job_id = %job.id,
+                    "Preserving cancelled job status"
+                );
             }
             Err(_) => {
                 error!(job_id = %job.id, error_type = "queue", "Failed to persist final scan status");
