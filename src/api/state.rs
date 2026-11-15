@@ -29,6 +29,8 @@ const MAX_TIMESTAMPS: usize = 100_000;
 const MAX_HOURLY_ENTRIES: usize = 10_000;
 const MAX_AUDIT_EVENTS: usize = 10_000;
 const MAX_PRINCIPAL_STATS: usize = 10_000;
+pub const HTTP_RESPONSE_DURATION_BUCKETS_MS: [u64; 10] =
+    [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000];
 
 /// Shared application state
 pub struct AppState {
@@ -141,6 +143,15 @@ pub struct ApiStats {
     /// Total responses counted for averaging
     pub total_responses: u64,
 
+    /// Cumulative HTTP response duration buckets, in milliseconds.
+    pub http_response_duration_buckets: [u64; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
+
+    /// HTTP responses with 4xx status.
+    pub http_responses_4xx: u64,
+
+    /// HTTP responses with 5xx status.
+    pub http_responses_5xx: u64,
+
     /// Scan timestamps for rolling-window stats - bounded collection
     pub scan_timestamps: VecDeque<Instant>,
 
@@ -219,6 +230,20 @@ impl ApiStats {
     pub fn record_response(&mut self, response_time_ms: u64) {
         self.total_response_time_ms = self.total_response_time_ms.saturating_add(response_time_ms);
         self.total_responses = self.total_responses.saturating_add(1);
+        let first_matching_bucket = HTTP_RESPONSE_DURATION_BUCKETS_MS
+            .partition_point(|upper_bound| response_time_ms > *upper_bound);
+        for bucket in &mut self.http_response_duration_buckets[first_matching_bucket..] {
+            *bucket = bucket.saturating_add(1);
+        }
+    }
+
+    pub fn record_http_response(&mut self, response_time_ms: u64, status: u16) {
+        self.record_response(response_time_ms);
+        match status / 100 {
+            4 => self.http_responses_4xx = self.http_responses_4xx.saturating_add(1),
+            5 => self.http_responses_5xx = self.http_responses_5xx.saturating_add(1),
+            _ => {}
+        }
     }
 
     pub fn record_audit(&mut self, event: AuditEvent) {
@@ -365,6 +390,9 @@ impl ApiStats {
             request_timestamps: scoped.request_timestamps.clone(),
             total_response_time_ms: scoped.total_response_time_ms,
             total_responses: scoped.total_responses,
+            http_response_duration_buckets: [0; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
+            http_responses_4xx: 0,
+            http_responses_5xx: 0,
             scan_timestamps: scoped.scan_timestamps.clone(),
             audit_events: VecDeque::new(),
             principal_stats: HashMap::new(),
@@ -700,6 +728,20 @@ impl AppState {
         }
     }
 
+    pub async fn record_http_response_for_owner(
+        &self,
+        principal_id: Option<&str>,
+        tenant_id: Option<&str>,
+        response_time_ms: u64,
+        status: u16,
+    ) {
+        let mut stats = self.stats.write().await;
+        stats.record_http_response(response_time_ms, status);
+        if let Some(principal_id) = principal_id {
+            stats.record_response_for_owner(principal_id, tenant_id, response_time_ms);
+        }
+    }
+
     /// Record new scan
     pub async fn record_scan(&self) {
         let mut stats = self.stats.write().await;
@@ -923,6 +965,9 @@ mod tests {
             total_scan_duration_ms: u64::MAX - 5,
             total_response_time_ms: u64::MAX - 5,
             total_responses: u64::MAX,
+            http_response_duration_buckets: [u64::MAX; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
+            http_responses_4xx: u64::MAX,
+            http_responses_5xx: u64::MAX,
             ..Default::default()
         };
 
@@ -930,7 +975,7 @@ mod tests {
         stats.increment_scans();
         stats.record_completed_scan(10);
         stats.record_failed_scan();
-        stats.record_response(10);
+        stats.record_http_response(10, 500);
 
         assert_eq!(stats.total_requests, u64::MAX);
         assert_eq!(stats.total_scans, u64::MAX);
@@ -939,6 +984,14 @@ mod tests {
         assert_eq!(stats.total_scan_duration_ms, u64::MAX);
         assert_eq!(stats.total_response_time_ms, u64::MAX);
         assert_eq!(stats.total_responses, u64::MAX);
+        assert!(
+            stats
+                .http_response_duration_buckets
+                .iter()
+                .all(|bucket| *bucket == u64::MAX)
+        );
+        assert_eq!(stats.http_responses_4xx, u64::MAX);
+        assert_eq!(stats.http_responses_5xx, u64::MAX);
     }
 
     #[test]

@@ -68,8 +68,9 @@ pub async fn metrics(
     }
     let mut response = next.run(request).instrument(request_span).await;
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let status = response.status().as_u16();
     state
-        .record_response_for_owner(
+        .record_http_response_for_owner(
             owner
                 .as_ref()
                 .map(|(principal_id, _)| principal_id.as_str()),
@@ -77,9 +78,9 @@ pub async fn metrics(
                 .as_ref()
                 .and_then(|(_, tenant_id)| tenant_id.as_deref()),
             duration_ms,
+            status,
         )
         .await;
-    let status = response.status().as_u16();
     state.stats.write().await.record_audit(AuditEvent {
         request_id: request_id.clone(),
         method: method.clone(),
@@ -138,7 +139,10 @@ mod tests {
     async fn request_id_matches_audit_event_and_path_is_route_template() {
         let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
         let app = Router::new()
-            .route("/history/{domain}", get(|| async { "ok" }))
+            .route(
+                "/history/{domain}",
+                get(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
+            )
             .layer(middleware::from_fn_with_state(state.clone(), metrics));
         let response = app
             .oneshot(
@@ -160,7 +164,10 @@ mod tests {
         let event = stats.audit_events.back().unwrap();
         assert_eq!(event.request_id, request_id);
         assert_eq!(event.path, "/history/{domain}");
+        assert_eq!(event.status, 503);
         assert!(!event.path.contains("private.example"));
+        assert_eq!(stats.http_responses_5xx, 1);
+        assert_eq!(stats.total_responses, 1);
     }
 
     #[cfg(feature = "otel")]
