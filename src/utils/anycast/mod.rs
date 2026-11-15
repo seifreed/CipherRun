@@ -17,6 +17,8 @@ use hickory_resolver::proto::rr::RData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::time::Instant;
+use tracing::{debug, info};
 
 /// Anycast scanner for testing all IPs of a hostname
 pub struct AnycastScanner {
@@ -43,6 +45,7 @@ impl AnycastScanner {
 
     /// Scan all IPs resolved for the hostname
     pub async fn scan_all_ips(&self) -> Result<AnycastScanResults> {
+        let scan_started = Instant::now();
         // 1. Resolve hostname to all IPs (A + AAAA records)
         let ip_addresses = self.resolve_all_ips().await?;
 
@@ -72,6 +75,7 @@ impl AnycastScanner {
                 ip
             );
 
+            let ip_scan_started = Instant::now();
             match self.scan_single_ip(ip).await {
                 Ok(scan_result) => {
                     ip_results.push(IpScanResult {
@@ -81,6 +85,18 @@ impl AnycastScanner {
                     });
                 }
                 Err(e) => {
+                    debug!(
+                        event_name = "anycast.ip_scan.failed",
+                        operation = "scan_single_ip",
+                        scan_index = index + 1,
+                        total_ips = ip_addresses.len(),
+                        duration_ms = u64::try_from(ip_scan_started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        error_type = "scan",
+                        error_code = e.observability_code(),
+                        outcome = "partial_failure",
+                        "Anycast scan failed for one resolved address"
+                    );
                     println!("    Warning: Scan failed for {}: {}", ip, e);
                     ip_results.push(IpScanResult {
                         ip: *ip,
@@ -93,12 +109,19 @@ impl AnycastScanner {
 
         // 3. Detect Anycast deployment
         let anycast_detection = Self::detect_anycast(&ip_results);
+        let successful_scans = ip_results.iter().filter(|r| r.error.is_none()).count();
+        log_anycast_scan_summary(
+            ip_addresses.len(),
+            successful_scans,
+            anycast_detection.is_anycast,
+            u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
 
         Ok(AnycastScanResults {
             hostname: self.hostname.clone(),
             port: self.port,
             total_ips: ip_addresses.len(),
-            successful_scans: ip_results.iter().filter(|r| r.error.is_none()).count(),
+            successful_scans,
             ip_results,
             anycast_detection,
         })
@@ -118,6 +141,7 @@ impl AnycastScanner {
 
         // Query A records (IPv4)
         if !self.args.network.ipv6_only {
+            let lookup_started = Instant::now();
             match resolver.ipv4_lookup(&self.hostname).await {
                 Ok(lookup) => {
                     for ipv4 in lookup
@@ -133,12 +157,23 @@ impl AnycastScanner {
                 }
                 Err(_) => {
                     // A records not found, continue
+                    debug!(
+                        event_name = "anycast.dns_lookup.failed",
+                        operation = "ipv4_lookup",
+                        duration_ms =
+                            u64::try_from(lookup_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        error_type = "dns",
+                        error_code = "lookup_failed",
+                        outcome = "continue_with_other_family",
+                        "Anycast IPv4 lookup failed"
+                    );
                 }
             }
         }
 
         // Query AAAA records (IPv6)
         if !self.args.network.ipv4_only {
+            let lookup_started = Instant::now();
             match resolver.ipv6_lookup(&self.hostname).await {
                 Ok(lookup) => {
                     for ipv6 in lookup
@@ -154,6 +189,16 @@ impl AnycastScanner {
                 }
                 Err(_) => {
                     // AAAA records not found, continue
+                    debug!(
+                        event_name = "anycast.dns_lookup.failed",
+                        operation = "ipv6_lookup",
+                        duration_ms =
+                            u64::try_from(lookup_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        error_type = "dns",
+                        error_code = "lookup_failed",
+                        outcome = "continue_with_other_family",
+                        "Anycast IPv6 lookup failed"
+                    );
                 }
             }
         }
@@ -181,6 +226,29 @@ impl AnycastScanner {
         let scanner = crate::scanner::Scanner::new(scanner_args.to_scan_request()?)?;
         scanner.run().await
     }
+}
+
+fn log_anycast_scan_summary(
+    total_ips: usize,
+    successful_scans: usize,
+    is_anycast: bool,
+    duration_ms: u64,
+) {
+    info!(
+        event_name = "anycast.scan.completed",
+        operation = "scan_all_ips",
+        total_ips,
+        successful_scans,
+        failed_scans = total_ips.saturating_sub(successful_scans),
+        is_anycast,
+        duration_ms,
+        outcome = if successful_scans == total_ips {
+            "success"
+        } else {
+            "partial_failure"
+        },
+        "Anycast scan completed"
+    );
 }
 
 fn anycast_target_for_ip(ip: &IpAddr, port: u16) -> String {
@@ -231,6 +299,54 @@ mod tests {
     use crate::ciphers::tester::ProtocolCipherSummary;
     use crate::protocols::{Protocol, ProtocolTestResult};
     use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+        type Writer = CapturedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogWriter(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn scan_summary_logs_partial_outcome_without_target_data() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedLog(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_anycast_scan_summary(2, 1, false, 123);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("anycast.scan.completed"), "{output}");
+        assert!(output.contains("total_ips=2"), "{output}");
+        assert!(output.contains("successful_scans=1"), "{output}");
+        assert!(output.contains("failed_scans=1"), "{output}");
+        assert!(output.contains("duration_ms=123"), "{output}");
+        assert!(output.contains("partial_failure"), "{output}");
+        assert!(!output.contains("example.com"), "{output}");
+        assert!(!output.contains("203.0.113.1"), "{output}");
+    }
 
     fn build_scan_with_fingerprint(
         fingerprint: &str,
