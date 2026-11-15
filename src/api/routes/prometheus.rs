@@ -50,13 +50,15 @@ cipherrun_scans_queued {}\n",
         "# HELP cipherrun_http_response_duration_milliseconds HTTP response duration in milliseconds.\n\
 # TYPE cipherrun_http_response_duration_milliseconds histogram\n",
     );
+    let mut cumulative_bucket_count = 0u64;
     for (upper_bound, count) in HTTP_RESPONSE_DURATION_BUCKETS_MS
         .iter()
         .zip(stats.http_response_duration_buckets)
     {
+        cumulative_bucket_count = cumulative_bucket_count.saturating_add(count);
         writeln!(
             body,
-            "cipherrun_http_response_duration_milliseconds_bucket{{le=\"{upper_bound}\"}} {count}"
+            "cipherrun_http_response_duration_milliseconds_bucket{{le=\"{upper_bound}\"}} {cumulative_bucket_count}"
         )
         .expect("writing Prometheus metrics to a String cannot fail");
     }

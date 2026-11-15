@@ -143,7 +143,7 @@ pub struct ApiStats {
     /// Total responses counted for averaging
     pub total_responses: u64,
 
-    /// Cumulative HTTP response duration buckets, in milliseconds.
+    /// Per-bucket HTTP response counts, in milliseconds.
     pub http_response_duration_buckets: [u64; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
 
     /// HTTP responses with 4xx status.
@@ -232,7 +232,10 @@ impl ApiStats {
         self.total_responses = self.total_responses.saturating_add(1);
         let first_matching_bucket = HTTP_RESPONSE_DURATION_BUCKETS_MS
             .partition_point(|upper_bound| response_time_ms > *upper_bound);
-        for bucket in &mut self.http_response_duration_buckets[first_matching_bucket..] {
+        if let Some(bucket) = self
+            .http_response_duration_buckets
+            .get_mut(first_matching_bucket)
+        {
             *bucket = bucket.saturating_add(1);
         }
     }
