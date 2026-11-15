@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    init_logging();
+    let _logging_guard = init_logging();
     let args = match Args::parse_with_sources() {
         Ok(args) => args,
         Err(error) => {
@@ -21,21 +21,23 @@ async fn main() -> ExitCode {
     }
 }
 
-fn init_logging() {
+fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let json =
         std::env::var("CIPHERRUN_LOG_FORMAT").is_ok_and(|value| value.eq_ignore_ascii_case("json"));
+    let (writer, guard) = tracing_appender::non_blocking(std::io::stderr());
     if json {
         let _ = tracing_subscriber::fmt()
             .json()
             .with_env_filter(filter)
-            .with_writer(std::io::stderr)
+            .with_writer(writer)
             .try_init();
     } else {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_writer(std::io::stderr)
+            .with_writer(writer)
             .try_init();
     }
+    guard
 }

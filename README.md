@@ -253,6 +253,9 @@ filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
 default. This setting applies to both the CLI and standalone worker.
+Log writes use a bounded background writer and flush on process shutdown. If its
+queue fills, low-priority log events may be dropped rather than blocking scans;
+the writer guard remains alive for the full command/worker lifetime.
 
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and matched route template around downstream request handling.

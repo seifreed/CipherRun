@@ -12,4 +12,5 @@ readme = "README.md"
 cipherrun = { version = "0.4.0", path = "../.." }
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

@@ -14,16 +14,16 @@
 use cipherrun::Args;
 use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::external::openssl_client::OpenSslClient;
-use cipherrun::utils::adaptive::lock_mutex;
 use clap::CommandFactory;
 use colored::control;
-use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
+use std::{
+    io::{self, Write},
+    process::ExitCode,
+};
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
-use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
-use tracing_subscriber::{EnvFilter, fmt::MakeWriter};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -74,7 +74,7 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
     args.validate()?;
 
     apply_output_preferences(&args);
-    initialize_logging(&args)?;
+    let _logging_guard = initialize_logging(&args)?;
 
     // Handle --version (display version and exit)
     if args.version {
@@ -256,22 +256,26 @@ async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
     })
 }
 
-fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
+fn initialize_logging(
+    args: &Args,
+) -> cipherrun::Result<tracing_appender::non_blocking::WorkerGuard> {
     let filter = resolve_log_filter(
         std::env::var("RUST_LOG").ok().as_deref(),
         args.output.verbose,
     );
 
-    let writer: BoxMakeWriter = if let Some(path) = &args.output.logfile {
+    let file = if let Some(path) = &args.output.logfile {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)?;
-        let file_writer = SharedFileWriter::new(file);
-        BoxMakeWriter::new(std::io::stderr.and(file_writer))
+        Some(file)
     } else {
-        BoxMakeWriter::new(std::io::stderr)
+        None
     };
+    let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+        .lossy(true)
+        .finish(LogWriter { file });
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
 
     #[cfg(feature = "otel")]
@@ -318,7 +322,29 @@ fn initialize_logging(args: &Args) -> cipherrun::Result<()> {
             cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
         })?;
     }
-    Ok(())
+    Ok(guard)
+}
+
+struct LogWriter {
+    file: Option<std::fs::File>,
+}
+
+impl Write for LogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        io::stderr().write_all(buf)?;
+        if let Some(file) = &mut self.file {
+            file.write_all(buf)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stderr().flush()?;
+        if let Some(file) = &mut self.file {
+            file.flush()?;
+        }
+        Ok(())
+    }
 }
 
 fn json_logs_enabled(format: Option<&str>) -> bool {
@@ -345,48 +371,10 @@ fn apply_output_preferences(args: &Args) {
     control::set_override(color_output_enabled(args.output.color));
 }
 
-#[derive(Clone)]
-struct SharedFileWriter {
-    file: Arc<Mutex<std::fs::File>>,
-}
-
-impl SharedFileWriter {
-    fn new(file: std::fs::File) -> Self {
-        Self {
-            file: Arc::new(Mutex::new(file)),
-        }
-    }
-}
-
-struct SharedFileGuard {
-    file: Arc<Mutex<std::fs::File>>,
-}
-
-impl<'a> MakeWriter<'a> for SharedFileWriter {
-    type Writer = SharedFileGuard;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        SharedFileGuard {
-            file: Arc::clone(&self.file),
-        }
-    }
-}
-
-impl std::io::Write for SharedFileGuard {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut file = lock_mutex(&self.file);
-        std::io::Write::write(&mut *file, buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        let mut file = lock_mutex(&self.file);
-        std::io::Write::flush(&mut *file)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{color_output_enabled, json_logs_enabled, resolve_log_filter};
+    use super::{LogWriter, color_output_enabled, json_logs_enabled, resolve_log_filter};
+    use std::io::Write;
 
     #[test]
     fn test_resolve_log_level_defaults_to_info() {
@@ -430,6 +418,21 @@ mod tests {
         assert!(json_logs_enabled(Some("JSON")));
         assert!(!json_logs_enabled(None));
         assert!(!json_logs_enabled(Some("text")));
+    }
+
+    #[test]
+    fn test_log_writer_mirrors_events_to_configured_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_owned();
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(path.clone())
+            .unwrap();
+        let mut writer = LogWriter { file: Some(file) };
+        writer.write_all(b"test event\n").unwrap();
+        writer.flush().unwrap();
+
+        assert_eq!(std::fs::read(path).unwrap(), b"test event\n");
     }
 
     #[test]
