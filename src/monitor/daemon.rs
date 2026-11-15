@@ -547,12 +547,16 @@ impl MonitorDaemon {
 
             #[cfg(not(unix))]
             {
-                if let Err(e) = tokio::signal::ctrl_c().await {
-                    tracing::error!("Failed to setup Ctrl+C handler: {}", e);
+                if tokio::signal::ctrl_c().await.is_err() {
+                    tracing::error!(
+                        event_name = "monitor.signal_handler.failed",
+                        error_type = "signal_handler",
+                        "Failed to setup Ctrl+C handler"
+                    );
                     return;
                 }
 
-                tracing::info!("Received Ctrl+C");
+                tracing::info!(event_name = "monitor.signal.received", signal = "SIGINT");
                 running.store(false, Ordering::SeqCst);
             }
         });

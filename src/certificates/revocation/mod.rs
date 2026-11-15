@@ -160,7 +160,12 @@ impl RevocationChecker {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!("OCSP check failed: {}, falling back to CRL", e);
+                    tracing::debug!(
+                        event_name = "certificate.revocation.ocsp.failed",
+                        outcome = "fallback_to_crl",
+                        error_type = "revocation_check",
+                        "OCSP check failed; falling back to CRL"
+                    );
                     failed_methods.push((RevocationMethod::OCSP, e.to_string()));
                 }
             }
@@ -180,7 +185,11 @@ impl RevocationChecker {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!("CRL check failed: {}", e);
+                    tracing::debug!(
+                        event_name = "certificate.revocation.crl.failed",
+                        error_type = "revocation_check",
+                        "CRL check failed"
+                    );
                     failed_methods.push((RevocationMethod::CRL, e.to_string()));
                 }
             }

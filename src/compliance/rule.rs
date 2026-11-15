@@ -146,11 +146,12 @@ impl Rule {
                         return true;
                     }
                 }
-                Err(e) => {
+                Err(_) => {
                     tracing::warn!(
-                        "Invalid denied_pattern '{}': {} — treating as match (fail-closed)",
-                        pattern,
-                        e
+                        event_name = "compliance.pattern.invalid",
+                        pattern_kind = "denied",
+                        outcome = "fail_closed",
+                        "Invalid compliance pattern"
                     );
                     return true;
                 }
@@ -164,7 +165,11 @@ impl Rule {
         for pattern in &self.preferred_patterns {
             match compile_rule_pattern(pattern) {
                 Ok(re) if re.is_match(value) => return true,
-                Err(e) => tracing::warn!("Invalid preferred_pattern '{}': {}", pattern, e),
+                Err(_) => tracing::warn!(
+                    event_name = "compliance.pattern.invalid",
+                    pattern_kind = "preferred",
+                    "Invalid compliance pattern"
+                ),
                 _ => {}
             }
         }

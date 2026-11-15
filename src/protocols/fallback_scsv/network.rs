@@ -15,9 +15,9 @@ impl FallbackScsvTester<'_> {
         }
 
         tracing::info!(
-            "Testing TLS_FALLBACK_SCSV on {} IPs for hostname {}",
-            addrs.len(),
-            self.target.hostname
+            event_name = "tls_fallback_scsv.started",
+            ip_count = addrs.len(),
+            "Testing TLS_FALLBACK_SCSV"
         );
 
         let mut all_support = true;
@@ -27,16 +27,12 @@ impl FallbackScsvTester<'_> {
             let ip_supports = self.test_scsv_on_ip(test_version, *addr).await?;
 
             tracing::debug!(
-                "IP {} ({}/{}): SCSV {} - {}",
-                addr.ip(),
-                idx + 1,
-                addrs.len(),
-                if ip_supports.supported {
-                    "supported"
-                } else {
-                    "NOT supported"
-                },
-                if ip_supports.supported { "✓" } else { "✗" }
+                event_name = "tls_fallback_scsv.ip.completed",
+                index = idx + 1,
+                total = addrs.len(),
+                supported = ip_supports.supported,
+                inconclusive = ip_supports.inconclusive,
+                "TLS_FALLBACK_SCSV test completed for address"
             );
 
             if ip_supports.inconclusive {
@@ -62,9 +58,9 @@ impl FallbackScsvTester<'_> {
                     self.build_client_hello_with_scsv(test_version, false)?;
 
                 tracing::debug!(
-                    "Sending ClientHello with version 0x{:04x} (no SCSV) to IP {}",
-                    test_version,
-                    addr.ip()
+                    event_name = "tls_fallback_scsv.baseline.started",
+                    protocol_version = format!("0x{test_version:04x}"),
+                    "Sending baseline ClientHello"
                 );
 
                 stream.write_all(&client_hello_no_scsv).await?;
@@ -87,9 +83,9 @@ impl FallbackScsvTester<'_> {
                 let client_hello_scsv = self.build_client_hello_with_scsv(test_version, true)?;
 
                 tracing::debug!(
-                    "Sending ClientHello with version 0x{:04x} + TLS_FALLBACK_SCSV to IP {}",
-                    test_version,
-                    addr.ip()
+                    event_name = "tls_fallback_scsv.probe.started",
+                    protocol_version = format!("0x{test_version:04x}"),
+                    "Sending TLS_FALLBACK_SCSV ClientHello"
                 );
 
                 stream.write_all(&client_hello_scsv).await?;
@@ -102,22 +98,17 @@ impl FallbackScsvTester<'_> {
                             response.first().copied().unwrap_or_default()
                         );
 
-                        let bytes_hex: Vec<String> = response
-                            .iter()
-                            .map(|byte| format!("{:02x}", byte))
-                            .collect();
-                        tracing::debug!("SCSV test: full response bytes: {}", bytes_hex.join(" "));
-
                         let support = classify_scsv_response(&response);
                         if support.supported {
                             tracing::info!(
-                                "✓ Server correctly rejected inappropriate fallback with alert 0x56 (inappropriate_fallback)"
+                                event_name = "tls_fallback_scsv.supported",
+                                "Server rejected inappropriate TLS fallback"
                             );
                         } else if support.vulnerable {
                             tracing::warn!(
-                                "✗ Server at IP {} accepted fallback (version 0x{:04x}) - NOT protected by SCSV",
-                                addr.ip(),
-                                test_version
+                                event_name = "tls_fallback_scsv.vulnerable",
+                                protocol_version = format!("0x{test_version:04x}"),
+                                "Server accepted inappropriate TLS fallback"
                             );
                         }
                         Ok(support)
@@ -128,14 +119,18 @@ impl FallbackScsvTester<'_> {
                         );
                         Ok(ScsvSupport::inconclusive())
                     }
-                    Err(error) => {
-                        tracing::debug!("SCSV test: Timeout reading response: {}", error);
+                    Err(_) => {
+                        tracing::debug!(
+                            event_name = "tls_fallback_scsv.timeout",
+                            "Timed out reading SCSV response"
+                        );
                         Ok(ScsvSupport::inconclusive())
                     }
-                    Ok(Err(error)) => {
+                    Ok(Err(_)) => {
                         tracing::debug!(
-                            "SCSV test: Error reading response: {} - Server may have closed connection",
-                            error
+                            event_name = "tls_fallback_scsv.read_failed",
+                            error_type = "transport",
+                            "Failed to read SCSV response"
                         );
                         Ok(ScsvSupport::inconclusive())
                     }

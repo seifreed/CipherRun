@@ -233,8 +233,12 @@ impl CertificateValidator {
                 Ok(cert) => vec![cert],
                 Err(_) => match openssl::x509::X509::from_der(&bytes) {
                     Ok(cert) => vec![cert],
-                    Err(err) => {
-                        tracing::debug!("Skipping additional CA file {}: {}", path.display(), err);
+                    Err(_) => {
+                        tracing::debug!(
+                            event_name = "certificate.ca_file.skipped",
+                            error_type = "parse_error",
+                            "Skipping additional CA file"
+                        );
                         return Ok(());
                     }
                 },

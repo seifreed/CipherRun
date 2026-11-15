@@ -269,7 +269,11 @@ impl CipherTester {
                         retry_queue.push(cipher);
                     } else {
                         batch_other_errors += 1;
-                        tracing::debug!("Cipher test error (non-ENETDOWN): {}", e);
+                        tracing::debug!(
+                            event_name = "cipher_test.failed",
+                            error_type = "handshake",
+                            "Cipher test failed"
+                        );
                     }
                 }
             }

@@ -379,7 +379,11 @@ impl Scanner {
                     }));
                 }
                 Err(error) => {
-                    tracing::debug!("Preflight pre-handshake capture failed: {}", error);
+                    tracing::debug!(
+                        event_name = "scan.preflight.capture.failed",
+                        error_type = ?ErrorType::from_tls_error(&error),
+                        "Preflight pre-handshake capture failed"
+                    );
                     if self.request.scan.prefs.probe_status {
                         return Ok(Some(PreflightCapture {
                             probe_status: ProbeStatus::failure_string(

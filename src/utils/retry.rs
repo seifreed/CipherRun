@@ -182,7 +182,12 @@ where
             Err(e) => {
                 // Check if we should retry this error
                 if !is_retriable(&e) {
-                    tracing::debug!("Non-retriable error encountered: {}", e);
+                    tracing::debug!(
+                        event_name = "retry.skipped",
+                        attempts = retries,
+                        reason = "non_retriable",
+                        "Retry skipped"
+                    );
                     if let Some(adaptive) = &config.adaptive {
                         adaptive.on_non_retryable_error();
                     }
@@ -192,9 +197,10 @@ where
                 // Check if we've exhausted retries
                 if retries >= config.max_retries {
                     tracing::debug!(
-                        "Max retries ({}) exhausted, giving up: {}",
-                        config.max_retries,
-                        e
+                        event_name = "retry.exhausted",
+                        attempts = retries,
+                        max_attempts = config.max_retries,
+                        "Retry attempts exhausted"
                     );
                     return Err(e);
                 }

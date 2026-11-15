@@ -602,8 +602,13 @@ impl ScanExecutor {
         // matching the previous fire-and-forget behaviour.
         match queue.update_job_preserving_cancelled(job).await {
             Ok(updated) => updated,
-            Err(e) => {
-                error!("Failed to persist progress for job {}: {}", job.id, e);
+            Err(_) => {
+                error!(
+                    event_name = "scan_job.progress.persist_failed",
+                    job_id = %job.id,
+                    error_type = "queue",
+                    "Failed to persist scan progress"
+                );
                 true
             }
         }
