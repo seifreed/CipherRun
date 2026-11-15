@@ -3,6 +3,7 @@ use crate::api::state::{AppState, AuditEvent};
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::Instrument;
 use uuid::Uuid;
 
 pub async fn metrics(
@@ -29,7 +30,15 @@ pub async fn metrics(
                 .and_then(|(_, tenant_id)| tenant_id.as_deref()),
         )
         .await;
-    let mut response = next.run(request).await;
+    let request_span = tracing::info_span!(
+        "http.request",
+        service = "cipherrun",
+        component = "api",
+        request_id = %request_id,
+        http.method = %method,
+        http.route = %path,
+    );
+    let mut response = next.run(request).instrument(request_span).await;
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     state
         .record_response_for_owner(
