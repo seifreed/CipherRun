@@ -439,7 +439,7 @@ impl ApiConfig {
         let mut config_file = match open_owner_only_new(path) {
             Ok(file) => file,
             Err(error) => {
-                let _ = std::fs::remove_file(&token_path);
+                remove_example_file(&token_path, "bootstrap_token");
                 return Err(error);
             }
         };
@@ -460,8 +460,8 @@ impl ApiConfig {
         })();
 
         if let Err(error) = write_result {
-            let _ = std::fs::remove_file(path);
-            let _ = std::fs::remove_file(&token_path);
+            remove_example_file(path, "api_config");
+            remove_example_file(&token_path, "bootstrap_token");
             return Err(error);
         }
 
@@ -664,6 +664,19 @@ impl ApiConfig {
     }
 }
 
+fn remove_example_file(path: &Path, file_kind: &'static str) {
+    if std::fs::remove_file(path).is_err() {
+        tracing::error!(
+            event_name = "api.config.example.cleanup_failed",
+            file_kind,
+            error_type = "filesystem",
+            error_code = "io",
+            outcome = "file_may_remain",
+            "Failed to remove partially created API configuration file"
+        );
+    }
+}
+
 fn key_id(secret: &str) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, secret.as_bytes());
     format!("key-{}", hex::encode(&digest.as_ref()[..12]))
@@ -707,6 +720,55 @@ fn open_owner_only_new(path: &Path) -> Result<std::fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn failed_example_cleanup_is_logged_without_path_or_file_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            remove_example_file(directory.path(), "bootstrap_token");
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("api.config.example.cleanup_failed"),
+            "{output}"
+        );
+        assert!(output.contains("bootstrap_token"), "{output}");
+        assert!(output.contains("file_may_remain"), "{output}");
+        assert!(
+            !output.contains(directory.path().to_str().unwrap()),
+            "{output}"
+        );
+    }
 
     #[test]
     fn test_default_config_generates_key() {
