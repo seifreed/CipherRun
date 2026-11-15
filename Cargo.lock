@@ -573,8 +573,6 @@ dependencies = [
  "cipherrun",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]

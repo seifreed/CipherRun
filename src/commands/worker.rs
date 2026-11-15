@@ -69,7 +69,7 @@ pub async fn run_worker(args: &Args) -> Result<()> {
         );
     }
     info!(
-        database = %db_config_path.display(),
+        event_name = "worker.started",
         concurrency = api_config.max_concurrent_scans,
         "Starting standalone scan worker"
     );

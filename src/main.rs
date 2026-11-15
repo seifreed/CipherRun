@@ -16,14 +16,8 @@ use cipherrun::commands::{CommandExit, CommandRouter};
 use cipherrun::external::openssl_client::OpenSslClient;
 use clap::CommandFactory;
 use colored::control;
-use std::{
-    io::{self, Write},
-    process::ExitCode,
-};
+use std::process::ExitCode;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
-#[cfg(not(feature = "otel"))]
-use tracing_subscriber::FmtSubscriber;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -37,11 +31,11 @@ async fn main() -> ExitCode {
             };
             ExitCode::from(u8_code)
         }
-        Err(err) => {
+        Err(_) => {
             if tracing::dispatcher::has_been_set() {
                 tracing::error!(error_type = "TlsError", "CLI command failed");
             } else {
-                eprintln!("Error: {}", err);
+                eprintln!("Error: CipherRun failed before logging was initialized");
             }
             ExitCode::from(1)
         }
@@ -74,7 +68,7 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         args.output.color = 0;
     }
 
-    let _logging_guard = initialize_logging(&args)?;
+    let _logging_guard = cipherrun::logging::initialize(&args)?;
 
     let mut command_failure_logged = false;
     let result = async {
@@ -294,135 +288,6 @@ async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {
     })
 }
 
-fn initialize_logging(args: &Args) -> cipherrun::Result<LoggingGuard> {
-    let filter = resolve_log_filter(
-        std::env::var("RUST_LOG").ok().as_deref(),
-        args.output.verbose,
-    );
-
-    let file = if let Some(path) = &args.output.logfile {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        Some(file)
-    } else {
-        None
-    };
-    let (writer, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
-        .lossy(true)
-        .finish(LogWriter { file });
-    let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
-    #[cfg(feature = "otel")]
-    let tracer_provider = {
-        use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
-
-        let fmt_layer = if json {
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(writer)
-                .with_filter(filter)
-                .boxed()
-        } else {
-            tracing_subscriber::fmt::layer()
-                .with_writer(writer)
-                .with_filter(filter)
-                .boxed()
-        };
-        let (otel_layer, provider) = cipherrun::telemetry::layer()?;
-        let result = tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(otel_layer)
-            .try_init();
-        result.map_err(|e| {
-            cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
-        })?;
-        Some(provider)
-    };
-
-    #[cfg(not(feature = "otel"))]
-    {
-        let result = if json {
-            FmtSubscriber::builder()
-                .json()
-                .with_env_filter(filter)
-                .with_writer(writer)
-                .try_init()
-        } else {
-            FmtSubscriber::builder()
-                .with_env_filter(filter)
-                .with_writer(writer)
-                .try_init()
-        };
-        result.map_err(|e| {
-            cipherrun::TlsError::Other(format!("Failed to set tracing subscriber: {e}"))
-        })?;
-    }
-    Ok(LoggingGuard {
-        _writer_guard: guard,
-        #[cfg(feature = "otel")]
-        tracer_provider,
-    })
-}
-
-struct LoggingGuard {
-    _writer_guard: tracing_appender::non_blocking::WorkerGuard,
-    #[cfg(feature = "otel")]
-    tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
-}
-
-#[cfg(feature = "otel")]
-impl Drop for LoggingGuard {
-    fn drop(&mut self) {
-        if let Some(provider) = &self.tracer_provider
-            && provider.shutdown().is_err()
-        {
-            tracing::warn!(
-                event_name = "telemetry.flush.failed",
-                "Failed to flush OpenTelemetry spans during shutdown"
-            );
-        }
-    }
-}
-
-struct LogWriter {
-    file: Option<std::fs::File>,
-}
-
-impl Write for LogWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::stderr().write_all(buf)?;
-        if let Some(file) = &mut self.file {
-            file.write_all(buf)?;
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        io::stderr().flush()?;
-        if let Some(file) = &mut self.file {
-            file.flush()?;
-        }
-        Ok(())
-    }
-}
-
-fn json_logs_enabled(format: Option<&str>) -> bool {
-    format.is_some_and(|value| value.eq_ignore_ascii_case("json"))
-}
-
-fn resolve_log_filter(rust_log: Option<&str>, verbose: u8) -> EnvFilter {
-    rust_log
-        .and_then(|value| EnvFilter::try_new(value).ok())
-        .unwrap_or_else(|| {
-            EnvFilter::new(match verbose {
-                0 => "info",
-                1 => "debug",
-                _ => "trace",
-            })
-        })
-}
-
 fn color_output_enabled(mode: u8) -> bool {
     mode != 0
 }
@@ -433,67 +298,7 @@ fn apply_output_preferences(args: &Args) {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogWriter, color_output_enabled, json_logs_enabled, resolve_log_filter};
-    use std::io::Write;
-
-    #[test]
-    fn test_resolve_log_level_defaults_to_info() {
-        assert!(resolve_log_filter(None, 0).to_string().contains("info"));
-    }
-
-    #[test]
-    fn test_resolve_log_level_uses_verbose_when_env_missing() {
-        assert!(resolve_log_filter(None, 1).to_string().contains("debug"));
-        assert!(resolve_log_filter(None, 2).to_string().contains("trace"));
-        assert!(resolve_log_filter(None, 5).to_string().contains("trace"));
-    }
-
-    #[test]
-    fn test_resolve_log_level_prefers_rust_log() {
-        assert!(
-            resolve_log_filter(Some("error"), 2)
-                .to_string()
-                .contains("error")
-        );
-    }
-
-    #[test]
-    fn test_resolve_log_level_falls_back_on_invalid_rust_log() {
-        assert!(
-            resolve_log_filter(Some("cipherrun=not-a-level"), 1)
-                .to_string()
-                .contains("debug")
-        );
-    }
-
-    #[test]
-    fn test_resolve_log_filter_supports_module_directives() {
-        let filter = resolve_log_filter(Some("warn,cipherrun::api=debug"), 0);
-        assert!(filter.to_string().contains("cipherrun::api=debug"));
-    }
-
-    #[test]
-    fn test_json_log_format_is_opt_in() {
-        assert!(json_logs_enabled(Some("json")));
-        assert!(json_logs_enabled(Some("JSON")));
-        assert!(!json_logs_enabled(None));
-        assert!(!json_logs_enabled(Some("text")));
-    }
-
-    #[test]
-    fn test_log_writer_mirrors_events_to_configured_file() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        let path = file.path().to_owned();
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(path.clone())
-            .unwrap();
-        let mut writer = LogWriter { file: Some(file) };
-        writer.write_all(b"test event\n").unwrap();
-        writer.flush().unwrap();
-
-        assert_eq!(std::fs::read(path).unwrap(), b"test event\n");
-    }
+    use super::color_output_enabled;
 
     #[test]
     fn test_color_output_enabled() {
