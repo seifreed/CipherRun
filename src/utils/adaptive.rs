@@ -20,7 +20,11 @@ pub fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         Err(poisoned) => {
             // Mutex is poisoned - recover the guard anyway (data is still valid)
             // The panic that caused poisoning already propagated its error
-            tracing::warn!("Mutex poisoned, recovering with available data");
+            tracing::warn!(
+                event_name = "adaptive_controller.mutex.poisoned",
+                outcome = "recovered",
+                "Adaptive controller recovered a poisoned mutex"
+            );
             poisoned.into_inner()
         }
     }

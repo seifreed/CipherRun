@@ -461,7 +461,11 @@ fn extract_extension_info(
     let emax = match ecnt_start.checked_add(elen) {
         Some(sum) => sum,
         None => {
-            tracing::debug!("Extension length overflow");
+            tracing::debug!(
+                event_name = "fingerprint.jarm.extension_length.invalid",
+                reason = "integer_overflow",
+                "JARM extension length could not be processed"
+            );
             return Ok("|".to_string());
         }
     };

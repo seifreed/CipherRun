@@ -371,7 +371,9 @@ impl ApiServer {
         {
             if self.config.enable_swagger {
                 tracing::warn!(
-                    "Swagger UI requested via config but the `swagger` cargo feature is not enabled; build with `--features swagger` to serve it."
+                    event_name = "api.swagger.unavailable",
+                    reason = "feature_disabled",
+                    "Swagger UI is configured but unavailable in this build"
                 );
             }
         }

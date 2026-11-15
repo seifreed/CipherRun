@@ -11,9 +11,10 @@ pub(super) fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
     let handshakes: Vec<&str> = raw.split(',').collect();
     if handshakes.len() != JARM_PROBE_COUNT {
         tracing::warn!(
-            "JARM fingerprint requires {} probe responses, got {}",
-            JARM_PROBE_COUNT,
-            handshakes.len()
+            event_name = "fingerprint.jarm.input.invalid",
+            expected_probe_count = JARM_PROBE_COUNT,
+            actual_probe_count = handshakes.len(),
+            "JARM input has an unexpected probe response count"
         );
         return ZERO_HASH.to_string();
     }

@@ -217,9 +217,9 @@ impl Scanner {
 
         if has_inconsistencies {
             tracing::warn!(
-                "Certificate inconsistency detected across IPs - different certificate chains served. \
-                 Using a representative certificate chain for reporting. \
-                 This may indicate load balancing or SNI-based certificate selection."
+                event_name = "certificate.chain.inconsistent_across_addresses",
+                outcome = "representative_chain_selected",
+                "Different certificate chains were served across target addresses"
             );
         }
 

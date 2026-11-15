@@ -104,8 +104,10 @@ impl From<u16> for Protocol {
             0x0305 => Protocol::QUIC,
             _ => {
                 tracing::warn!(
-                    "Unknown protocol version 0x{:04x}, defaulting to TLS 1.2",
-                    value
+                    event_name = "protocol.version.unknown",
+                    protocol_version = value,
+                    fallback = "tls1.2",
+                    "Unknown protocol version; using fallback"
                 );
                 Protocol::TLS12
             }

@@ -346,7 +346,11 @@ impl ClientSimulator {
                         384 => "P-384",
                         528 => "P-521",
                         other => {
-                            tracing::debug!("Unknown EC key size: {}", other);
+                            tracing::debug!(
+                                event_name = "certificate.public_key.ec_size.unknown",
+                                key_size_bits = other,
+                                "Unrecognized EC public key size"
+                            );
                             "unknown curve"
                         }
                     },

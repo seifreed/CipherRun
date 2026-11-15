@@ -28,7 +28,12 @@ impl CvssSeverity {
     pub fn from_score(score: f64) -> Self {
         match score {
             s if s < 0.0 => {
-                tracing::warn!("CVSS score is negative ({s}), treating as None");
+                tracing::warn!(
+                    event_name = "rating.cvss.score.invalid",
+                    score = s,
+                    fallback = "none",
+                    "Negative CVSS score treated as None"
+                );
                 CvssSeverity::None
             }
             0.0 => CvssSeverity::None,

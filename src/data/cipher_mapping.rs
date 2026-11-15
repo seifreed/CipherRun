@@ -191,8 +191,8 @@ impl CipherDatabase {
 
         // Default - unknown encryption, don't assume security
         tracing::warn!(
-            "Unknown encryption algorithm, cannot determine bit strength: {}",
-            enc
+            event_name = "cipher.encryption_algorithm.unknown",
+            "Unknown encryption algorithm; bit strength is unavailable"
         );
         0
     }

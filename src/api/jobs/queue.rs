@@ -161,7 +161,11 @@ impl ScanJob {
 
             // Guard against clock skew (started_at in the future)
             if elapsed_signed < 0 {
-                tracing::warn!("Job started_at is in the future, skipping ETA calculation");
+                tracing::warn!(
+                    event_name = "job.eta.unavailable",
+                    reason = "start_time_in_future",
+                    "Job ETA unavailable due to future start time"
+                );
                 return;
             }
 
@@ -176,23 +180,39 @@ impl ScanJob {
                 Some(val) => val,
                 None => {
                     // Overflow would only occur with elapsed > 584 years, but handle gracefully
-                    tracing::debug!("ETA calculation overflow, skipping");
+                    tracing::debug!(
+                        event_name = "job.eta.unavailable",
+                        reason = "calculation_overflow",
+                        "Job ETA calculation skipped"
+                    );
                     return;
                 }
             };
 
             let remaining = total_estimated.saturating_sub(elapsed);
             let Ok(remaining_seconds) = i64::try_from(remaining) else {
-                tracing::debug!("ETA calculation exceeds chrono range, skipping");
+                tracing::debug!(
+                    event_name = "job.eta.unavailable",
+                    reason = "duration_out_of_range",
+                    "Job ETA calculation skipped"
+                );
                 return;
             };
             let Some(remaining_duration) = chrono::Duration::try_seconds(remaining_seconds) else {
-                tracing::debug!("ETA calculation exceeds chrono range, skipping");
+                tracing::debug!(
+                    event_name = "job.eta.unavailable",
+                    reason = "duration_out_of_range",
+                    "Job ETA calculation skipped"
+                );
                 return;
             };
             let Some(estimated_completion) = Utc::now().checked_add_signed(remaining_duration)
             else {
-                tracing::debug!("ETA completion time exceeds chrono range, skipping");
+                tracing::debug!(
+                    event_name = "job.eta.unavailable",
+                    reason = "completion_time_out_of_range",
+                    "Job ETA calculation skipped"
+                );
                 return;
             };
 
@@ -561,8 +581,9 @@ impl JobQueue for InMemoryJobQueue {
             // completion overwrites cancellation
             if matches!(current.status, ScanStatus::Cancelled) {
                 tracing::info!(
-                    "Job {} was cancelled while processing, preserving cancelled status",
-                    job.id
+                    event_name = "job.status.cancelled_preserved",
+                    status = "cancelled",
+                    "Job cancellation preserved during processing"
                 );
                 return Ok(false);
             }
