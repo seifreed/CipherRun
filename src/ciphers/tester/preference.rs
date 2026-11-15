@@ -77,25 +77,39 @@ impl CipherPreferenceAnalyzer {
     pub(crate) fn is_server_preference(&self) -> bool {
         if self.is_client_preference() {
             tracing::debug!(
-                "Server respects client cipher preference (consistently picks client's first choice)"
+                event_name = "cipher.preference.classified",
+                outcome = "client_preference",
+                reason = "selected_first_offered",
+                "Cipher preference classified"
             );
             return false;
         }
 
         if self.all_choices_same() {
-            tracing::debug!("Server enforces cipher preference (chose same cipher in all tests)");
+            tracing::debug!(
+                event_name = "cipher.preference.classified",
+                outcome = "server_preference",
+                reason = "same_cipher_across_orders",
+                "Cipher preference classified"
+            );
             return true;
         }
 
         if self.mostly_same_different_positions() {
             tracing::debug!(
-                "Server enforces cipher preference (chose same cipher in multiple tests from different positions)"
+                event_name = "cipher.preference.classified",
+                outcome = "server_preference",
+                reason = "same_choice_from_different_positions",
+                "Cipher preference classified"
             );
             return true;
         }
 
         tracing::debug!(
-            "Server cipher preference unclear (mixed behavior detected, defaulting to unknown)"
+            event_name = "cipher.preference.classified",
+            outcome = "unknown",
+            reason = "mixed_choices",
+            "Cipher preference classified"
         );
         false
     }

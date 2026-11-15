@@ -100,18 +100,34 @@ impl CipherTester {
             .get_server_chosen_cipher(protocol, cipher_hexcodes)
             .await?;
         tracing::debug!(
-            "Cipher preference test 1 (original order): client offered {:04x?}, server chose {:04x?}",
-            cipher_hexcodes,
-            first_choice
+            event_name = "cipher.preference_probe.completed",
+            protocol = protocol.name(),
+            order = "original",
+            offered_cipher_count = cipher_hexcodes.len(),
+            server_choice = first_choice,
+            outcome = if first_choice.is_some() {
+                "selected"
+            } else {
+                "no_selection"
+            },
+            "Cipher preference probe completed"
         );
 
         let mut reversed = cipher_hexcodes.to_vec();
         reversed.reverse();
         let second_choice = self.get_server_chosen_cipher(protocol, &reversed).await?;
         tracing::debug!(
-            "Cipher preference test 2 (reversed order): client offered {:04x?}, server chose {:04x?}",
-            reversed,
-            second_choice
+            event_name = "cipher.preference_probe.completed",
+            protocol = protocol.name(),
+            order = "reversed",
+            offered_cipher_count = reversed.len(),
+            server_choice = second_choice,
+            outcome = if second_choice.is_some() {
+                "selected"
+            } else {
+                "no_selection"
+            },
+            "Cipher preference probe completed"
         );
 
         let (third_choice, rotated) = if cipher_hexcodes.len() >= 3 {
@@ -121,9 +137,17 @@ impl CipherTester {
             }
             let choice = self.get_server_chosen_cipher(protocol, &rotated).await?;
             tracing::debug!(
-                "Cipher preference test 3 (rotated order): client offered {:04x?}, server chose {:04x?}",
-                rotated,
-                choice
+                event_name = "cipher.preference_probe.completed",
+                protocol = protocol.name(),
+                order = "rotated",
+                offered_cipher_count = rotated.len(),
+                server_choice = choice,
+                outcome = if choice.is_some() {
+                    "selected"
+                } else {
+                    "no_selection"
+                },
+                "Cipher preference probe completed"
             );
             (choice, Some(rotated))
         } else {
@@ -260,13 +284,6 @@ impl CipherTester {
         }
 
         let cipher_offset = CIPHER_SUITE_BASE_OFFSET + session_id_len;
-        tracing::debug!(
-            "ServerHello: session_id_len={}, cipher_offset={}, response_len={}",
-            session_id_len,
-            cipher_offset,
-            bytes_read
-        );
-
         let cipher_bytes = received
             .get(cipher_offset..cipher_offset + 2)
             .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
@@ -274,7 +291,15 @@ impl CipherTester {
                 message: "ServerHello truncated before cipher_suite".to_string(),
             })?;
         let cipher = u16::from_be_bytes(cipher_bytes);
-        tracing::debug!("Server chose cipher: 0x{:04x}", cipher);
+        tracing::debug!(
+            event_name = "cipher.preference_probe.server_hello",
+            session_id_len,
+            cipher_offset,
+            response_bytes = bytes_read,
+            server_choice = cipher,
+            outcome = "parsed",
+            "ServerHello cipher choice parsed"
+        );
         Ok(Some(cipher))
     }
 }
