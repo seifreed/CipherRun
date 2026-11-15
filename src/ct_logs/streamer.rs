@@ -139,8 +139,12 @@ impl CtStreamer {
         // Setup signal handler for graceful shutdown
         let shutdown_clone = Arc::clone(&self.shutdown);
         tokio::spawn(async move {
-            if let Err(e) = signal::ctrl_c().await {
-                error!("Failed to listen for shutdown signal: {}", e);
+            if signal::ctrl_c().await.is_err() {
+                error!(
+                    event_name = "ct_log.shutdown_signal.failed",
+                    error_type = "signal_handler",
+                    "Failed to listen for shutdown signal"
+                );
             }
             info!("Shutdown signal received");
             shutdown_clone.store(true, Ordering::Release);
@@ -156,13 +160,14 @@ impl CtStreamer {
         let output_handle = tokio::spawn(async move {
             while let Some(entry) = rx.recv().await {
                 if let Some(sink) = &sink_for_output
-                    && let Err(error) = sink.handle_entry(&entry).await
+                    && sink.handle_entry(&entry).await.is_err()
                 {
                     warn!(
+                        event_name = "ct_log.sink.failed",
                         source = %entry.log_source,
                         index = entry.index,
-                        "CT entry sink rejected certificate: {}",
-                        error
+                        error_type = "sink_error",
+                        "CT entry sink rejected certificate"
                     );
                 }
                 if json_output {
@@ -226,21 +231,33 @@ impl CtStreamer {
 
         // Wait for all streaming tasks to complete
         for handle in handles {
-            if let Err(e) = handle.await {
-                error!("Streaming task failed: {}", e);
+            if handle.await.is_err() {
+                error!(
+                    event_name = "ct_log.stream_task.failed",
+                    error_type = "join_error",
+                    "CT log streaming task failed"
+                );
             }
         }
 
         // Wait for output task to complete
-        if let Err(e) = output_handle.await {
-            error!("Output task failed: {}", e);
+        if output_handle.await.is_err() {
+            error!(
+                event_name = "ct_log.output_task.failed",
+                error_type = "join_error",
+                "CT log output task failed"
+            );
         }
 
         // Wait for stats reporter
         if let Some(handle) = stats_handle
-            && let Err(e) = handle.await
+            && handle.await.is_err()
         {
-            error!("Stats reporter failed: {}", e);
+            error!(
+                event_name = "ct_log.stats_task.failed",
+                error_type = "join_error",
+                "CT log stats reporter failed"
+            );
         }
 
         // Print final statistics
@@ -286,8 +303,8 @@ impl CtStreamer {
                     );
                     tree_size
                 }
-                Err(e) => {
-                    error!("Failed to get tree size for {}: {}", source_id, e);
+                Err(_) => {
+                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", "Failed to get CT log tree size");
                     return;
                 }
             }
@@ -298,8 +315,8 @@ impl CtStreamer {
             // Get current tree size
             let tree_size = match client.get_tree_size(&source_url).await {
                 Ok(size) => size,
-                Err(e) => {
-                    error!("Failed to get tree size for {}: {}", source_id, e);
+                Err(_) => {
+                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", "Failed to get CT log tree size");
                     stats.increment_source_failures(&source_id);
                     sleep(Duration::from_secs(10)).await;
                     continue;
@@ -332,8 +349,8 @@ impl CtStreamer {
                 .await
             {
                 Ok(entries) => entries,
-                Err(e) => {
-                    error!("Failed to fetch entries for {}: {}", source_id, e);
+                Err(_) => {
+                    error!(event_name = "ct_log.entries.failed", source = %source_id, error_type = "ct_log_request", "Failed to fetch CT log entries");
                     stats.increment_source_failures(&source_id);
                     stats.increment_retries();
                     sleep(Duration::from_secs(5)).await;
@@ -360,7 +377,11 @@ impl CtStreamer {
 
                         // Send to output channel
                         if tx.send(entry).await.is_err() {
-                            warn!("Output channel closed, stopping stream for {}", source_id);
+                            warn!(
+                                event_name = "ct_log.output_channel.closed",
+                                source = %source_id,
+                                "CT log output channel closed"
+                            );
                             return;
                         }
                     }

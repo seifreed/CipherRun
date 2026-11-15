@@ -130,20 +130,29 @@ impl SourceManager {
                     && state.usable.is_some()
                 {
                     if !is_valid_ct_log_url(&log.url) {
-                        warn!("Skipping CT log with invalid URL: {}", log.url);
+                        warn!(
+                            event_name = "ct_log.skipped",
+                            reason = "invalid_url",
+                            "Skipping CT log source"
+                        );
                         continue;
                     }
                     match ct_log_url_resolves_publicly(&log.url).await {
                         Ok(true) => {}
                         Ok(false) => {
                             warn!(
-                                "Skipping CT log with private/internal resolution: {}",
-                                log.url
+                                event_name = "ct_log.skipped",
+                                reason = "private_resolution",
+                                "Skipping CT log source"
                             );
                             continue;
                         }
-                        Err(error) => {
-                            warn!("Skipping CT log with unresolved URL {}: {}", log.url, error);
+                        Err(_) => {
+                            warn!(
+                                event_name = "ct_log.skipped",
+                                reason = "dns_resolution",
+                                "Skipping CT log source"
+                            );
                             continue;
                         }
                     }

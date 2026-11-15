@@ -46,8 +46,12 @@ async fn websocket_handler(socket: WebSocket, state: Arc<WsState>) {
                             // Serialize progress message to JSON
                             let json = match serde_json::to_string(&progress) {
                                 Ok(j) => j,
-                                Err(e) => {
-                                    error!("Failed to serialize progress message: {}", e);
+                                Err(_) => {
+                                    error!(
+                                        event_name = "websocket.progress.serialize.failed",
+                                        error_type = "serialization",
+                                        "Failed to serialize progress message"
+                                    );
                                     continue;
                                 }
                             };
@@ -176,8 +180,12 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                             // Serialize progress message to JSON
                             let json = match serde_json::to_string(&progress) {
                                 Ok(j) => j,
-                                Err(e) => {
-                                    error!("Failed to serialize progress message: {}", e);
+                                Err(_) => {
+                                    error!(
+                                        event_name = "websocket.progress.serialize.failed",
+                                        error_type = "serialization",
+                                        "Failed to serialize progress message"
+                                    );
                                     continue;
                                 }
                             };
@@ -264,8 +272,12 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                         "Received WebSocket text message"
                     );
                 }
-                Err(e) => {
-                    error!("WebSocket error: {}", e);
+                Err(_) => {
+                    error!(
+                        event_name = "websocket.receive.failed",
+                        error_type = "transport",
+                        "WebSocket receive failed"
+                    );
                     break;
                 }
                 Ok(Message::Binary(_)) => {
