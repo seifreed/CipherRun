@@ -21,7 +21,6 @@ import sys
 from typing import Optional
 import urllib3
 
-import http.client as httplib
 
 JSON_SCHEMA_VALIDATION_KEYWORDS = {
     'multipleOf', 'maximum', 'exclusiveMaximum',
@@ -320,18 +319,11 @@ conf = cipherrun_client.Configuration(
         """
         self.__debug = value
         if self.__debug:
-            # if debug status is True, turn on debug logging
-            for _, logger in self.logger.items():
-                logger.setLevel(logging.DEBUG)
-            # turn on httplib debug
-            httplib.HTTPConnection.debuglevel = 1
+            self.logger["package_logger"].setLevel(logging.DEBUG)
+            self.logger["urllib3_logger"].setLevel(logging.WARNING)
         else:
-            # if debug status is False, turn off debug logging,
-            # setting log level to default `logging.WARNING`
             for _, logger in self.logger.items():
                 logger.setLevel(logging.WARNING)
-            # turn off httplib debug
-            httplib.HTTPConnection.debuglevel = 0
 
     @property
     def logger_format(self):
