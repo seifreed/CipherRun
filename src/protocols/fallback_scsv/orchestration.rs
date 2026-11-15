@@ -18,7 +18,6 @@ impl FallbackScsvTester<'_> {
             let result = protocol_tester.test_protocol(protocol).await?;
             if result.supported {
                 supported.push(protocol);
-                tracing::debug!("Protocol {} is supported", protocol.name());
             }
         }
 
@@ -37,6 +36,13 @@ impl FallbackScsvTester<'_> {
             })?;
             let protocol_name = max_protocol.name();
             let has_tls13 = matches!(max_protocol, Protocol::TLS13);
+            tracing::debug!(
+                event_name = "tls_fallback_scsv.inconclusive",
+                protocol = protocol_name,
+                reason = "insufficient_protocol_count",
+                outcome = "inconclusive",
+                "SCSV protection cannot be determined"
+            );
             return Ok(FallbackScsvTestResult {
                 supported: false,
                 accepts_downgrade: false,
@@ -124,23 +130,43 @@ impl FallbackScsvTester<'_> {
         let fallback_protocol = match max_protocol {
             Protocol::SSLv3 => {
                 tracing::warn!(
-                    "Server only supports SSLv3 - cannot test SCSV (no lower version available)"
+                    event_name = "tls_fallback_scsv.not_applicable",
+                    protocol = max_protocol.name(),
+                    reason = "no_lower_protocol",
+                    outcome = "inconclusive",
+                    "Cannot test SCSV without a lower fallback protocol"
                 );
                 return Ok(ScsvSupport::inconclusive());
             }
             Protocol::SSLv2 => {
-                tracing::warn!("Server only supports SSLv2 - SCSV not applicable");
+                tracing::warn!(
+                    event_name = "tls_fallback_scsv.not_applicable",
+                    protocol = max_protocol.name(),
+                    reason = "protocol_not_applicable",
+                    outcome = "not_applicable",
+                    "SCSV is not applicable to the negotiated protocol"
+                );
                 return Ok(ScsvSupport::not_applicable());
             }
             Protocol::QUIC => {
-                tracing::warn!("QUIC protocol detected - SCSV testing not applicable");
+                tracing::warn!(
+                    event_name = "tls_fallback_scsv.not_applicable",
+                    protocol = max_protocol.name(),
+                    reason = "protocol_not_applicable",
+                    outcome = "not_applicable",
+                    "SCSV is not applicable to the negotiated protocol"
+                );
                 return Ok(ScsvSupport::not_applicable());
             }
             _ => {
                 let fallback = self.select_fallback_protocol(supported_protocols, max_protocol);
                 let Some(fallback) = fallback else {
                     tracing::warn!(
-                        "No lower supported protocol found for SCSV test - cannot test fallback"
+                        event_name = "tls_fallback_scsv.inconclusive",
+                        protocol = max_protocol.name(),
+                        reason = "no_lower_protocol",
+                        outcome = "inconclusive",
+                        "No lower supported protocol is available for the SCSV test"
                     );
                     return Ok(ScsvSupport::inconclusive());
                 };
@@ -150,9 +176,10 @@ impl FallbackScsvTester<'_> {
 
         let test_version = fallback_protocol.as_hex();
         tracing::debug!(
-            "Testing SCSV: Max supported = {}, Testing with {} + SCSV",
-            max_protocol.name(),
-            fallback_protocol.name()
+            event_name = "tls_fallback_scsv.probe.started",
+            max_protocol = max_protocol.name(),
+            fallback_protocol = fallback_protocol.name(),
+            "Testing TLS_FALLBACK_SCSV"
         );
 
         if self.test_all_ips {

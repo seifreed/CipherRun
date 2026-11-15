@@ -11,6 +11,12 @@ impl FallbackScsvTester<'_> {
         let addrs = self.target.socket_addrs();
 
         if addrs.is_empty() {
+            tracing::debug!(
+                event_name = "tls_fallback_scsv.completed",
+                outcome = "inconclusive",
+                reason = "no_socket_addresses",
+                "SCSV test has no resolved socket addresses"
+            );
             return Ok(ScsvSupport::inconclusive());
         }
 
@@ -32,6 +38,15 @@ impl FallbackScsvTester<'_> {
                 total = addrs.len(),
                 supported = ip_supports.supported,
                 inconclusive = ip_supports.inconclusive,
+                outcome = if ip_supports.inconclusive {
+                    "inconclusive"
+                } else if ip_supports.vulnerable {
+                    "vulnerable"
+                } else if ip_supports.supported {
+                    "protected"
+                } else {
+                    "not_supported"
+                },
                 "TLS_FALLBACK_SCSV test completed for address"
             );
 
@@ -69,14 +84,24 @@ impl FallbackScsvTester<'_> {
                     timeout(Duration::from_secs(3), Self::read_tls_record(&mut stream)).await;
                 if !self.baseline_fallback_accepted_record(baseline) {
                     tracing::debug!(
-                        "SCSV test: baseline fallback without SCSV did not complete cleanly"
+                        event_name = "tls_fallback_scsv.baseline.completed",
+                        protocol_version = test_version,
+                        outcome = "inconclusive",
+                        reason = "baseline_not_accepted",
+                        "Baseline fallback without SCSV did not complete cleanly"
                     );
                     return Ok(ScsvSupport::inconclusive());
                 }
 
                 let stream = self.starttls_connect(addr, Duration::from_secs(5)).await;
                 let Ok(mut stream) = stream else {
-                    tracing::debug!("SCSV test: Failed to reconnect for SCSV test");
+                    tracing::debug!(
+                        event_name = "tls_fallback_scsv.reconnect.failed",
+                        error_type = "transport",
+                        protocol_version = test_version,
+                        outcome = "inconclusive",
+                        "Failed to reconnect for SCSV probe"
+                    );
                     return Ok(ScsvSupport::inconclusive());
                 };
 
@@ -93,21 +118,26 @@ impl FallbackScsvTester<'_> {
                 match timeout(Duration::from_secs(3), Self::read_tls_record(&mut stream)).await {
                     Ok(Ok(Some(response))) => {
                         tracing::debug!(
-                            "SCSV test: received {} bytes, first byte: 0x{:02x}",
-                            response.len(),
-                            response.first().copied().unwrap_or_default()
+                            event_name = "tls_fallback_scsv.response.received",
+                            response_bytes = response.len(),
+                            content_type = response.first().copied(),
+                            outcome = "received",
+                            "Received SCSV test response"
                         );
 
                         let support = classify_scsv_response(&response);
                         if support.supported {
                             tracing::info!(
                                 event_name = "tls_fallback_scsv.supported",
+                                protocol_version = test_version,
+                                outcome = "protected",
                                 "Server rejected inappropriate TLS fallback"
                             );
                         } else if support.vulnerable {
                             tracing::warn!(
                                 event_name = "tls_fallback_scsv.vulnerable",
-                                protocol_version = format!("0x{test_version:04x}"),
+                                protocol_version = test_version,
+                                outcome = "vulnerable",
                                 "Server accepted inappropriate TLS fallback"
                             );
                         }
@@ -115,13 +145,19 @@ impl FallbackScsvTester<'_> {
                     }
                     Ok(Ok(None)) => {
                         tracing::debug!(
-                            "SCSV test: Empty or truncated response - server may have rejected connection"
+                            event_name = "tls_fallback_scsv.response.empty",
+                            protocol_version = test_version,
+                            outcome = "inconclusive",
+                            reason = "empty_or_truncated",
+                            "SCSV test response was empty or truncated"
                         );
                         Ok(ScsvSupport::inconclusive())
                     }
                     Err(_) => {
                         tracing::debug!(
                             event_name = "tls_fallback_scsv.timeout",
+                            protocol_version = test_version,
+                            outcome = "inconclusive",
                             "Timed out reading SCSV response"
                         );
                         Ok(ScsvSupport::inconclusive())
@@ -130,14 +166,22 @@ impl FallbackScsvTester<'_> {
                         tracing::debug!(
                             event_name = "tls_fallback_scsv.read_failed",
                             error_type = "transport",
+                            protocol_version = test_version,
+                            outcome = "inconclusive",
                             "Failed to read SCSV response"
                         );
                         Ok(ScsvSupport::inconclusive())
                     }
                 }
             }
-            _ => {
-                tracing::debug!("SCSV test: Failed to connect to server");
+            Err(_) => {
+                tracing::debug!(
+                    event_name = "tls_fallback_scsv.connect.failed",
+                    error_type = "transport",
+                    protocol_version = test_version,
+                    outcome = "inconclusive",
+                    "Failed to connect for SCSV probe"
+                );
                 Ok(ScsvSupport::inconclusive())
             }
         }

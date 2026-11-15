@@ -11,6 +11,7 @@ pub use model::FallbackScsvTestResult;
 use crate::Result;
 use crate::protocols::tester::ProtocolTester;
 use crate::utils::network::Target;
+use std::time::Instant;
 
 /// TLS Fallback SCSV tester
 pub struct FallbackScsvTester<'a> {
@@ -80,7 +81,11 @@ impl<'a> FallbackScsvTester<'a> {
     }
 
     pub async fn test(&mut self) -> Result<FallbackScsvTestResult> {
-        tracing::debug!("Detecting maximum supported protocol version for SCSV testing");
+        let started = Instant::now();
+        tracing::debug!(
+            event_name = "tls_fallback_scsv.protocol_detection.started",
+            "Detecting maximum supported protocol version"
+        );
         let protocol_tester = ProtocolTester::new(self.target.clone())
             .with_sni(self.sni_hostname.clone())
             .with_starttls(self.starttls)
@@ -91,13 +96,19 @@ impl<'a> FallbackScsvTester<'a> {
             Some(max_protocol) => {
                 self.max_supported_protocol = Some(max_protocol);
                 tracing::debug!(
-                    "Maximum supported protocol detected: {}",
-                    max_protocol.name()
+                    event_name = "tls_fallback_scsv.protocol_detection.completed",
+                    protocol = max_protocol.name(),
+                    outcome = "supported",
+                    "Maximum supported protocol detected"
                 );
             }
             None => {
                 tracing::warn!(
-                    "Could not detect any supported protocol - server may be unreachable"
+                    event_name = "tls_fallback_scsv.protocol_detection.completed",
+                    duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    error_type = "no_supported_protocol",
+                    outcome = "inconclusive",
+                    "Could not detect any supported protocol"
                 );
                 return Ok(FallbackScsvTestResult {
                     supported: false,
@@ -114,11 +125,34 @@ impl<'a> FallbackScsvTester<'a> {
 
         let supported_protocols = self.count_supported_protocols(&protocol_tester).await?;
         tracing::debug!(
-            "Server supports {} TLS/SSL protocol version(s) (excluding SSL 2 and QUIC)",
-            supported_protocols.len()
+            event_name = "tls_fallback_scsv.protocols_detected",
+            protocol_count = supported_protocols.len(),
+            "Supported TLS/SSL protocols detected"
         );
 
-        self.build_scsv_result(&supported_protocols).await
+        let result = self.build_scsv_result(&supported_protocols).await?;
+        let outcome = if result.inconclusive {
+            "inconclusive"
+        } else if result.not_applicable {
+            "not_applicable"
+        } else if result.vulnerable {
+            "vulnerable"
+        } else if result.supported {
+            "protected"
+        } else {
+            "not_supported"
+        };
+        tracing::info!(
+            event_name = "tls_fallback_scsv.completed",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            supported = result.supported,
+            vulnerable = result.vulnerable,
+            inconclusive = result.inconclusive,
+            not_applicable = result.not_applicable,
+            outcome,
+            "TLS_FALLBACK_SCSV test completed"
+        );
+        Ok(result)
     }
 }
 
