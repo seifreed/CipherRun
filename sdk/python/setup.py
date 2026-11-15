@@ -23,9 +23,12 @@ from setuptools import setup, find_packages  # noqa: H301
 # http://pypi.python.org/pypi/setuptools
 NAME = "cipherrun-client"
 VERSION = "0.4.0"
-PYTHON_REQUIRES = ">=3.7"
+PYTHON_REQUIRES = ">=3.10"
 REQUIRES = [
-    "urllib3 >= 1.25.3, < 2.1.0",
+    "urllib3 >= 2.8.0, < 3.0",
+    "requests >= 2.32.5, < 3.0",
+    "aiohttp >= 3.13.2, < 4.0",
+    "websockets >= 13.1, < 14.0",
     "python-dateutil",
     "pydantic >= 2",
     "typing-extensions >= 4.7.1",
@@ -40,6 +43,7 @@ setup(
     url="",
     keywords=["OpenAPI", "OpenAPI-Generator", "CipherRun API"],
     install_requires=REQUIRES,
+    python_requires=PYTHON_REQUIRES,
     packages=find_packages(exclude=["test", "tests"]),
     include_package_data=True,
     license="GPL-3.0-or-later",

@@ -55,7 +55,7 @@ For more information, please visit [https://github.com/seifreed/cipherrun](https
 
 ## Requirements.
 
-Python 3.7+
+Python 3.10+
 
 ## Installation & Usage
 ### pip install
