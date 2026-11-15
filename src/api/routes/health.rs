@@ -34,6 +34,16 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
                     active_scans_failed = active_result.is_err(),
                     queued_scans_failed = queued_result.is_err(),
                     error_type = "queue_backend",
+                    active_error_code = active_result
+                        .as_ref()
+                        .err()
+                        .map(|error| error.observability_code())
+                        .unwrap_or("none"),
+                    queued_error_code = queued_result
+                        .as_ref()
+                        .err()
+                        .map(|error| error.observability_code())
+                        .unwrap_or("none"),
                     "Queue health check failed"
                 );
                 (false, None, None, Some("unavailable".to_string()))
@@ -44,10 +54,11 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
     let (database_healthy, database_status) = if let Some(db) = &state.db_pool {
         match check_database_health(db).await {
             Ok(_) => (true, Some("connected".to_string())),
-            Err(_) => {
+            Err(error) => {
                 tracing::warn!(
                     event_name = "health.database.unavailable",
                     error_type = "database",
+                    error_code = error.observability_code(),
                     "Database health check failed"
                 );
                 (false, Some("unavailable".to_string()))
