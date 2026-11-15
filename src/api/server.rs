@@ -299,21 +299,19 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check))
             // Add OpenAPI/Swagger UI if enabled
             .merge(self.swagger_routes())
-            // Add metrics inside authentication so scoped counters can see the
-            // AuthExtension inserted by the auth middleware.
+            // Metrics wraps authentication and rate limiting so rejected
+            // requests are observable and receive a request ID.
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
-                middleware::metrics,
+                middleware::rate_limit,
             ))
-            // Authentication runs before metrics; rate limiting then sees the
-            // same principal and tenant scope.
             .layer(axum_middleware::from_fn_with_state(
                 self.state.credential_store.clone(),
                 middleware::authenticate,
             ))
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
-                middleware::rate_limit,
+                middleware::metrics,
             ));
 
         // CORS is opt-in and only permits explicitly configured origins.
@@ -538,6 +536,66 @@ mod tests {
         let server = ApiServer::new(config).expect("test assertion should succeed");
         let _router = server.router().expect("router should build");
         // Just verify it builds without panicking
+    }
+
+    #[tokio::test]
+    async fn router_observes_auth_failures_and_enforces_authenticated_rate_limits() {
+        let mut config = ApiConfig {
+            rate_limit_per_minute: 1,
+            ..Default::default()
+        };
+        config.api_keys.clear();
+        config
+            .api_keys
+            .insert("test-user-key".to_string(), Permission::User);
+        let server = ApiServer::new(config).expect("server should build");
+        let app = server.router().expect("router should build");
+
+        let rejected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+        assert!(rejected.headers().contains_key("x-request-id"));
+
+        let allowed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats")
+                    .header("X-API-Key", "test-user-key")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+        assert_eq!(allowed.status(), StatusCode::OK);
+        assert_eq!(allowed.headers()["x-ratelimit-limit"], "1");
+        assert!(allowed.headers().contains_key("x-request-id"));
+
+        let limited = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/stats")
+                    .header("X-API-Key", "test-user-key")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.headers().contains_key("x-request-id"));
+
+        let state = server.state();
+        let stats = state.stats.read().await;
+        assert_eq!(stats.total_responses, 3);
+        assert_eq!(stats.http_responses_4xx, 2);
     }
 
     #[tokio::test]
