@@ -18,6 +18,21 @@ pub(crate) enum ExportKind {
     RawHello,
 }
 
+impl ExportKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::MultiIpJson => "multi_ip_json",
+            Self::Csv => "csv",
+            Self::Html => "html",
+            Self::Xml => "xml",
+            Self::Sarif => "sarif",
+            Self::Junit => "junit",
+            Self::RawHello => "raw_hello",
+        }
+    }
+}
+
 pub(super) struct ScanExportPlan<'a> {
     pub(super) results: &'a crate::scanner::ScanResults,
     pub(super) json_file: Option<std::path::PathBuf>,
@@ -137,7 +152,7 @@ impl<'a> ScanExporter<'a> {
         let mut exported = false;
         if let Some(json_file) = plan.json_file {
             let json = plan.results.to_json(plan.json_pretty)?;
-            self.write_artifact(&json_file, &json, ExportKind::Json)?;
+            self.write_artifact(&json_file, json.as_bytes(), ExportKind::Json)?;
             println!("✓ Results exported to JSON: {}", json_file.display());
             exported = true;
         }
@@ -148,7 +163,7 @@ impl<'a> ScanExporter<'a> {
         {
             use crate::output::json::generate_multi_ip_json;
             let json = generate_multi_ip_json(report, plan.json_pretty)?;
-            self.write_artifact(&json_path, &json, ExportKind::MultiIpJson)?;
+            self.write_artifact(&json_path, json.as_bytes(), ExportKind::MultiIpJson)?;
             println!(
                 "✓ Multi-IP report exported to JSON: {}",
                 json_path.display()
@@ -159,7 +174,7 @@ impl<'a> ScanExporter<'a> {
         if let Some(csv_file) = plan.csv_file {
             use crate::output::csv;
             let csv = csv::generate_csv(plan.results)?;
-            self.write_artifact(&csv_file, &csv, ExportKind::Csv)?;
+            self.write_artifact(&csv_file, csv.as_bytes(), ExportKind::Csv)?;
             println!("✓ Results exported to CSV: {}", csv_file.display());
             exported = true;
         }
@@ -167,7 +182,7 @@ impl<'a> ScanExporter<'a> {
         if let Some(html_file) = plan.html_file {
             use crate::output::html;
             let html_content = html::generate_html_report(plan.results)?;
-            self.write_artifact(&html_file, &html_content, ExportKind::Html)?;
+            self.write_artifact(&html_file, html_content.as_bytes(), ExportKind::Html)?;
             println!("✓ Results exported to HTML: {}", html_file.display());
             exported = true;
         }
@@ -175,21 +190,21 @@ impl<'a> ScanExporter<'a> {
         if let Some(xml_file) = plan.xml_file {
             use crate::output::xml;
             let xml_content = xml::generate_xml_report(plan.results)?;
-            self.write_artifact(&xml_file, &xml_content, ExportKind::Xml)?;
+            self.write_artifact(&xml_file, xml_content.as_bytes(), ExportKind::Xml)?;
             println!("✓ Results exported to XML: {}", xml_file.display());
             exported = true;
         }
 
         if let Some(sarif_file) = plan.sarif_file {
             let sarif = crate::output::sarif::generate_sarif_report(plan.results)?;
-            self.write_artifact(&sarif_file, &sarif, ExportKind::Sarif)?;
+            self.write_artifact(&sarif_file, sarif.as_bytes(), ExportKind::Sarif)?;
             println!("✓ Results exported to SARIF: {}", sarif_file.display());
             exported = true;
         }
 
         if let Some(junit_file) = plan.junit_file {
             let junit = crate::output::junit::generate_junit_report(plan.results);
-            self.write_artifact(&junit_file, &junit, ExportKind::Junit)?;
+            self.write_artifact(&junit_file, junit.as_bytes(), ExportKind::Junit)?;
             println!("✓ Results exported to JUnit: {}", junit_file.display());
             exported = true;
         }
@@ -223,11 +238,8 @@ impl<'a> ScanExporter<'a> {
                 continue;
             };
             let path = PathBuf::from(format!("{}.{}.{}", base, label, format.file_extension()));
-            self.ensure_write_allowed(&path, ExportKind::RawHello)?;
-            fs::write(
-                &path,
-                crate::output::hello_export::render_hello(bytes, format),
-            )?;
+            let content = crate::output::hello_export::render_hello(bytes, format);
+            self.write_artifact(&path, &content, ExportKind::RawHello)?;
             if !self.args.output.quiet {
                 println!(
                     "✓ Exported {} ({} bytes) to {}",
@@ -248,39 +260,76 @@ impl<'a> ScanExporter<'a> {
         kind: &str,
         export_kind: ExportKind,
     ) -> Result<()> {
-        self.write_artifact(path, content, export_kind)?;
+        self.write_artifact(path, content.as_bytes(), export_kind)?;
         if !self.args.output.quiet {
             println!("✓ Results exported to {}: {}", kind, path.display());
         }
         Ok(())
     }
 
-    fn write_artifact(&self, path: &Path, content: &str, kind: ExportKind) -> Result<()> {
-        self.ensure_write_allowed(path, kind)?;
+    fn write_artifact(&self, path: &Path, content: &[u8], kind: ExportKind) -> Result<()> {
+        let started = std::time::Instant::now();
+        let result: Result<()> = (|| {
+            self.ensure_write_allowed(path, kind)?;
 
-        if self.args.output.append && path.exists() {
-            match kind {
-                ExportKind::Csv => self.append_csv(path, content)?,
-                ExportKind::Json
-                | ExportKind::MultiIpJson
-                | ExportKind::Html
-                | ExportKind::Xml
-                | ExportKind::Sarif
-                | ExportKind::Junit
-                | ExportKind::RawHello => {
-                    return Err(crate::TlsError::InvalidInput {
-                        message: format!(
-                            "--append is only supported for CSV exports; cannot append to {}",
-                            path.display()
-                        ),
-                    });
+            if self.args.output.append && path.exists() {
+                match kind {
+                    ExportKind::Csv => {
+                        self.append_csv(path, std::str::from_utf8(content)?)?;
+                    }
+                    ExportKind::Json
+                    | ExportKind::MultiIpJson
+                    | ExportKind::Html
+                    | ExportKind::Xml
+                    | ExportKind::Sarif
+                    | ExportKind::Junit
+                    | ExportKind::RawHello => {
+                        return Err(crate::TlsError::InvalidInput {
+                            message: format!(
+                                "--append is only supported for CSV exports; cannot append to {}",
+                                path.display()
+                            ),
+                        });
+                    }
                 }
+            } else {
+                fs::write(path, content)?;
             }
-        } else {
-            fs::write(path, content)?;
+            Ok(())
+        })();
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match &result {
+            Ok(()) => tracing::info!(
+                event_name = "scan.export.completed",
+                operation = "write_artifact",
+                artifact_kind = kind.as_str(),
+                bytes = content.len(),
+                duration_ms,
+                outcome = "success",
+                "Scan result artifact exported"
+            ),
+            Err(error) if error.observability_code() == "invalid_input" => tracing::warn!(
+                event_name = "scan.export.failed",
+                operation = "write_artifact",
+                artifact_kind = kind.as_str(),
+                duration_ms,
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "Scan result artifact export failed"
+            ),
+            Err(error) => tracing::error!(
+                event_name = "scan.export.failed",
+                operation = "write_artifact",
+                artifact_kind = kind.as_str(),
+                duration_ms,
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "Scan result artifact export failed"
+            ),
         }
-
-        Ok(())
+        result
     }
 
     fn ensure_write_allowed(&self, path: &Path, kind: ExportKind) -> Result<()> {
@@ -430,7 +479,34 @@ fn sanitize_target_filename(target: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[cfg(unix)]
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -455,6 +531,52 @@ mod tests {
             sanitize_target_filename("[2001:db8::1]:443"),
             "_2001_db8__1__443"
         );
+    }
+
+    #[test]
+    fn artifact_export_events_report_kind_and_outcome_without_path_or_content() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("private-report-path.json");
+        let args = Args::default();
+        let exporter = ScanExporter::new(&args);
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            exporter
+                .write_text_file(&path, "content-secret-sentinel", "JSON", ExportKind::Json)
+                .expect("first export should succeed");
+            exporter
+                .write_text_file(&path, "second-secret-sentinel", "JSON", ExportKind::Json)
+                .expect_err("existing artifact should be refused");
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["level"], "INFO");
+        assert_eq!(events[0]["fields"]["event_name"], "scan.export.completed");
+        assert_eq!(events[0]["fields"]["artifact_kind"], "json");
+        assert_eq!(events[0]["fields"]["outcome"], "success");
+        assert_eq!(
+            events[0]["fields"]["bytes"],
+            "content-secret-sentinel".len()
+        );
+        assert!(events[0]["fields"]["duration_ms"].is_number());
+        assert_eq!(events[1]["level"], "WARN");
+        assert_eq!(events[1]["fields"]["event_name"], "scan.export.failed");
+        assert_eq!(events[1]["fields"]["error_code"], "invalid_input");
+        assert_eq!(events[1]["fields"]["outcome"], "failed");
+        assert!(!output.contains("private-report-path.json"));
+        assert!(!output.contains("content-secret-sentinel"));
+        assert!(!output.contains("second-secret-sentinel"));
     }
 
     #[test]
