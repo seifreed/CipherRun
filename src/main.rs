@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex};
 use tracing::{Level, info};
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
-use tracing_subscriber::{EnvFilter, fmt::MakeWriter};
 use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriterExt};
+use tracing_subscriber::{EnvFilter, fmt::MakeWriter};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -380,12 +380,20 @@ mod tests {
 
     #[test]
     fn test_resolve_log_level_prefers_rust_log() {
-        assert!(resolve_log_filter(Some("error"), 2).to_string().contains("error"));
+        assert!(
+            resolve_log_filter(Some("error"), 2)
+                .to_string()
+                .contains("error")
+        );
     }
 
     #[test]
     fn test_resolve_log_level_falls_back_on_invalid_rust_log() {
-        assert!(resolve_log_filter(Some("not-a-level"), 1).to_string().contains("debug"));
+        assert!(
+            resolve_log_filter(Some("not-a-level"), 1)
+                .to_string()
+                .contains("debug")
+        );
     }
 
     #[test]
