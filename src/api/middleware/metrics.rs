@@ -58,13 +58,13 @@ pub async fn metrics(
         http.route = %path,
     );
     #[cfg(feature = "otel")]
-    if let Some(parent) = remote_parent_context(request.headers()) {
-        if request_span.set_parent(parent).is_err() {
-            tracing::warn!(
-                event_name = "trace_context.rejected",
-                "Failed to apply trace parent"
-            );
-        }
+    if let Some(parent) = remote_parent_context(request.headers())
+        && request_span.set_parent(parent).is_err()
+    {
+        tracing::warn!(
+            event_name = "trace_context.rejected",
+            "Failed to apply trace parent"
+        );
     }
     let mut response = next.run(request).instrument(request_span).await;
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);

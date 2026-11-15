@@ -229,13 +229,11 @@ impl HeaderAnalyzer {
                 response.status().canonical_reason().unwrap_or("Unknown")
             );
 
-            let location = response
+            response
                 .headers()
                 .get("location")
                 .map(|value| header_value_to_string("location", value))
-                .transpose()?;
-
-            location
+                .transpose()?
         } else {
             None
         };

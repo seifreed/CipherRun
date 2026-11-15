@@ -842,6 +842,95 @@ mod tests {
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    struct GatedJobQueue {
+        job: tokio::sync::Mutex<Option<ScanJob>>,
+        cancelled_job: ScanJob,
+        entered: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl JobQueue for GatedJobQueue {
+        async fn enqueue(&self, _job: ScanJob) -> Result<String> {
+            unreachable!()
+        }
+
+        async fn dequeue(&self) -> Result<Option<ScanJob>> {
+            Ok(self.job.lock().await.take())
+        }
+
+        async fn get_job(&self, _id: &str) -> Result<Option<ScanJob>> {
+            if let Some(entered) = self.entered.lock().await.take() {
+                let _ = entered.send(());
+            }
+            if let Some(release) = self.release.lock().await.take() {
+                let _ = release.await;
+            }
+            let mut job = self.cancelled_job.clone();
+            job.mark_cancelled();
+            Ok(Some(job))
+        }
+
+        async fn update_job(&self, _job: &ScanJob) -> Result<()> {
+            unreachable!()
+        }
+
+        async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
+            unreachable!()
+        }
+
+        async fn cancel_job(&self, _id: &str) -> Result<bool> {
+            unreachable!()
+        }
+
+        async fn queue_length(&self) -> Result<usize> {
+            Ok(0)
+        }
+
+        async fn list_jobs(&self) -> Result<Vec<ScanJob>> {
+            Ok(Vec::new())
+        }
+
+        async fn active_jobs_count(&self) -> Result<usize> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_active_scan_tasks() {
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let cancelled_job = job.clone();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job)),
+            cancelled_job,
+            entered: tokio::sync::Mutex::new(Some(entered_tx)),
+            release: tokio::sync::Mutex::new(Some(release_rx)),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue, 1));
+        let handle = tokio::spawn(Arc::clone(&executor).start());
+
+        tokio::time::timeout(Duration::from_secs(1), entered_rx)
+            .await
+            .expect("scan task should start")
+            .expect("entry signal should be sent");
+        executor.shutdown().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !handle.is_finished(),
+            "shutdown must wait for the active task"
+        );
+
+        let _ = release_tx.send(());
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("executor should stop after the active task finishes")
+            .expect("executor task should join")
+            .unwrap();
+    }
+
     struct WebhookTestState {
         attempts: AtomicUsize,
         signature_valid: AtomicBool,
