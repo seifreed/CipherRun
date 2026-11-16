@@ -299,8 +299,7 @@ impl ApiServer {
             .route("/health", get(routes::health::health_check))
             // Add OpenAPI/Swagger UI if enabled
             .merge(self.swagger_routes())
-            // Metrics wraps authentication and rate limiting so rejected
-            // requests are observable and receive a request ID.
+            // Authenticate before the per-key limiter needs the principal.
             .layer(axum_middleware::from_fn_with_state(
                 self.state.clone(),
                 middleware::rate_limit,
@@ -308,10 +307,6 @@ impl ApiServer {
             .layer(axum_middleware::from_fn_with_state(
                 self.state.credential_store.clone(),
                 middleware::authenticate,
-            ))
-            .layer(axum_middleware::from_fn_with_state(
-                self.state.clone(),
-                middleware::metrics,
             ));
 
         // CORS is opt-in and only permits explicitly configured origins.
@@ -350,6 +345,12 @@ impl ApiServer {
             )
             // Add compression
             .layer(CompressionLayer::new())
+            // Keep metrics outermost so timeout, CORS, auth and quota
+            // rejections all receive request IDs and audit events.
+            .layer(axum_middleware::from_fn_with_state(
+                self.state.clone(),
+                middleware::metrics,
+            ))
             // Add shared state
             .with_state(self.state.clone()))
     }
@@ -639,10 +640,8 @@ mod tests {
             .api_keys
             .insert("test-key".to_string(), Permission::User);
 
-        let app = ApiServer::new(config)
-            .expect("server should build")
-            .router()
-            .expect("router should build");
+        let server = ApiServer::new(config).expect("server should build");
+        let app = server.router().expect("router should build");
         let response = app
             .oneshot(
                 Request::builder()
@@ -657,6 +656,9 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(response.headers().contains_key("x-request-id"));
+        let state = server.state();
+        assert_eq!(state.stats.read().await.total_responses, 1);
     }
 
     #[tokio::test]
@@ -666,10 +668,8 @@ mod tests {
             ..Default::default()
         };
 
-        let app = ApiServer::new(config)
-            .expect("server should build")
-            .router()
-            .expect("router should build");
+        let server = ApiServer::new(config).expect("server should build");
+        let app = server.router().expect("router should build");
         let response = app
             .oneshot(
                 Request::builder()
@@ -682,5 +682,38 @@ mod tests {
             .expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        assert!(response.headers().contains_key("x-request-id"));
+        let state = server.state();
+        let stats = state.stats.read().await;
+        assert_eq!(stats.total_responses, 1);
+        assert_eq!(stats.http_responses_4xx, 1);
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_is_included_in_request_metrics() {
+        let config = ApiConfig {
+            enable_cors: true,
+            allowed_origins: vec!["https://client.example".to_string()],
+            ..Default::default()
+        };
+        let server = ApiServer::new(config).expect("server should build");
+        let app = server.router().expect("router should build");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/stats")
+                    .header("Origin", "https://client.example")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        let state = server.state();
+        assert_eq!(state.stats.read().await.total_responses, 1);
     }
 }
