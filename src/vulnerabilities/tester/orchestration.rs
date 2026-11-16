@@ -2,6 +2,26 @@ use super::{Protocol, VulnerabilityResult, VulnerabilityScanner, VulnerabilityTy
 use crate::Result;
 use crate::vulnerabilities::Severity;
 use std::collections::HashMap;
+use std::time::Instant;
+
+fn log_vulnerability_tests_completed(results: &[VulnerabilityResult], duration_ms: u64) {
+    let vulnerable_count = results.iter().filter(|result| result.vulnerable).count();
+    let inconclusive_count = results.iter().filter(|result| result.inconclusive).count();
+    tracing::info!(
+        event_name = "vulnerability.tests.completed",
+        operation = "test_requested",
+        test_count = results.len(),
+        vulnerable_count,
+        inconclusive_count,
+        duration_ms,
+        outcome = if inconclusive_count == 0 {
+            "success"
+        } else {
+            "partial"
+        },
+        "Requested vulnerability tests completed"
+    );
+}
 
 fn inconclusive_test_error(
     vuln_type: VulnerabilityType,
@@ -95,15 +115,21 @@ pub(super) fn collect_optional_result(
 
 impl VulnerabilityScanner {
     pub async fn test_requested(&self) -> Result<Vec<VulnerabilityResult>> {
-        if self.broad_scan || !self.selected_checks.any() {
-            return if self.fast_mode {
-                self.test_fast().await
+        let started = Instant::now();
+        let results = if self.broad_scan || !self.selected_checks.any() {
+            if self.fast_mode {
+                self.test_fast().await?
             } else {
-                self.test_all().await
-            };
-        }
-
-        self.run_selected_tests().await
+                self.test_all().await?
+            }
+        } else {
+            self.run_selected_tests().await?
+        };
+        log_vulnerability_tests_completed(
+            &results,
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
+        Ok(results)
     }
 
     pub async fn test_all(&self) -> Result<Vec<VulnerabilityResult>> {
@@ -719,5 +745,88 @@ impl VulnerabilityScanner {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn vulnerability_summary_event_reports_counts_without_finding_details() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let results = [
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::DROWN,
+                vulnerable: true,
+                inconclusive: false,
+                details: "sensitive target and response data".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            },
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: true,
+                details: "private diagnostic details".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Info,
+            },
+        ];
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_vulnerability_tests_completed(&results, 125);
+        });
+
+        let output = output.0.lock().unwrap();
+        let event: serde_json::Value =
+            serde_json::from_slice(&output).expect("event should be JSON");
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "vulnerability.tests.completed"
+        );
+        assert_eq!(event["fields"]["test_count"], 2);
+        assert_eq!(event["fields"]["vulnerable_count"], 1);
+        assert_eq!(event["fields"]["inconclusive_count"], 1);
+        assert_eq!(event["fields"]["duration_ms"], 125);
+        assert_eq!(event["fields"]["outcome"], "partial");
+        let output = String::from_utf8_lossy(&output);
+        assert!(!output.contains("sensitive target"));
+        assert!(!output.contains("private diagnostic"));
     }
 }
