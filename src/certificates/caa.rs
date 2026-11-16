@@ -1,7 +1,7 @@
 // CAA (Certification Authority Authorization) DNS Records
 // RFC 6844 - DNS Certification Authority Authorization
 
-use crate::Result;
+use crate::{Result, TlsError};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::str;
@@ -52,7 +52,16 @@ impl CaaChecker {
             recommendations: Vec::new(),
         };
 
-        let records = self.query_caa_records()?;
+        let records = match self.query_caa_records() {
+            Ok(records) => records,
+            Err(error) => {
+                log_caa_check_failure(
+                    &error,
+                    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
+                return Err(error);
+            }
+        };
         if records.is_empty() {
             Self::record_no_caa_records(&mut result);
         } else {
@@ -280,9 +289,82 @@ impl CaaChecker {
     }
 }
 
+fn log_caa_check_failure(error: &TlsError, duration_ms: u64) {
+    tracing::warn!(
+        event_name = "certificate.caa.check.failed",
+        operation = "query_caa_records",
+        error_type = "dns_lookup",
+        error_code = error.observability_code(),
+        duration_ms,
+        outcome = "failed",
+        "CAA lookup failed"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::Write,
+        sync::{Arc, Mutex},
+    };
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn caa_lookup_failure_is_structured_and_redacted() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            log_caa_check_failure(
+                &TlsError::HttpError {
+                    status: 0,
+                    details: "private resolver detail".to_string(),
+                },
+                42,
+            );
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "certificate.caa.check.failed"
+        );
+        assert_eq!(event["fields"]["operation"], "query_caa_records");
+        assert_eq!(event["fields"]["error_type"], "dns_lookup");
+        assert_eq!(event["fields"]["error_code"], "http_error");
+        assert_eq!(event["fields"]["duration_ms"], 42);
+        assert!(!output.contains("private resolver detail"));
+    }
 
     #[test]
     fn test_caa_checker_creation() {
