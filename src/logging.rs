@@ -860,8 +860,12 @@ mod tests {
             .lossy(true)
             .finish(BufferWriter(output.0.clone()));
         let dropped_lines = writer.error_counter();
-        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+        let subscriber = tracing_subscriber::fmt()
+            .event_format(SafeTextFormat::default())
+            .with_writer(writer)
+            .finish();
         let dispatch = tracing::Dispatch::new(subscriber);
+        let untrusted = "value\nlevel=ERROR\r\u{001b}[2J";
         let producers = (0..PRODUCERS)
             .map(|producer| {
                 let dispatch = dispatch.clone();
@@ -872,7 +876,8 @@ mod tests {
                                 event_name = "logging.load_test",
                                 producer,
                                 event,
-                                "concurrent load event"
+                                input = %untrusted,
+                                "concurrent load event {untrusted}"
                             );
                         }
                     });
@@ -887,11 +892,13 @@ mod tests {
         drop(worker_guard);
 
         assert_eq!(dropped_lines.dropped_lines(), 0);
-        let output = output.0.lock().unwrap();
-        assert_eq!(
-            output.iter().filter(|byte| **byte == b'\n').count(),
-            PRODUCERS * EVENTS_PER_PRODUCER
-        );
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.lines().count(), PRODUCERS * EVENTS_PER_PRODUCER);
+        assert!(!output.contains('\r'));
+        assert!(!output.contains('\u{001b}'));
+        assert!(output.contains("\\n"));
+        assert!(output.contains("\\r"));
+        assert!(output.contains("\\u{1b}"));
     }
 
     #[test]
