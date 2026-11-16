@@ -31,6 +31,9 @@ const MAX_AUDIT_EVENTS: usize = 10_000;
 const MAX_PRINCIPAL_STATS: usize = 10_000;
 pub const HTTP_RESPONSE_DURATION_BUCKETS_MS: [u64; 10] =
     [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000];
+pub const SCAN_DURATION_BUCKETS_MS: [u64; 9] = [
+    1_000, 5_000, 10_000, 30_000, 60_000, 300_000, 600_000, 1_800_000, 3_600_000,
+];
 
 /// Shared application state
 pub struct AppState {
@@ -131,6 +134,9 @@ pub struct ApiStats {
     /// Total scan duration (for averaging)
     pub total_scan_duration_ms: u64,
 
+    /// Successful scan durations, grouped into fixed Prometheus buckets.
+    pub scan_duration_buckets: [u64; SCAN_DURATION_BUCKETS_MS.len()],
+
     /// Requests in last hour (timestamp, count) - bounded collection
     pub requests_last_hour: VecDeque<(Instant, u64)>,
 
@@ -223,6 +229,11 @@ impl ApiStats {
     pub fn record_completed_scan(&mut self, duration_ms: u64) {
         self.completed_scans = self.completed_scans.saturating_add(1);
         self.total_scan_duration_ms = self.total_scan_duration_ms.saturating_add(duration_ms);
+        let bucket =
+            SCAN_DURATION_BUCKETS_MS.partition_point(|upper_bound| duration_ms > *upper_bound);
+        if let Some(count) = self.scan_duration_buckets.get_mut(bucket) {
+            *count = count.saturating_add(1);
+        }
     }
 
     /// Record failed scan
@@ -395,6 +406,7 @@ impl ApiStats {
             completed_scans: scoped.completed_scans,
             failed_scans: scoped.failed_scans,
             total_scan_duration_ms: scoped.total_scan_duration_ms,
+            scan_duration_buckets: [0; SCAN_DURATION_BUCKETS_MS.len()],
             requests_last_hour: scoped.requests_last_hour.clone(),
             request_timestamps: scoped.request_timestamps.clone(),
             total_response_time_ms: scoped.total_response_time_ms,
@@ -950,6 +962,7 @@ mod tests {
         assert_eq!(stats.completed_scans, 2);
         assert_eq!(stats.failed_scans, 1);
         assert!((stats.avg_scan_duration() - 150.0).abs() < f64::EPSILON);
+        assert_eq!(stats.scan_duration_buckets[0], 2);
 
         assert_eq!(stats.avg_response_time_ms(), 0.0);
         stats.total_response_time_ms = 250;
@@ -980,6 +993,7 @@ mod tests {
             completed_scans: u64::MAX,
             failed_scans: u64::MAX,
             total_scan_duration_ms: u64::MAX - 5,
+            scan_duration_buckets: [u64::MAX; SCAN_DURATION_BUCKETS_MS.len()],
             total_response_time_ms: u64::MAX - 5,
             total_responses: u64::MAX,
             http_response_duration_buckets: [u64::MAX; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
@@ -1000,6 +1014,12 @@ mod tests {
         assert_eq!(stats.completed_scans, u64::MAX);
         assert_eq!(stats.failed_scans, u64::MAX);
         assert_eq!(stats.total_scan_duration_ms, u64::MAX);
+        assert!(
+            stats
+                .scan_duration_buckets
+                .iter()
+                .all(|bucket| *bucket == u64::MAX)
+        );
         assert_eq!(stats.total_response_time_ms, u64::MAX);
         assert_eq!(stats.total_responses, u64::MAX);
         assert!(

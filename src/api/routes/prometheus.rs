@@ -1,4 +1,4 @@
-use crate::api::state::{AppState, HTTP_RESPONSE_DURATION_BUCKETS_MS};
+use crate::api::state::{AppState, HTTP_RESPONSE_DURATION_BUCKETS_MS, SCAN_DURATION_BUCKETS_MS};
 use axum::{extract::State, http::header, response::IntoResponse};
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -109,6 +109,28 @@ cipherrun_scan_queue_metrics_available {}",
         stats.total_responses, stats.total_response_time_ms, stats.total_responses
     )
     .expect("writing Prometheus metrics to a String cannot fail");
+    body.push_str(
+        "# HELP cipherrun_scan_duration_milliseconds Successful scan execution duration in milliseconds.\n\
+# TYPE cipherrun_scan_duration_milliseconds histogram\n",
+    );
+    let mut cumulative_scan_count = 0u64;
+    for (upper_bound, count) in SCAN_DURATION_BUCKETS_MS
+        .iter()
+        .zip(stats.scan_duration_buckets)
+    {
+        cumulative_scan_count = cumulative_scan_count.saturating_add(count);
+        writeln!(
+            body,
+            "cipherrun_scan_duration_milliseconds_bucket{{le=\"{upper_bound}\"}} {cumulative_scan_count}"
+        )
+        .expect("writing Prometheus metrics to a String cannot fail");
+    }
+    writeln!(
+        body,
+        "cipherrun_scan_duration_milliseconds_bucket{{le=\"+Inf\"}} {}\ncipherrun_scan_duration_milliseconds_sum {}\ncipherrun_scan_duration_milliseconds_count {}",
+        stats.completed_scans, stats.total_scan_duration_ms, stats.completed_scans
+    )
+    .expect("writing Prometheus metrics to a String cannot fail");
     (
         [(
             header::CONTENT_TYPE,
@@ -177,6 +199,8 @@ mod tests {
             stats.record_http_response(6, 200);
             stats.record_http_response(6_000, 503);
             stats.http_auth_failures = 2;
+            stats.record_completed_scan(500);
+            stats.record_completed_scan(6_000);
         }
         let response = metrics(State(state)).await.into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -202,6 +226,11 @@ mod tests {
         );
         assert!(body.contains("cipherrun_http_response_duration_milliseconds_sum 6011\n"));
         assert!(body.contains("cipherrun_http_response_duration_milliseconds_count 3\n"));
+        assert!(body.contains("cipherrun_scan_duration_milliseconds_bucket{le=\"1000\"} 1\n"));
+        assert!(body.contains("cipherrun_scan_duration_milliseconds_bucket{le=\"10000\"} 2\n"));
+        assert!(body.contains("cipherrun_scan_duration_milliseconds_bucket{le=\"+Inf\"} 2\n"));
+        assert!(body.contains("cipherrun_scan_duration_milliseconds_sum 6500\n"));
+        assert!(body.contains("cipherrun_scan_duration_milliseconds_count 2\n"));
         assert!(body.contains("cipherrun_scan_queue_metrics_available 1\n"));
         assert!(body.contains("cipherrun_scans_active 0\n"));
         assert!(body.contains("cipherrun_scans_queued 0\n"));
