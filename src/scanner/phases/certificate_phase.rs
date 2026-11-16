@@ -132,15 +132,12 @@ impl CertificatePhase {
         // block a tokio worker (and `s_client` has no effective TCP handshake
         // timeout, so a slow/black-holed host can stall it for minutes). Offload
         // to a blocking thread, matching the logjam weak-DH probe.
-        let span = tracing::Span::current();
-        let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
-        let result = tokio::task::spawn_blocking(move || {
-            tracing::dispatcher::with_default(&dispatch, || span.in_scope(|| openssl.run(&options)))
-        })
-        .await
-        .map_err(|e| {
-            crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
-        })??;
+        let result =
+            crate::utils::task::spawn_blocking_with_current_span(move || openssl.run(&options))
+                .await
+                .map_err(|e| {
+                    crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
+                })??;
         if !result.success && !has_pem_certificates(&result.stdout) {
             let error_output = if result.stderr.trim().is_empty() {
                 result.stdout.trim()

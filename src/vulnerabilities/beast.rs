@@ -132,7 +132,7 @@ impl BeastTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<BeastProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to whether the server accepts a
             // TLS 1.0 CBC cipher; a verifying connector would false-negative on

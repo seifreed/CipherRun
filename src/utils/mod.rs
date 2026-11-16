@@ -26,6 +26,7 @@ pub mod shutdown;
 pub mod sneaky;
 pub mod sni_generator;
 pub(crate) mod target_addrs;
+pub(crate) mod task;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod timing;
