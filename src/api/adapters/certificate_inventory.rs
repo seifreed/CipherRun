@@ -9,20 +9,18 @@ pub async fn load_inventory_page(
     reader: &impl CertificateInventoryPort,
     query: &CertificateInventoryQuery,
 ) -> Result<CertificateInventoryPage, ApiError> {
-    reader
-        .list_certificates(query)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to fetch certificates: {}", e)))
+    reader.list_certificates(query).await.map_err(|error| {
+        ApiError::internal_with_diagnostic("list_certificates", error.observability_code())
+    })
 }
 
 pub async fn load_inventory_record(
     reader: &impl CertificateInventoryPort,
     fingerprint: &str,
 ) -> Result<Option<CertificateInventoryRecord>, ApiError> {
-    reader
-        .get_certificate(fingerprint)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to fetch certificate: {}", e)))
+    reader.get_certificate(fingerprint).await.map_err(|error| {
+        ApiError::internal_with_diagnostic("get_certificate", error.observability_code())
+    })
 }
 
 pub async fn load_inventory_record_for_owner(
@@ -34,7 +32,12 @@ pub async fn load_inventory_record_for_owner(
     reader
         .get_certificate_for_owner(fingerprint, principal_id, tenant_id)
         .await
-        .map_err(|e| ApiError::Internal(format!("Failed to fetch certificate: {}", e)))
+        .map_err(|error| {
+            ApiError::internal_with_diagnostic(
+                "get_certificate_for_owner",
+                error.observability_code(),
+            )
+        })
 }
 
 pub fn inventory_service_from_state(

@@ -6,10 +6,9 @@ pub async fn load_scan_history(
     reader: &impl ScanHistoryPort,
     query: &ScanHistoryQuery,
 ) -> Result<ScanHistoryPage, ApiError> {
-    reader
-        .get_history(query)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to query history: {}", e)))
+    reader.get_history(query).await.map_err(|error| {
+        ApiError::internal_with_diagnostic("load_scan_history", error.observability_code())
+    })
 }
 
 pub fn history_service_from_state(state: &AppState) -> Result<ScanHistoryService<'_>, ApiError> {

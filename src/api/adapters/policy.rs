@@ -5,10 +5,10 @@ use crate::application::{ScanAssessment, ScanRequest};
 use crate::policy::{Policy, PolicyResult};
 use crate::scanner::ScanResults;
 
-fn map_scan_error(context: &str, error: crate::TlsError) -> ApiError {
+fn map_scan_error(operation: &'static str, error: crate::TlsError) -> ApiError {
     match error {
         crate::TlsError::InvalidInput { message } => ApiError::BadRequest(message),
-        other => ApiError::Internal(format!("{}: {}", context, other)),
+        other => ApiError::internal_with_diagnostic(operation, other.observability_code()),
     }
 }
 
@@ -22,11 +22,13 @@ pub async fn run_policy_check(
     let scan_results = scanner
         .scan(request)
         .await
-        .map_err(|e| map_scan_error("Scan failed", e))?;
+        .map_err(|error| map_scan_error("scan_for_policy", error))?;
 
     let assessment = ScanAssessment::from_scan_results(&scan_results);
-    let policy_result = EvaluatePolicy::execute(evaluator, policy, &assessment)
-        .map_err(|e| ApiError::Internal(format!("Policy evaluation failed: {}", e)))?;
+    let policy_result =
+        EvaluatePolicy::execute(evaluator, policy, &assessment).map_err(|error| {
+            ApiError::internal_with_diagnostic("evaluate_policy", error.observability_code())
+        })?;
 
     Ok((scan_results, policy_result))
 }

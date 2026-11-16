@@ -14,7 +14,7 @@ pub fn load_framework(
         if e.to_string().contains("Unknown framework") {
             ApiError::NotFound(format!("Unknown compliance framework: {}", framework_id))
         } else {
-            ApiError::Internal(format!("Failed to load framework: {}", e))
+            ApiError::internal_with_diagnostic("load_compliance_framework", e.observability_code())
         }
     })
 }
@@ -38,14 +38,15 @@ pub async fn run_compliance_check(
 ) -> Result<(ScanAssessment, crate::compliance::ComplianceReport), ApiError> {
     let request = full_scan_request_from_target(target)?;
 
-    let scan_results = scanner
-        .scan(request)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Scan failed: {}", e)))?;
+    let scan_results = scanner.scan(request).await.map_err(|error| {
+        ApiError::internal_with_diagnostic("scan_for_compliance", error.observability_code())
+    })?;
 
     let assessment = ScanAssessment::from_scan_results(&scan_results);
-    let report = EvaluateCompliance::execute(evaluator, framework, &assessment)
-        .map_err(|e| ApiError::Internal(format!("Compliance evaluation failed: {}", e)))?;
+    let report =
+        EvaluateCompliance::execute(evaluator, framework, &assessment).map_err(|error| {
+            ApiError::internal_with_diagnostic("evaluate_compliance", error.observability_code())
+        })?;
 
     Ok((assessment, report))
 }
