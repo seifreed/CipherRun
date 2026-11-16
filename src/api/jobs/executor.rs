@@ -1026,6 +1026,61 @@ mod tests {
         assert!(!output.contains("password=must-not-appear"), "{output}");
     }
 
+    #[test]
+    fn cancelled_job_before_start_emits_safe_outcome_event() {
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let mut job = ScanJob::new(
+            "private-target.example".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_cancelled();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let (progress_tx, _) = broadcast::channel(1);
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let executor = ScanExecutor {
+            job_queue: queue.clone(),
+            max_concurrent: 1,
+            semaphore: Arc::new(Semaphore::new(1)),
+            progress_tx,
+            stats: None,
+            webhook_signing_secret: None,
+            worker_allowed_cidrs: Arc::new(Vec::new()),
+            results_store: None,
+            shutdown_tx: tokio::sync::watch::channel(false).0,
+            shutdown_rx,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(executor.execute_scan(queue, job.clone()));
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("scan_job.cancelled_before_start"),
+            "{output}"
+        );
+        assert!(output.contains(&job.id), "{output}");
+        assert!(output.contains("outcome=\"skipped\""), "{output}");
+        assert!(!output.contains("private-target.example"), "{output}");
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
