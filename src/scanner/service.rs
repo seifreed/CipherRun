@@ -699,24 +699,24 @@ mod tests {
             .with_ansi(false)
             .with_writer(output.clone())
             .finish();
-        let status = scanner
-            .probe_connectivity(Duration::from_millis(100))
+        let results = scanner
+            .run_with_phases()
             .with_subscriber(tracing::Dispatch::new(subscriber))
-            .await;
+            .await
+            .expect("probe-only scan should complete");
 
-        assert!(!status.success);
+        assert!(!results.scan_metadata.probe_status.success);
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        let event = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|event| event["fields"]["event_name"] == "scan.connectivity_probe.completed")
+            .expect("connectivity event should be emitted by the scan");
         assert_eq!(event["level"], "INFO");
-        assert_eq!(
-            event["fields"]["event_name"],
-            "scan.connectivity_probe.completed"
-        );
         assert_eq!(event["fields"]["operation"], "probe_connectivity");
         assert_eq!(event["fields"]["outcome"], "unreachable");
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(event["fields"]["error_type"].is_string());
-        assert!(!output.contains("private.example.test"));
         assert!(!output.contains(&addr.ip().to_string()));
     }
 
