@@ -991,6 +991,7 @@ mod tests {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
         let queue = GatedJobQueue {
@@ -1031,6 +1032,7 @@ mod tests {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
         let mut job = ScanJob::new(
@@ -1213,6 +1215,7 @@ mod tests {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::ERROR)
+            .with_ansi(false)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
         let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);

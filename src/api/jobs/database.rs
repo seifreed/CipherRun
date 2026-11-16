@@ -748,6 +748,7 @@ mod tests {
         let output = Arc::new(StdMutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
             .with_writer({
                 let output = output.clone();
                 move || CapturedWriter(output.clone())

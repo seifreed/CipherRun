@@ -50,6 +50,7 @@ fn mx_scan_failure_events_include_outcome_and_redact_host_and_error() {
     let output = Arc::new(Mutex::new(Vec::new()));
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
         .with_writer(CapturedLog(output.clone()))
         .finish();
     let result = Err(TlsError::Other("password=must-not-appear".into()));
