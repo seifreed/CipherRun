@@ -5,9 +5,11 @@ use crate::db::connection::DatabasePool;
 use sqlx::migrate::Migrator;
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 /// Run database migrations
 pub async fn run_migrations(pool: &DatabasePool) -> crate::Result<()> {
+    let started = Instant::now();
     let migrations_path = Path::new("migrations");
 
     if !migrations_path.exists() {
@@ -35,6 +37,18 @@ pub async fn run_migrations(pool: &DatabasePool) -> crate::Result<()> {
             run_sqlite_migrations_manual(sqlite_pool, migrations_path).await?;
         }
     }
+
+    tracing::info!(
+        event_name = "database.migrations.completed",
+        operation = "run_migrations",
+        database_backend = match pool.db_type() {
+            crate::db::DatabaseType::Postgres => "postgres",
+            crate::db::DatabaseType::Sqlite => "sqlite",
+        },
+        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        outcome = "ready",
+        "Database migrations are ready"
+    );
 
     Ok(())
 }

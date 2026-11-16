@@ -288,6 +288,14 @@ mod tests {
                 .iter()
                 .any(|event| event["fields"]["event_name"] == "database.initialized")
         );
+        let migrations = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "database.migrations.completed")
+            .expect("database migrations event should be captured");
+        assert_eq!(migrations["fields"]["operation"], "run_migrations");
+        assert_eq!(migrations["fields"]["database_backend"], "sqlite");
+        assert!(migrations["fields"]["duration_ms"].as_u64().is_some());
+        assert_eq!(migrations["fields"]["outcome"], "ready");
         assert!(!logs.contains(db_path.to_str().unwrap()));
         db.close().await;
     }
