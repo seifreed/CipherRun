@@ -1042,6 +1042,14 @@ mod tests {
                     tasks: Vec::new(),
                     stopped: false,
                 });
+                let (shutdown, receiver) = watch::channel(false);
+                drop(receiver);
+                drop(ApiBackgroundTasks {
+                    shutdown,
+                    executor: Arc::new(ScanExecutor::new(state.job_queue.clone(), 1)),
+                    tasks: Vec::new(),
+                    stopped: false,
+                });
             });
             drop(ApiBackgroundTasks {
                 shutdown: watch::channel(false).0,
@@ -1101,18 +1109,32 @@ mod tests {
                 event["fields"]["event_name"] == "api_server.background_tasks.drop_cleanup"
             })
             .collect();
-        assert_eq!(drop_events.len(), 2);
+        assert_eq!(drop_events.len(), 3);
         let scheduled_cleanup = drop_events
             .iter()
-            .find(|event| event["fields"]["executor_shutdown_scheduled"] == true)
+            .find(|event| event["fields"]["outcome"] == "shutdown_signaled")
             .unwrap();
         assert_eq!(
             scheduled_cleanup["fields"]["operation"],
             "shutdown_fallback"
         );
         assert_eq!(scheduled_cleanup["fields"]["task_count"], 0);
-        assert_eq!(scheduled_cleanup["fields"]["signal_sent"], true);
+        assert!(
+            scheduled_cleanup["fields"]["signal_sent"]
+                .as_bool()
+                .unwrap()
+        );
         assert_eq!(scheduled_cleanup["fields"]["outcome"], "shutdown_signaled");
+        let failed_signal = drop_events
+            .iter()
+            .find(|event| event["fields"]["outcome"] == "signal_failed")
+            .unwrap();
+        assert!(!failed_signal["fields"]["signal_sent"].as_bool().unwrap());
+        assert!(
+            failed_signal["fields"]["executor_shutdown_scheduled"]
+                .as_bool()
+                .unwrap()
+        );
         let unavailable_cleanup = drop_events
             .iter()
             .find(|event| event["fields"]["executor_shutdown_scheduled"] == false)
