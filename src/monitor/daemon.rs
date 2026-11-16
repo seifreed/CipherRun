@@ -114,6 +114,7 @@ impl MonitorDaemon {
             return Ok(0);
         }
 
+        let started = Instant::now();
         let mut names = std::collections::BTreeSet::new();
         if let Some(common_name) = &entry.certificate.subject_cn {
             names.insert(common_name.clone());
@@ -146,6 +147,17 @@ impl MonitorDaemon {
             domain.alert_thresholds = (&self.config.monitor.thresholds).into();
             inventory.add_domain(domain)?;
             added += 1;
+        }
+
+        if added > 0 {
+            tracing::info!(
+                event_name = "monitor.inventory.ct_discovered",
+                operation = "allowlisted_ct_entry",
+                added,
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                outcome = "updated",
+                "Allowlisted CT names added to monitoring inventory"
+            );
         }
 
         Ok(added)
@@ -671,6 +683,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::NamedTempFile;
     use tokio::sync::Mutex as TokioMutex;
+    use tracing::instrument::WithSubscriber;
 
     #[derive(Clone, Default)]
     struct RecordingChannel {
@@ -783,16 +796,76 @@ mod tests {
 
     #[tokio::test]
     async fn test_ingest_ct_entry_is_allowlisted_and_deduplicated() {
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
         let mut config = MonitorConfig::default();
         config.monitor.ct_discovery_suffixes = vec!["example.com".to_string()];
         let daemon = MonitorDaemon::new(config)
             .await
             .expect("test assertion should succeed");
         let entry = ct_entry(Some("*.example.com"), &["api.example.com", "outside.test"]);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
 
-        assert_eq!(daemon.ingest_ct_entry(&entry).await.unwrap(), 2);
-        assert_eq!(daemon.ingest_ct_entry(&entry).await.unwrap(), 0);
+        assert_eq!(
+            daemon
+                .ingest_ct_entry(&entry)
+                .with_subscriber(dispatch.clone())
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            daemon
+                .ingest_ct_entry(&entry)
+                .with_subscriber(dispatch)
+                .await
+                .unwrap(),
+            0
+        );
         assert_eq!(daemon.stats().await.total_domains, 2);
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1, "{output}");
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "monitor.inventory.ct_discovered"
+        );
+        assert_eq!(events[0]["fields"]["operation"], "allowlisted_ct_entry");
+        assert_eq!(events[0]["fields"]["added"], 2);
+        assert_eq!(events[0]["fields"]["outcome"], "updated");
+        assert!(events[0]["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("example.com"));
+        assert!(!output.contains("outside.test"));
     }
 
     #[tokio::test]
