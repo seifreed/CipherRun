@@ -47,9 +47,23 @@ impl AnycastScanner {
     pub async fn scan_all_ips(&self) -> Result<AnycastScanResults> {
         let scan_started = Instant::now();
         // 1. Resolve hostname to all IPs (A + AAAA records)
-        let ip_addresses = self.resolve_all_ips().await?;
+        let resolution_started = Instant::now();
+        let ip_addresses = match self.resolve_all_ips().await {
+            Ok(ip_addresses) => ip_addresses,
+            Err(error) => {
+                log_anycast_dns_resolution_failed(
+                    u64::try_from(resolution_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    error.observability_code(),
+                );
+                return Err(error);
+            }
+        };
 
         if ip_addresses.is_empty() {
+            log_anycast_dns_resolution_failed(
+                u64::try_from(resolution_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "no_addresses",
+            );
             return Err(TlsError::DnsResolutionFailed {
                 hostname: self.hostname.clone(),
                 source: std::io::Error::new(
@@ -63,6 +77,8 @@ impl AnycastScanner {
             event_name = "anycast.dns_resolution.completed",
             operation = "resolve_all_ips",
             total_ips = ip_addresses.len(),
+            duration_ms =
+                u64::try_from(resolution_started.elapsed().as_millis()).unwrap_or(u64::MAX),
             outcome = "success",
             "Anycast addresses resolved"
         );
@@ -82,6 +98,11 @@ impl AnycastScanner {
             let ip_scan_started = Instant::now();
             match self.scan_single_ip(ip).await {
                 Ok(scan_result) => {
+                    log_anycast_ip_scan_completed(
+                        index + 1,
+                        ip_addresses.len(),
+                        u64::try_from(ip_scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    );
                     ip_results.push(IpScanResult {
                         ip: *ip,
                         results: scan_result,
@@ -267,6 +288,30 @@ fn log_anycast_scan_summary(
     }
 }
 
+fn log_anycast_dns_resolution_failed(duration_ms: u64, error_code: &'static str) {
+    tracing::warn!(
+        event_name = "anycast.dns_resolution.failed",
+        operation = "resolve_all_ips",
+        duration_ms,
+        error_type = "resolution",
+        error_code,
+        outcome = "failed",
+        "Anycast address resolution failed"
+    );
+}
+
+fn log_anycast_ip_scan_completed(scan_index: usize, total_ips: usize, duration_ms: u64) {
+    debug!(
+        event_name = "anycast.ip_scan.completed",
+        operation = "scan_single_ip",
+        scan_index,
+        total_ips,
+        duration_ms,
+        outcome = "success",
+        "Anycast scan completed for resolved address"
+    );
+}
+
 fn anycast_target_for_ip(ip: &IpAddr, port: u16) -> String {
     canonical_target(&ip.to_string(), port)
 }
@@ -363,6 +408,46 @@ mod tests {
         assert!(output.contains("WARN"), "{output}");
         assert!(!output.contains("example.com"), "{output}");
         assert!(!output.contains("203.0.113.1"), "{output}");
+    }
+
+    #[test]
+    fn dns_and_ip_outcomes_log_structured_timing_without_target_data() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(CapturedLog(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_anycast_dns_resolution_failed(23, "no_addresses");
+            log_anycast_ip_scan_completed(2, 3, 456);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2, "{output}");
+        assert_eq!(events[0]["level"], "WARN");
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "anycast.dns_resolution.failed"
+        );
+        assert_eq!(events[0]["fields"]["error_code"], "no_addresses");
+        assert_eq!(events[0]["fields"]["duration_ms"], 23);
+        assert_eq!(events[1]["level"], "DEBUG");
+        assert_eq!(
+            events[1]["fields"]["event_name"],
+            "anycast.ip_scan.completed"
+        );
+        assert_eq!(events[1]["fields"]["scan_index"], 2);
+        assert_eq!(events[1]["fields"]["total_ips"], 3);
+        assert_eq!(events[1]["fields"]["duration_ms"], 456);
+        assert_eq!(events[1]["fields"]["outcome"], "success");
+        assert!(!output.contains("example.com"));
+        assert!(!output.contains("203.0.113.1"));
     }
 
     fn build_scan_with_fingerprint(

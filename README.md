@@ -271,6 +271,8 @@ configuration readiness. Signal-handler setup/runtime failures emit categorized
 events, and a setup failure resets the daemon's running state.
 When idle, a shutdown request wakes the scheduler immediately instead of waiting
 for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
+Anycast diagnosis records DNS resolution timing/failure and per-address scan
+outcomes by index, without logging hostnames or IP addresses.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.
