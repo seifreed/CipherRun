@@ -465,6 +465,17 @@ cargo outdated
 
 Criterion benchmarks live in `benches/`, and `cargo-fuzz` targets plus seed corpora live in `fuzz/`.
 
+Run the manual API and logging soak with:
+
+```bash
+cargo test --test api_rate_limit_tests api_logging_load_soak_accounts_for_requests_and_events -- --ignored --nocapture
+```
+
+It exercises the local authenticated `/health` route, request metrics and JSON
+logging for 30 seconds with eight concurrent producers, and fails if any log
+events are dropped. This synthetic local-file test checks capture under its
+fixed workload; its throughput and latency do not establish a production SLO.
+
 ---
 
 ## Output Formats

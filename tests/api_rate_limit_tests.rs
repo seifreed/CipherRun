@@ -145,6 +145,7 @@ async fn api_logging_load_soak_accounts_for_requests_and_events() {
 
     assert_eq!(attempted, durations.len());
     assert_eq!(attempted, request_events + dropped);
+    assert_eq!(dropped, 0, "API logging soak dropped {dropped} events");
     assert!(events.iter().all(|event| {
         event["fields"]["event_name"] == "api.request.completed"
             && event["fields"]["duration_ms"].is_number()
