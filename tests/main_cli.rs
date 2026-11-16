@@ -37,6 +37,21 @@ fn test_main_version_output() {
 }
 
 #[test]
+fn test_main_help_output_is_successful_functional_output() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let output = Command::new(exe)
+        .arg("--help")
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Usage: cipherrun"));
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn logger_lifecycle_events_stay_on_stderr() {
     let exe = env!("CARGO_BIN_EXE_cipherrun");
     let output = Command::new(exe)

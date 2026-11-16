@@ -62,8 +62,14 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
     let raw_arg_count = std::env::args_os().count();
 
     // Parse command line arguments
-    let mut args =
-        Args::parse_with_sources().map_err(|e| cipherrun::TlsError::Other(e.to_string()))?;
+    let mut args = match Args::parse_with_sources() {
+        Ok(args) => args,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
+            print!("{error}");
+            return Ok(CommandExit::success());
+        }
+        Err(error) => return Err(cipherrun::TlsError::Other(error.to_string())),
+    };
 
     if raw_arg_count == 1 {
         let mut command = Args::command();
