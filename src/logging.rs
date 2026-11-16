@@ -895,8 +895,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual 30-second paced 1,000 events/s logging load validation"]
-    fn rolling_file_writer_handles_paced_production_rate_without_loss() {
+    #[ignore = "manual 30-second paced synthetic logging load validation"]
+    fn rolling_file_writer_handles_paced_synthetic_rate_without_loss() {
         const PRODUCERS: usize = 8;
         const EVENTS_PER_PRODUCER: usize = 3_750;
         const INTERVAL: Duration = Duration::from_millis(8);
