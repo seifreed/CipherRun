@@ -1,13 +1,17 @@
 //! Optional OpenTelemetry export for the application's tracing spans.
 
 use opentelemetry::{
-    global,
+    Key, global,
     propagation::{Extractor, TextMapPropagator},
     trace::{TraceContextExt, TracerProvider},
 };
 use opentelemetry_otlp::{RetryPolicy, SpanExporter, WithHttpConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
+use opentelemetry_sdk::{
+    Resource,
+    resource::{EnvResourceDetector, ResourceDetector},
+    trace::SdkTracerProvider,
+};
 use std::collections::HashMap;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -58,7 +62,13 @@ where
         .build()
         .map_err(|_| crate::TlsError::Other("Failed to build OTLP exporter".to_string()))?;
     let provider = SdkTracerProvider::builder()
-        .with_resource(telemetry_resource(std::env::var("OTEL_SERVICE_NAME").ok()))
+        .with_resource(telemetry_resource(
+            std::env::var("OTEL_SERVICE_NAME").ok(),
+            EnvResourceDetector::new()
+                .detect()
+                .get(&Key::from_static_str("service.name"))
+                .map(|value| value.as_str().into_owned()),
+        ))
         .with_batch_exporter(exporter)
         .build();
     global::set_tracer_provider(provider.clone());
@@ -69,9 +79,13 @@ where
     ))
 }
 
-fn telemetry_resource(service_name: Option<String>) -> Resource {
+fn telemetry_resource(
+    service_name: Option<String>,
+    resource_service_name: Option<String>,
+) -> Resource {
     let service_name = service_name
         .filter(|name| !name.is_empty())
+        .or_else(|| resource_service_name.filter(|name| !name.is_empty()))
         .unwrap_or_else(|| "cipherrun".to_string());
     Resource::builder().with_service_name(service_name).build()
 }
@@ -89,14 +103,14 @@ mod tests {
 
     #[test]
     fn resource_identifies_the_service() {
-        let resource = telemetry_resource(None);
+        let resource = telemetry_resource(None, None);
         assert_eq!(
             resource
                 .get(&Key::from_static_str("service.name"))
                 .map(|value| value.as_str().into_owned()),
             Some("cipherrun".to_string())
         );
-        let empty_name = telemetry_resource(Some(String::new()));
+        let empty_name = telemetry_resource(Some(String::new()), None);
         assert_eq!(
             empty_name
                 .get(&Key::from_static_str("service.name"))
@@ -107,12 +121,34 @@ mod tests {
 
     #[test]
     fn configured_service_name_overrides_default_without_mutating_environment() {
-        let resource = telemetry_resource(Some("cipherrun-production".to_string()));
+        let resource = telemetry_resource(Some("cipherrun-production".to_string()), None);
         assert_eq!(
             resource
                 .get(&Key::from_static_str("service.name"))
                 .map(|value| value.as_str().into_owned()),
             Some("cipherrun-production".to_string())
+        );
+    }
+
+    #[test]
+    fn service_name_environment_variable_precedes_resource_attributes() {
+        let resource = telemetry_resource(
+            Some("cipherrun-production".to_string()),
+            Some("resource-service".to_string()),
+        );
+        assert_eq!(
+            resource
+                .get(&Key::from_static_str("service.name"))
+                .map(|value| value.as_str().into_owned()),
+            Some("cipherrun-production".to_string())
+        );
+
+        let resource = telemetry_resource(None, Some("resource-service".to_string()));
+        assert_eq!(
+            resource
+                .get(&Key::from_static_str("service.name"))
+                .map(|value| value.as_str().into_owned()),
+            Some("resource-service".to_string())
         );
     }
 
