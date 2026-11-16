@@ -407,6 +407,7 @@ impl Scanner {
 
         if self.request.scan.prefs.pre_handshake || self.request.scan.certs.ocsp {
             let scanner = PreHandshakeScanner::new(target).with_timeout(timeout_duration);
+            let started = Instant::now();
             match scanner.scan_pre_handshake().await {
                 Ok(pre_handshake) => {
                     return Ok(Some(PreflightCapture {
@@ -419,6 +420,10 @@ impl Scanner {
                 Err(error) => {
                     tracing::debug!(
                         event_name = "scan.preflight.capture.failed",
+                        operation = "pre_handshake_capture",
+                        duration_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        outcome = "unavailable",
                         error_type = ?ErrorType::from_tls_error(&error),
                         "Preflight pre-handshake capture failed"
                     );
@@ -717,6 +722,66 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "unreachable");
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(event["fields"]["error_type"].is_string());
+        assert!(!output.contains(&addr.ip().to_string()));
+    }
+
+    #[tokio::test]
+    async fn preflight_capture_failure_logs_duration_and_safe_outcome() {
+        use tracing::instrument::WithSubscriber;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose address");
+        drop(listener);
+
+        let scanner = Scanner::new(ScanRequest {
+            target: Some("preflight.example.test:443".to_string()),
+            scan: ScanRequestScan {
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    pre_handshake: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build");
+        *scanner.target.write() = Target::with_ips(
+            "preflight.example.test".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .expect("loopback target should build");
+
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(output.clone())
+            .finish();
+        let capture = scanner
+            .collect_preflight_capture()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("preflight failure should remain recoverable");
+
+        assert!(capture.is_none());
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "DEBUG");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scan.preflight.capture.failed"
+        );
+        assert_eq!(event["fields"]["operation"], "pre_handshake_capture");
+        assert_eq!(event["fields"]["outcome"], "unavailable");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(event["fields"]["error_type"].is_string());
+        assert!(!output.contains("preflight.example.test"));
         assert!(!output.contains(&addr.ip().to_string()));
     }
 

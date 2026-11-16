@@ -285,6 +285,9 @@ JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
 duration and outcome; it omits the target and raw handshake data.
 The explicit `--probe-status` option emits one connectivity event with duration,
 outcome and error category, without the target address.
+Optional pre-handshake capture failures emit a `DEBUG`
+`scan.preflight.capture.failed` event with operation, duration, error category,
+and outcome, without the target name or address.
 MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
 and a stable error code; resolver output and domain names stay out of that event.
 CT stream shutdown events include elapsed time and a terminal outcome, both for
