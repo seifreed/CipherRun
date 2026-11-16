@@ -852,8 +852,32 @@ SSL-Session:
     fn test_run_enforces_timeout_without_passing_numeric_timeout_to_openssl() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
+        use std::sync::{Arc, Mutex};
         use std::time::Duration;
         use tempfile::tempdir;
+
+        #[derive(Clone)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        impl std::io::Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
 
         let dir = tempdir().expect("tempdir should be created");
         let script = dir.path().join("openssl");
@@ -865,19 +889,38 @@ SSL-Session:
         perms.set_mode(0o755);
         fs::set_permissions(&script, perms).expect("script should be executable");
 
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
         let started = std::time::Instant::now();
-        let result = OpenSslClient::with_path(&script)
-            .run(&OpenSslClientOptions {
+        let result = tracing::subscriber::with_default(subscriber, || {
+            OpenSslClient::with_path(&script).run(&OpenSslClientOptions {
                 host: "example.com".to_string(),
                 timeout: Some(Duration::from_millis(50)),
                 ..Default::default()
             })
-            .expect("script should run");
+        })
+        .expect("script should run");
 
         assert!(!result.success);
         assert!(started.elapsed() < Duration::from_secs(1));
         assert!(result.stderr.contains("timed out"));
         assert!(!result.stdout.contains("-timeout"));
+        let log = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON log");
+        let event: serde_json::Value = serde_json::from_str(log.trim()).expect("structured event");
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "subprocess.openssl.s_client.completed"
+        );
+        assert_eq!(event["fields"]["operation"], "s_client");
+        assert_eq!(event["fields"]["outcome"], "timeout");
+        assert_eq!(event["fields"]["error_code"], "timeout");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!log.contains("example.com"));
     }
 
     #[test]
