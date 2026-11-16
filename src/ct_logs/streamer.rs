@@ -315,13 +315,14 @@ impl CtStreamer {
             0
         } else {
             // Start from current tree size (now mode)
+            let started = std::time::Instant::now();
             match client.get_tree_size(&source_url).await {
                 Ok(tree_size) => {
-                    info!(event_name = "ct_log.source.position.selected", source = %source_id, start_index = tree_size, outcome = "current_tree_size", "Selected CT log start position");
+                    info!(event_name = "ct_log.source.position.selected", source = %source_id, start_index = tree_size, duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), outcome = "current_tree_size", "Selected CT log start position");
                     tree_size
                 }
                 Err(error) => {
-                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "source_stopped", "Failed to get CT log tree size");
+                    error!(event_name = "ct_log.tree_size.failed", source = %source_id, duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), error_type = "ct_log_request", error_code = error.observability_code(), outcome = "source_stopped", "Failed to get CT log tree size");
                     return;
                 }
             }
@@ -330,10 +331,16 @@ impl CtStreamer {
         // Streaming loop
         while !shutdown.load(Ordering::Acquire) {
             // Get current tree size
+            let tree_size_started = std::time::Instant::now();
+            let tree_size_duration_ms;
             let tree_size = match client.get_tree_size(&source_url).await {
-                Ok(size) => size,
+                Ok(size) => {
+                    tree_size_duration_ms =
+                        u64::try_from(tree_size_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    size
+                }
                 Err(error) => {
-                    warn!(event_name = "ct_log.tree_size.failed", source = %source_id, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to get CT log tree size");
+                    warn!(event_name = "ct_log.tree_size.failed", source = %source_id, duration_ms = u64::try_from(tree_size_started.elapsed().as_millis()).unwrap_or(u64::MAX), error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to get CT log tree size");
                     stats.increment_source_failures(&source_id);
                     sleep(Duration::from_secs(10)).await;
                     continue;
@@ -342,7 +349,7 @@ impl CtStreamer {
 
             // Check if we're caught up
             if current_index >= tree_size {
-                debug!(event_name = "ct_log.source.caught_up", source = %source_id, current_index, tree_size, "CT log source is caught up");
+                debug!(event_name = "ct_log.source.caught_up", source = %source_id, current_index, tree_size, tree_size_duration_ms, "CT log source is caught up");
                 sleep(config.poll_interval).await;
                 continue;
             }
@@ -359,7 +366,7 @@ impl CtStreamer {
             {
                 Ok(entries) => entries,
                 Err(error) => {
-                    warn!(event_name = "ct_log.entries.failed", source = %source_id, start_index = current_index, end_index = batch_end, error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to fetch CT log entries");
+                    warn!(event_name = "ct_log.entries.failed", source = %source_id, start_index = current_index, end_index = batch_end, tree_size_duration_ms, duration_ms = u64::try_from(fetch_start.elapsed().as_millis()).unwrap_or(u64::MAX), error_type = "ct_log_request", error_code = error.observability_code(), outcome = "retrying", "Failed to fetch CT log entries");
                     stats.increment_source_failures(&source_id);
                     stats.increment_retries();
                     sleep(Duration::from_secs(5)).await;
@@ -374,6 +381,7 @@ impl CtStreamer {
                 start_index = current_index,
                 end_index = batch_end,
                 entry_count = entries.len(),
+                tree_size_duration_ms,
                 duration_ms = u64::try_from(fetch_duration.as_millis()).unwrap_or(u64::MAX),
                 "Fetched CT log entries"
             );
@@ -426,6 +434,8 @@ impl CtStreamer {
                     event_name = "ct_log.entries.empty",
                     requested_start = current_index,
                     requested_end = batch_end,
+                    tree_size_duration_ms,
+                    duration_ms = u64::try_from(fetch_duration.as_millis()).unwrap_or(u64::MAX),
                     outcome = "retrying",
                     "CT log returned no entries for the requested range; backing off"
                 );
@@ -487,6 +497,74 @@ mod tests {
     use crate::ct_logs::CertType;
     use crate::ct_logs::parser::Certificate;
     use chrono::Utc;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn initial_tree_size_failure_logs_duration_without_url() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let (tx, _rx) = mpsc::channel(1);
+        let future = CtStreamer::stream_source(
+            "test-source".to_string(),
+            "file:///private/sensitive-url".to_string(),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::new(AtomicBool::new(false)),
+            CtConfig::default(),
+        );
+        future
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let output = output.0.lock().unwrap();
+        let events: Vec<serde_json::Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("events should be JSON"))
+            .collect();
+        let event = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "ct_log.tree_size.failed")
+            .expect("tree-size failure event should be emitted");
+        assert_eq!(event["level"], "ERROR");
+        assert_eq!(event["fields"]["event_name"], "ct_log.tree_size.failed");
+        assert_eq!(event["fields"]["outcome"], "source_stopped");
+        assert!(event["fields"]["duration_ms"].as_u64().is_some());
+        assert!(!String::from_utf8_lossy(&output).contains("sensitive-url"));
+    }
 
     #[test]
     fn test_config_defaults() {
