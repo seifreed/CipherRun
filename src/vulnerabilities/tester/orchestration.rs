@@ -4,6 +4,22 @@ use crate::vulnerabilities::Severity;
 use std::collections::HashMap;
 use std::time::Instant;
 
+fn log_vulnerability_test_completed(test_name: &str, result: &VulnerabilityResult) {
+    let outcome = match (result.vulnerable, result.inconclusive) {
+        (true, true) => "potential_exposure",
+        (true, false) => "vulnerable",
+        (false, true) => "inconclusive",
+        (false, false) => "not_vulnerable",
+    };
+    tracing::debug!(
+        event_name = "vulnerability.test.completed",
+        test = test_name,
+        finding_id = result.finding_id(),
+        outcome,
+        "Vulnerability test completed"
+    );
+}
+
 fn log_vulnerability_tests_completed(results: &[VulnerabilityResult], duration_ms: u64) {
     let vulnerable_count = results.iter().filter(|result| result.vulnerable).count();
     let inconclusive_count = results.iter().filter(|result| result.inconclusive).count();
@@ -48,7 +64,10 @@ pub(super) fn collect_result(
     test_name: &str,
 ) {
     match result {
-        Ok(r) => results.push(r),
+        Ok(r) => {
+            log_vulnerability_test_completed(test_name, &r);
+            results.push(r);
+        }
         Err(e) => {
             tracing::warn!(
                 event_name = "vulnerability.test.failed",
@@ -72,7 +91,12 @@ pub(super) fn collect_results(
     test_name: &str,
 ) {
     match result {
-        Ok(r) => results.extend(r),
+        Ok(r) => {
+            for result in &r {
+                log_vulnerability_test_completed(test_name, result);
+            }
+            results.extend(r);
+        }
         Err(e) => {
             tracing::warn!(
                 event_name = "vulnerability.test.failed",
@@ -97,7 +121,10 @@ pub(super) fn collect_optional_result(
     test_name: &str,
 ) {
     match result {
-        Ok(Some(r)) => results.push(r),
+        Ok(Some(r)) => {
+            log_vulnerability_test_completed(test_name, &r);
+            results.push(r);
+        }
         Ok(None) => {}
         Err(e) => {
             tracing::warn!(
@@ -785,6 +812,7 @@ mod logging_tests {
         let subscriber = tracing_subscriber::fmt()
             .json()
             .without_time()
+            .with_max_level(tracing::Level::DEBUG)
             .with_writer(output.clone())
             .finish();
         let results = [
@@ -809,22 +837,35 @@ mod logging_tests {
         ];
 
         tracing::subscriber::with_default(subscriber, || {
+            log_vulnerability_test_completed("DROWN", &results[0]);
             log_vulnerability_tests_completed(&results, 125);
         });
 
         let output = output.0.lock().unwrap();
-        let event: serde_json::Value =
-            serde_json::from_slice(&output).expect("event should be JSON");
-        assert_eq!(event["level"], "INFO");
+        let events: Vec<serde_json::Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("event should be JSON"))
+            .collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["level"], "DEBUG");
         assert_eq!(
-            event["fields"]["event_name"],
+            events[0]["fields"]["event_name"],
+            "vulnerability.test.completed"
+        );
+        assert_eq!(events[0]["fields"]["test"], "DROWN");
+        assert_eq!(events[0]["fields"]["finding_id"], "CR-TLS-DROWN-001");
+        assert_eq!(events[0]["fields"]["outcome"], "vulnerable");
+        assert_eq!(events[1]["level"], "INFO");
+        assert_eq!(
+            events[1]["fields"]["event_name"],
             "vulnerability.tests.completed"
         );
-        assert_eq!(event["fields"]["test_count"], 2);
-        assert_eq!(event["fields"]["vulnerable_count"], 1);
-        assert_eq!(event["fields"]["inconclusive_count"], 1);
-        assert_eq!(event["fields"]["duration_ms"], 125);
-        assert_eq!(event["fields"]["outcome"], "partial");
+        assert_eq!(events[1]["fields"]["test_count"], 2);
+        assert_eq!(events[1]["fields"]["vulnerable_count"], 1);
+        assert_eq!(events[1]["fields"]["inconclusive_count"], 1);
+        assert_eq!(events[1]["fields"]["duration_ms"], 125);
+        assert_eq!(events[1]["fields"]["outcome"], "partial");
         let output = String::from_utf8_lossy(&output);
         assert!(!output.contains("sensitive target"));
         assert!(!output.contains("private diagnostic"));
