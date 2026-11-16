@@ -1,13 +1,20 @@
 use crate::{Args, Result, TlsError};
+use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tracing::{Event, Subscriber};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::fmt::{
+    FmtContext,
+    format::{FormatEvent, FormatFields, Writer},
+};
+use tracing_subscriber::registry::LookupSpan;
 
 pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
@@ -64,6 +71,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                         .boxed()
                 } else {
                     tracing_subscriber::fmt::layer()
+                        .event_format(SafeTextFormat::default())
                         .with_writer(writer)
                         .with_filter(filter)
                         .boxed()
@@ -84,6 +92,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                         .try_init()
                 } else {
                     tracing_subscriber::fmt()
+                        .event_format(SafeTextFormat::default())
                         .with_env_filter(filter)
                         .with_writer(writer)
                         .try_init()
@@ -112,6 +121,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                 .try_init()
         } else {
             FmtSubscriber::builder()
+                .event_format(SafeTextFormat::default())
                 .with_env_filter(filter)
                 .with_writer(writer)
                 .try_init()
@@ -137,6 +147,68 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
         #[cfg(feature = "otel")]
         tracer_provider,
     })
+}
+
+#[derive(Default)]
+struct SafeTextFormat(tracing_subscriber::fmt::format::Format);
+
+impl<S, N> FormatEvent<S, N> for SafeTextFormat
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        context: &FmtContext<'_, S, N>,
+        writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        let mut writer = SanitizingWriter {
+            output: writer,
+            pending_newline: false,
+        };
+        self.0
+            .format_event(context, Writer::new(&mut writer), event)?;
+        writer.finish()
+    }
+}
+
+struct SanitizingWriter<'a> {
+    output: Writer<'a>,
+    pending_newline: bool,
+}
+
+impl SanitizingWriter<'_> {
+    fn finish(&mut self) -> fmt::Result {
+        if self.pending_newline {
+            self.output.write_str("\n")?;
+            self.pending_newline = false;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Write for SanitizingWriter<'_> {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        if self.pending_newline && !value.is_empty() {
+            self.output.write_str("\\n")?;
+            self.pending_newline = false;
+        }
+
+        let mut start = 0;
+        for (index, character) in value.char_indices() {
+            if character.is_control() {
+                self.output.write_str(&value[start..index])?;
+                if character == '\n' && index + 1 == value.len() {
+                    self.pending_newline = true;
+                } else {
+                    write!(self.output, "{}", character.escape_default())?;
+                }
+                start = index + character.len_utf8();
+            }
+        }
+        self.output.write_str(&value[start..])
+    }
 }
 
 pub struct LoggingGuard {
@@ -424,7 +496,7 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 #[cfg(test)]
 mod tests {
     use super::{
-        LogWriter, format_dropped_log_event, format_log_file_fallback_event,
+        LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
         format_log_file_write_fallback_event, join_drop_monitor, json_logs_enabled,
         monitor_dropped_log_lines, resolve_log_filter, rolling_log_file, write_to_destinations,
     };
@@ -582,7 +654,7 @@ mod tests {
         let untrusted = "value\nlevel=ERROR\r\u{001b}[2J";
 
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(input = %untrusted, "test event");
+            tracing::info!(input = %untrusted, "test event {untrusted}");
         });
 
         let bytes = output.0.lock().unwrap().clone();
@@ -590,6 +662,32 @@ mod tests {
         assert_eq!(serialized.lines().count(), 1);
         let event: serde_json::Value = serde_json::from_str(serialized).unwrap();
         assert_eq!(event["fields"]["input"], untrusted);
+    }
+
+    #[test]
+    fn text_format_does_not_allow_untrusted_fields_to_inject_lines() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .event_format(SafeTextFormat::default())
+            .with_writer(output.clone())
+            .finish();
+        let untrusted = "value\nlevel=ERROR\r\u{001b}[2J";
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(input = %untrusted, "test event {untrusted}");
+        });
+
+        let bytes = output.0.lock().unwrap().clone();
+        let serialized = std::str::from_utf8(&bytes).unwrap();
+        assert_eq!(serialized.lines().count(), 1, "{serialized:?}");
+        let content = serialized.trim_end_matches('\n');
+        assert!(!content.contains('\r'), "{serialized:?}");
+        assert!(!content.contains('\u{001b}'), "{serialized:?}");
+        assert!(content.contains("\\n"), "{serialized:?}");
+        assert!(content.contains("\\r"), "{serialized:?}");
+        assert!(content.contains("\\u{1b}"), "{serialized:?}");
     }
 
     #[test]
