@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::Row;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 const TABLE: &str = "cipherrun_jobs";
@@ -110,23 +111,24 @@ impl DatabaseJobQueue {
     }
 
     async fn recover_expired_leases(&self) -> Result<()> {
+        let started = Instant::now();
         let now = Utc::now();
         let query = format!(
             "UPDATE {TABLE} SET status = 'queued', lease_until = NULL \
              WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < {}",
             placeholder(self.pool.as_ref(), 1)
         );
-        match self.pool.as_ref() {
+        let recovered_expired_leases = match self.pool.as_ref() {
             DatabasePool::Sqlite(pool) => sqlx::query(&query)
                 .bind(now)
                 .execute(pool)
                 .await
-                .map(|_| ()),
+                .map(|result| result.rows_affected()),
             DatabasePool::Postgres(pool) => sqlx::query(&query)
                 .bind(now)
                 .execute(pool)
                 .await
-                .map(|_| ()),
+                .map(|result| result.rows_affected()),
         }
         .map_err(db_error)?;
 
@@ -157,6 +159,7 @@ impl DatabaseJobQueue {
                 })
                 .collect::<Result<Vec<_>>>()?,
         };
+        let mut recovered_serialized_jobs = 0;
         for (id, json) in rows {
             let Ok(mut job) = serde_json::from_str::<ScanJob>(&json) else {
                 continue;
@@ -171,22 +174,34 @@ impl DatabaseJobQueue {
                 placeholder(self.pool.as_ref(), 2)
             );
             let json = serde_json::to_string(&job)?;
-            match self.pool.as_ref() {
+            recovered_serialized_jobs += match self.pool.as_ref() {
                 DatabasePool::Sqlite(pool) => sqlx::query(&update)
                     .bind(json)
                     .bind(&id)
                     .execute(pool)
                     .await
-                    .map(|_| ())
+                    .map(|result| result.rows_affected())
                     .map_err(db_error)?,
                 DatabasePool::Postgres(pool) => sqlx::query(&update)
                     .bind(json)
                     .bind(&id)
                     .execute(pool)
                     .await
-                    .map(|_| ())
+                    .map(|result| result.rows_affected())
                     .map_err(db_error)?,
-            }
+            };
+        }
+        if recovered_expired_leases > 0 || recovered_serialized_jobs > 0 {
+            tracing::info!(
+                event_name = "scan_jobs.database.recovered",
+                component = "api.jobs.database",
+                operation = "recover_expired_leases",
+                recovered_expired_leases,
+                recovered_serialized_jobs,
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                outcome = "success",
+                "Recovered persisted scan jobs"
+            );
         }
         Ok(())
     }
@@ -689,6 +704,22 @@ mod tests {
 
     #[tokio::test]
     async fn sqlite_database_queue_persists_and_recovers_jobs() {
+        use std::io::Write;
+        use std::sync::Mutex as StdMutex;
+
+        struct CapturedWriter(Arc<StdMutex<Vec<u8>>>);
+
+        impl Write for CapturedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
         let directory = tempfile::tempdir().unwrap();
         let pool = Arc::new(
             DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
@@ -714,9 +745,26 @@ mod tests {
                 .unwrap();
         }
         let recovered = DatabaseJobQueue::new(queue.pool.clone(), 10, Some(Duration::days(7)));
+        let output = Arc::new(StdMutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer({
+                let output = output.clone();
+                move || CapturedWriter(output.clone())
+            })
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
         let recovered_job = recovered.get_job(&id).await.unwrap().unwrap();
         assert_eq!(recovered_job.status, ScanStatus::Queued);
         assert!(recovered_job.started_at.is_none());
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("scan_jobs.database.recovered"), "{output}");
+        assert!(output.contains("recovered_expired_leases=1"), "{output}");
+        assert!(output.contains("recovered_serialized_jobs=1"), "{output}");
+        assert!(output.contains("outcome=\"success\""), "{output}");
+        assert!(!output.contains("example.com"), "{output}");
     }
 
     #[tokio::test]
