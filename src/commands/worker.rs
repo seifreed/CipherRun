@@ -24,6 +24,7 @@ impl WorkerCommand {
 /// queue, lease, retry, and webhook behavior remain single-sourced.
 #[cfg(feature = "api")]
 pub async fn run_worker(args: &Args) -> Result<()> {
+    let startup_started = std::time::Instant::now();
     let api_config_path =
         args.api_server
             .config
@@ -69,10 +70,9 @@ pub async fn run_worker(args: &Args) -> Result<()> {
             "worker started with local_executor=true; disable it on the API server only when external workers should own all queue execution"
         );
     }
-    info!(
-        event_name = "worker.started",
-        concurrency = api_config.max_concurrent_scans,
-        "Starting standalone scan worker"
+    log_worker_started(
+        u64::try_from(startup_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        api_config.max_concurrent_scans,
     );
 
     let runner = Arc::clone(&executor);
@@ -90,6 +90,14 @@ pub async fn run_worker(args: &Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "api")]
+fn log_worker_started(startup_duration_ms: u64, concurrency: usize) {
+    info!(
+        event_name = "worker.started",
+        startup_duration_ms, concurrency, "Starting standalone scan worker"
+    );
 }
 
 #[cfg(not(feature = "api"))]
@@ -114,9 +122,61 @@ impl Command for WorkerCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "api")]
+    use std::io::Write;
+    #[cfg(feature = "api")]
+    use std::sync::{Arc, Mutex};
+    #[cfg(feature = "api")]
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[cfg(feature = "api")]
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    #[cfg(feature = "api")]
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    #[cfg(feature = "api")]
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    #[cfg(feature = "api")]
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn worker_command_name_is_stable() {
         assert_eq!(WorkerCommand::new(Args::default()).name(), "WorkerCommand");
+    }
+
+    #[cfg(feature = "api")]
+    #[test]
+    fn worker_started_event_includes_startup_duration_and_concurrency() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || log_worker_started(27, 4));
+
+        let logs: serde_json::Value =
+            serde_json::from_slice(&output.0.lock().unwrap()).expect("event should be JSON");
+        assert_eq!(logs["fields"]["event_name"], "worker.started");
+        assert_eq!(logs["fields"]["startup_duration_ms"], 27);
+        assert_eq!(logs["fields"]["concurrency"], 4);
     }
 }
