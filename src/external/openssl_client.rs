@@ -292,8 +292,16 @@ impl OpenSslClient {
                     }
                     if Instant::now() >= deadline {
                         timed_out = true;
-                        let _ = child.kill();
-                        break child.wait()?;
+                        match child.kill() {
+                            Ok(()) => break child.wait()?,
+                            Err(_) => match child.try_wait()? {
+                                Some(status) => break status,
+                                None => {
+                                    report_openssl_kill_failure();
+                                    break child.wait()?;
+                                }
+                            },
+                        }
                     }
                     thread::sleep(Duration::from_millis(10));
                 };
@@ -462,6 +470,17 @@ fn validate_file_path_arg(value: &std::ffi::OsStr, flag: &str) -> crate::Result<
         );
     }
     Ok(())
+}
+
+fn report_openssl_kill_failure() {
+    tracing::warn!(
+        event_name = "subprocess.openssl.termination.failed",
+        operation = "kill",
+        error_type = "process_control",
+        error_code = "kill_failed",
+        outcome = "waiting_for_child",
+        "Could not stop timed-out OpenSSL subprocess"
+    );
 }
 
 fn reject_private_or_local_host(
@@ -844,6 +863,54 @@ SSL-Session:
         assert_eq!(event["fields"]["outcome"], "nonzero_exit");
         assert_eq!(event["fields"]["exit_code"], 7);
         assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!log.contains("example.com"));
+    }
+
+    #[test]
+    fn test_report_openssl_kill_failure_emits_safe_structured_warning() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, report_openssl_kill_failure);
+
+        let log = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON log");
+        let event: serde_json::Value = serde_json::from_str(log.trim()).expect("structured event");
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "subprocess.openssl.termination.failed"
+        );
+        assert_eq!(event["fields"]["operation"], "kill");
+        assert_eq!(event["fields"]["error_code"], "kill_failed");
+        assert_eq!(event["fields"]["outcome"], "waiting_for_child");
         assert!(!log.contains("example.com"));
     }
 

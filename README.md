@@ -269,6 +269,9 @@ operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.
 The `--local` OpenSSL inventory emits one terminal outcome for the combined
 version and cipher-list operation, while its result stays on stdout.
+If an OpenSSL subprocess remains active after a timeout but the operating
+system refuses the termination request, a separate sanitized warning records
+that process-control failure.
 
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and matched route template around downstream request handling.
