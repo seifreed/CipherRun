@@ -151,7 +151,8 @@ impl Drop for ApiBackgroundTasks {
         if self.stopped {
             return;
         }
-        let _ = self.shutdown.send(true);
+        let signal_sent = self.shutdown.send(true).is_ok();
+        let task_count = self.tasks.len();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let executor = self.executor.clone();
             runtime.spawn(async move {
@@ -163,6 +164,29 @@ impl Drop for ApiBackgroundTasks {
                     );
                 }
             });
+            tracing::warn!(
+                event_name = "api_server.background_tasks.drop_cleanup",
+                operation = "shutdown_fallback",
+                task_count,
+                signal_sent,
+                executor_shutdown_scheduled = true,
+                outcome = if signal_sent {
+                    "shutdown_signaled"
+                } else {
+                    "signal_failed"
+                },
+                "API background tasks dropped before graceful shutdown completed"
+            );
+        } else {
+            tracing::warn!(
+                event_name = "api_server.background_tasks.drop_cleanup",
+                operation = "shutdown_fallback",
+                task_count,
+                signal_sent,
+                executor_shutdown_scheduled = false,
+                outcome = "runtime_unavailable",
+                "API background tasks dropped without an active runtime"
+            );
         }
     }
 }
@@ -1011,6 +1035,20 @@ mod tests {
                 stopped: false,
             };
             let successful_shutdown = runtime.block_on(successful_shutdown.shutdown());
+            runtime.block_on(async {
+                drop(ApiBackgroundTasks {
+                    shutdown: watch::channel(false).0,
+                    executor: Arc::new(ScanExecutor::new(state.job_queue.clone(), 1)),
+                    tasks: Vec::new(),
+                    stopped: false,
+                });
+            });
+            drop(ApiBackgroundTasks {
+                shutdown: watch::channel(false).0,
+                executor: Arc::new(ScanExecutor::new(state.job_queue.clone(), 1)),
+                tasks: Vec::new(),
+                stopped: false,
+            });
             (result, successful_shutdown)
         });
 
@@ -1056,6 +1094,32 @@ mod tests {
             successful_summary["fields"]["duration_ms"]
                 .as_u64()
                 .is_some()
+        );
+        let drop_events: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event["fields"]["event_name"] == "api_server.background_tasks.drop_cleanup"
+            })
+            .collect();
+        assert_eq!(drop_events.len(), 2);
+        let scheduled_cleanup = drop_events
+            .iter()
+            .find(|event| event["fields"]["executor_shutdown_scheduled"] == true)
+            .unwrap();
+        assert_eq!(
+            scheduled_cleanup["fields"]["operation"],
+            "shutdown_fallback"
+        );
+        assert_eq!(scheduled_cleanup["fields"]["task_count"], 0);
+        assert_eq!(scheduled_cleanup["fields"]["signal_sent"], true);
+        assert_eq!(scheduled_cleanup["fields"]["outcome"], "shutdown_signaled");
+        let unavailable_cleanup = drop_events
+            .iter()
+            .find(|event| event["fields"]["executor_shutdown_scheduled"] == false)
+            .unwrap();
+        assert_eq!(
+            unavailable_cleanup["fields"]["outcome"],
+            "runtime_unavailable"
         );
     }
 

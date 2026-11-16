@@ -274,7 +274,10 @@ If the drop-monitor thread cannot start, initialization emits a warning and
 the accumulated drop count is still reported during shutdown.
 The API emits `api_server.background_tasks.shutdown` with duration, task count,
 failure count, and completion outcome after joining its background tasks;
-individual failed tasks retain their own categorized error events.
+individual failed tasks retain their own categorized error events. If the task
+owner is dropped before graceful shutdown, `api_server.background_tasks.drop_cleanup`
+records whether a shutdown signal was sent and whether the executor cleanup could
+be scheduled in the active Tokio runtime.
 Monitoring logs inventory loads, manual additions, allowlisted CT discovery
 counts, scan outcomes, and per-channel alert delivery outcomes without logging
 the monitored hostnames. Its `monitor.started` event follows inventory and
