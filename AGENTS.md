@@ -44,6 +44,11 @@ Keep each project's README aligned with every functional advancement. Update it 
 
 For r2morph, integrate work into `main` and push only `main` (`git push origin main`). Never force-push. Before deleting a branch, verify its commits are reachable from `main`; remove integrated work branches after publishing.
 
+## Git and Rust build hygiene
+
+- Commit messages MUST follow the [Conventional Commits 1.0.0 specification](https://www.conventionalcommits.org/en/v1.0.0/#specification).
+- When the Rust build output directory `target/` exceeds 80 GB, automatically run `cargo clean` to reclaim build artifacts.
+
 ## Logging & Observability — Mandatory Development Rules
 
 **These rules are mandatory for all new code, bug fixes, refactoring, and architectural changes.**
