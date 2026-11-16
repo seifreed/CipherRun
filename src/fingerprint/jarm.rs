@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -194,6 +194,7 @@ impl JarmFingerprinter {
 
     /// Fingerprint a target
     pub async fn fingerprint(&self, addr: SocketAddr, hostname: &str) -> Result<JarmFingerprint> {
+        let started = Instant::now();
         let probes = get_probes(hostname, addr.port())?;
         let mut raw_responses = Vec::new();
 
@@ -201,6 +202,26 @@ impl JarmFingerprinter {
             let response = self.send_probe(addr, hostname, probe).await?;
             raw_responses.push(response);
         }
+
+        let inconclusive_probe_count = raw_responses
+            .iter()
+            .filter(|response| response.as_str() == "|||")
+            .count();
+        tracing::debug!(
+            event_name = "fingerprint.jarm.completed",
+            operation = "active_tls_fingerprint",
+            probe_count = raw_responses.len(),
+            inconclusive_probe_count,
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = if inconclusive_probe_count == 0 {
+                "complete"
+            } else if inconclusive_probe_count == raw_responses.len() {
+                "inconclusive"
+            } else {
+                "partial"
+            },
+            "JARM fingerprint probes completed"
+        );
 
         let hash = raw_hash_to_fuzzy_hash(&raw_responses.join(","));
         let signature = self.database.lookup(&hash).cloned();
@@ -569,6 +590,91 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
+
+    #[tokio::test]
+    async fn jarm_completion_event_reports_inconclusive_probes_without_target_data() {
+        use std::{
+            io::Write,
+            sync::{Arc, Mutex},
+        };
+        use tracing::instrument::WithSubscriber;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose address");
+        let server = tokio::spawn(async move {
+            for _ in 0..10 {
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("JARM probe should connect to local listener");
+                drop(stream);
+            }
+        });
+
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let fingerprinter =
+            JarmFingerprinter::with_database(Duration::from_secs(1), JarmDatabase::new());
+        let fingerprint = fingerprinter
+            .fingerprint(addr, "private.example.test")
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("closed local connections still produce a JARM fingerprint");
+        server.await.expect("local probe server should finish");
+
+        assert_eq!(fingerprint.raw_responses.len(), 10);
+        assert!(
+            fingerprint
+                .raw_responses
+                .iter()
+                .all(|response| response == "|||")
+        );
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "DEBUG");
+        assert_eq!(event["fields"]["event_name"], "fingerprint.jarm.completed");
+        assert_eq!(event["fields"]["probe_count"], 10);
+        assert_eq!(event["fields"]["inconclusive_probe_count"], 10);
+        assert_eq!(event["fields"]["outcome"], "inconclusive");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("private.example.test"));
+        assert!(!output.contains(&addr.ip().to_string()));
+    }
 
     #[test]
     fn test_database_lookup() {

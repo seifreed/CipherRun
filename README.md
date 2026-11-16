@@ -277,6 +277,8 @@ When idle, a shutdown request wakes the scheduler immediately instead of waiting
 for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
+JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
+duration and outcome; it omits the target and raw handshake data.
 MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
 and a stable error code; resolver output and domain names stay out of that event.
 CT stream shutdown events include elapsed time and a terminal outcome, both for
