@@ -152,6 +152,9 @@ pub struct ApiStats {
     /// HTTP responses with 5xx status.
     pub http_responses_5xx: u64,
 
+    /// HTTP authentication or authorization failures (401 and 403).
+    pub http_auth_failures: u64,
+
     /// Scan timestamps for rolling-window stats - bounded collection
     pub scan_timestamps: VecDeque<Instant>,
 
@@ -246,6 +249,9 @@ impl ApiStats {
             4 => self.http_responses_4xx = self.http_responses_4xx.saturating_add(1),
             5 => self.http_responses_5xx = self.http_responses_5xx.saturating_add(1),
             _ => {}
+        }
+        if matches!(status, 401 | 403) {
+            self.http_auth_failures = self.http_auth_failures.saturating_add(1);
         }
     }
 
@@ -396,6 +402,7 @@ impl ApiStats {
             http_response_duration_buckets: [0; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
             http_responses_4xx: 0,
             http_responses_5xx: 0,
+            http_auth_failures: 0,
             scan_timestamps: scoped.scan_timestamps.clone(),
             audit_events: VecDeque::new(),
             principal_stats: HashMap::new(),
@@ -978,6 +985,7 @@ mod tests {
             http_response_duration_buckets: [u64::MAX; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()],
             http_responses_4xx: u64::MAX,
             http_responses_5xx: u64::MAX,
+            http_auth_failures: u64::MAX,
             ..Default::default()
         };
 
@@ -1002,6 +1010,7 @@ mod tests {
         );
         assert_eq!(stats.http_responses_4xx, u64::MAX);
         assert_eq!(stats.http_responses_5xx, u64::MAX);
+        assert_eq!(stats.http_auth_failures, u64::MAX);
     }
 
     #[test]

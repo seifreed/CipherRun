@@ -173,6 +173,41 @@ mod tests {
         assert_eq!(stats.total_responses, 1);
     }
 
+    #[tokio::test]
+    async fn counts_authentication_and_authorization_failures_without_labels() {
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route(
+                "/unauthorized",
+                get(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+            )
+            .route(
+                "/forbidden",
+                get(|| async { axum::http::StatusCode::FORBIDDEN }),
+            )
+            .route(
+                "/rate-limited",
+                get(|| async { axum::http::StatusCode::TOO_MANY_REQUESTS }),
+            )
+            .layer(middleware::from_fn_with_state(state.clone(), metrics));
+
+        for path in ["/unauthorized", "/forbidden", "/rate-limited"] {
+            app.clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let stats = state.stats.read().await;
+        assert_eq!(stats.http_auth_failures, 2);
+        assert_eq!(stats.http_responses_4xx, 3);
+    }
+
     #[cfg(feature = "otel")]
     #[test]
     fn extracts_valid_w3c_traceparent_without_logging_header_values() {

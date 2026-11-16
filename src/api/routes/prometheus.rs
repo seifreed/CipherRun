@@ -47,6 +47,9 @@ cipherrun_http_responses_4xx_total {}\n\
 # HELP cipherrun_http_responses_5xx_total Total HTTP responses with 5xx status.\n\
 # TYPE cipherrun_http_responses_5xx_total counter\n\
 cipherrun_http_responses_5xx_total {}\n\
+# HELP cipherrun_auth_failures_total Total HTTP authentication or authorization failures (401 and 403).\n\
+# TYPE cipherrun_auth_failures_total counter\n\
+cipherrun_auth_failures_total {}\n\
 # HELP cipherrun_scans_total Total scans accepted.\n\
 # TYPE cipherrun_scans_total counter\n\
 cipherrun_scans_total {}\n\
@@ -64,6 +67,7 @@ cipherrun_scans_failed_total {}\n\
         stats.total_responses,
         stats.http_responses_4xx,
         stats.http_responses_5xx,
+        stats.http_auth_failures,
         stats.total_scans,
         stats.completed_scans,
         stats.failed_scans,
@@ -172,6 +176,7 @@ mod tests {
             stats.record_http_response(5, 404);
             stats.record_http_response(6, 200);
             stats.record_http_response(6_000, 503);
+            stats.http_auth_failures = 2;
         }
         let response = metrics(State(state)).await.into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -185,6 +190,7 @@ mod tests {
         let body = std::str::from_utf8(&body).unwrap();
         assert!(body.contains("cipherrun_http_responses_4xx_total 1\n"));
         assert!(body.contains("cipherrun_http_responses_5xx_total 1\n"));
+        assert!(body.contains("cipherrun_auth_failures_total 2\n"));
         assert!(
             body.contains("cipherrun_http_response_duration_milliseconds_bucket{le=\"5\"} 1\n")
         );
