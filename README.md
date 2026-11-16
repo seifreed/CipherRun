@@ -272,6 +272,9 @@ queue fills, low-priority log events may be dropped rather than blocking scans;
 the writer guard remains alive for the full command/worker lifetime.
 If the drop-monitor thread cannot start, initialization emits a warning and
 the accumulated drop count is still reported during shutdown.
+The API emits `api_server.background_tasks.shutdown` with duration, task count,
+failure count, and completion outcome after joining its background tasks;
+individual failed tasks retain their own categorized error events.
 Monitoring logs inventory loads, manual additions, allowlisted CT discovery
 counts, scan outcomes, and per-channel alert delivery outcomes without logging
 the monitored hostnames. Its `monitor.started` event follows inventory and

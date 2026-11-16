@@ -83,6 +83,8 @@ pub struct ApiBackgroundTasks {
 
 impl ApiBackgroundTasks {
     pub async fn shutdown(mut self) -> Result<()> {
+        let started = std::time::Instant::now();
+        let task_count = self.tasks.len();
         let executor_result = self.executor.shutdown().await;
         let _ = self.shutdown.send(true);
         self.stopped = true;
@@ -107,6 +109,33 @@ impl ApiBackgroundTasks {
                     "API background task failed during shutdown"
                 );
             }
+        }
+        let outcome = if task_failures > 0 || executor_result.is_err() {
+            "incomplete"
+        } else {
+            "complete"
+        };
+        let duration_ms = started.elapsed().as_millis() as u64;
+        if outcome == "complete" {
+            tracing::info!(
+                event_name = "api_server.background_tasks.shutdown",
+                operation = "shutdown",
+                task_count,
+                task_failures,
+                duration_ms,
+                outcome,
+                "API background tasks stopped"
+            );
+        } else {
+            tracing::warn!(
+                event_name = "api_server.background_tasks.shutdown",
+                operation = "shutdown",
+                task_count,
+                task_failures,
+                duration_ms,
+                outcome,
+                "API background task shutdown was incomplete"
+            );
         }
         if task_failures > 0 {
             return Err(crate::TlsError::Other(format!(
@@ -970,17 +999,33 @@ mod tests {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_max_level(tracing::Level::ERROR)
+            .with_max_level(tracing::Level::INFO)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
-        let result = tracing::subscriber::with_default(subscriber, || {
-            runtime.block_on(background_tasks.shutdown())
+        let (result, successful_shutdown) = tracing::subscriber::with_default(subscriber, || {
+            let result = runtime.block_on(background_tasks.shutdown());
+            let successful_shutdown = ApiBackgroundTasks {
+                shutdown: watch::channel(false).0,
+                executor: Arc::new(ScanExecutor::new(state.job_queue.clone(), 1)),
+                tasks: Vec::new(),
+                stopped: false,
+            };
+            let successful_shutdown = runtime.block_on(successful_shutdown.shutdown());
+            (result, successful_shutdown)
         });
 
         assert!(result.is_err());
+        assert!(successful_shutdown.is_ok());
         assert!(remaining_task_joined.load(Ordering::SeqCst));
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        let events: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let event = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "api_server.background_task.join_failed")
+            .unwrap();
         assert_eq!(
             event["fields"]["event_name"],
             "api_server.background_task.join_failed"
@@ -989,6 +1034,29 @@ mod tests {
         assert_eq!(event["fields"]["error_type"], "cancelled");
         assert_eq!(event["fields"]["error_code"], "task_cancelled");
         assert_eq!(event["fields"]["outcome"], "shutdown_incomplete");
+        let summary = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "api_server.background_tasks.shutdown")
+            .unwrap();
+        assert_eq!(summary["fields"]["operation"], "shutdown");
+        assert_eq!(summary["fields"]["task_count"], 2);
+        assert_eq!(summary["fields"]["task_failures"], 1);
+        assert!(summary["fields"]["duration_ms"].as_u64().is_some());
+        assert_eq!(summary["fields"]["outcome"], "incomplete");
+        let successful_summary = events
+            .iter()
+            .find(|event| {
+                event["fields"]["event_name"] == "api_server.background_tasks.shutdown"
+                    && event["fields"]["outcome"] == "complete"
+            })
+            .unwrap();
+        assert_eq!(successful_summary["fields"]["task_count"], 0);
+        assert_eq!(successful_summary["fields"]["task_failures"], 0);
+        assert!(
+            successful_summary["fields"]["duration_ms"]
+                .as_u64()
+                .is_some()
+        );
     }
 
     #[tokio::test]
