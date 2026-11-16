@@ -279,6 +279,8 @@ Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
 duration and outcome; it omits the target and raw handshake data.
+The explicit `--probe-status` option emits one connectivity event with duration,
+outcome and error category, without the target address.
 MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
 and a stable error code; resolver output and domain names stay out of that event.
 CT stream shutdown events include elapsed time and a terminal outcome, both for

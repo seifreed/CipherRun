@@ -446,28 +446,44 @@ impl Scanner {
     }
 
     async fn probe_connectivity(&self, timeout_duration: Duration) -> ProbeStatus {
+        let started = Instant::now();
         let target = self.get_target_owned();
-        let Some(socket_addr) = target.socket_addrs().into_iter().next() else {
-            return ProbeStatus::failure_string(
+        let status = match target.socket_addrs().into_iter().next() {
+            Some(socket_addr) => {
+                match timeout(timeout_duration, TcpStream::connect(socket_addr)).await {
+                    Ok(Ok(stream)) => {
+                        drop(stream);
+                        ProbeStatus::success(started.elapsed())
+                    }
+                    Ok(Err(error)) => {
+                        ProbeStatus::failure_string(error.to_string(), ErrorType::NetworkError)
+                    }
+                    Err(_) => ProbeStatus::failure_string(
+                        format!("Connection timeout after {:?}", timeout_duration),
+                        ErrorType::Timeout,
+                    ),
+                }
+            }
+            None => ProbeStatus::failure_string(
                 "No resolved IP address available".to_string(),
                 ErrorType::DnsFailure,
-            );
+            ),
         };
 
-        let start = Instant::now();
-        match timeout(timeout_duration, TcpStream::connect(socket_addr)).await {
-            Ok(Ok(stream)) => {
-                drop(stream);
-                ProbeStatus::success(start.elapsed())
-            }
-            Ok(Err(error)) => {
-                ProbeStatus::failure_string(error.to_string(), ErrorType::NetworkError)
-            }
-            Err(_) => ProbeStatus::failure_string(
-                format!("Connection timeout after {:?}", timeout_duration),
-                ErrorType::Timeout,
-            ),
-        }
+        tracing::info!(
+            event_name = "scan.connectivity_probe.completed",
+            operation = "probe_connectivity",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = if status.success {
+                "connected"
+            } else {
+                "unreachable"
+            },
+            error_type = ?status.error_type,
+            attempts = status.attempts,
+            "Connectivity probe completed"
+        );
+        status
     }
 
     fn build_probe_only_results(
@@ -643,6 +659,65 @@ mod tests {
             ..Default::default()
         })
         .expect("scanner should build")
+    }
+
+    #[tokio::test]
+    async fn connectivity_probe_logs_safe_terminal_event() {
+        use tracing::instrument::WithSubscriber;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose address");
+        drop(listener);
+
+        let scanner = Scanner::new(ScanRequest {
+            target: Some("private.example.test:443".to_string()),
+            scan: crate::application::scan_request::ScanRequestScan {
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build");
+        *scanner.target.write() = Target::with_ips(
+            "private.example.test".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .expect("loopback target should build");
+
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let status = scanner
+            .probe_connectivity(Duration::from_millis(100))
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        assert!(!status.success);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scan.connectivity_probe.completed"
+        );
+        assert_eq!(event["fields"]["operation"], "probe_connectivity");
+        assert_eq!(event["fields"]["outcome"], "unreachable");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(event["fields"]["error_type"].is_string());
+        assert!(!output.contains("private.example.test"));
+        assert!(!output.contains(&addr.ip().to_string()));
     }
 
     fn mixed_family_target() -> Target {
