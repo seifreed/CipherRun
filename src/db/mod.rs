@@ -257,8 +257,8 @@ mod tests {
     async fn database_initialization_logs_backend_without_config_path() {
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
+            .json()
             .without_time()
-            .with_ansi(false)
             .with_writer(output.clone())
             .finish();
         let directory = tempfile::tempdir().expect("test database directory should exist");
@@ -271,9 +271,23 @@ mod tests {
             .expect("database should initialize");
 
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        assert!(logs.contains("database.initialized"));
-        assert!(logs.contains("database_backend=Sqlite"));
-        assert!(logs.contains("duration_ms="));
+        let events = logs
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let connected = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "database.pool.connected")
+            .expect("database pool connection event should be captured");
+        assert_eq!(connected["fields"]["operation"], "connect");
+        assert_eq!(connected["fields"]["database_backend"], "sqlite");
+        assert!(connected["fields"]["duration_ms"].as_u64().is_some());
+        assert_eq!(connected["fields"]["outcome"], "connected");
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["event_name"] == "database.initialized")
+        );
         assert!(!logs.contains(db_path.to_str().unwrap()));
         db.close().await;
     }

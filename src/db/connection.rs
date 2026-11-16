@@ -4,6 +4,7 @@
 use crate::db::config::{DatabaseConfig, DatabaseType};
 use sqlx::{Pool, Postgres, Row, Sqlite};
 use std::str::FromStr;
+use std::time::Instant;
 
 /// Sanitize a SQL identifier (table name, column name) to prevent injection.
 ///
@@ -238,6 +239,7 @@ pub enum DatabasePool {
 impl DatabasePool {
     /// Create a new database pool from configuration
     pub async fn new(config: &DatabaseConfig) -> crate::Result<Self> {
+        let started = Instant::now();
         #[cfg(not(feature = "db-postgres"))]
         if matches!(config.db_type, DatabaseType::Postgres) {
             return Err(crate::TlsError::ConfigError {
@@ -313,6 +315,18 @@ impl DatabasePool {
                 DatabasePool::Sqlite(pool)
             }
         };
+
+        tracing::info!(
+            event_name = "database.pool.connected",
+            operation = "connect",
+            database_backend = match pool.db_type() {
+                DatabaseType::Postgres => "postgres",
+                DatabaseType::Sqlite => "sqlite",
+            },
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "connected",
+            "Database pool connected"
+        );
 
         Ok(pool)
     }

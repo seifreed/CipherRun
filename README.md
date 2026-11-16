@@ -254,6 +254,9 @@ precedence and supports standard module directives, for example
 `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
+Successful database pool creation emits `database.pool.connected` with the
+backend, connection duration, and outcome; the event omits database paths and
+connection strings.
 DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
 per-target debug noise during bulk scans.
 OpenSSL certificate-fetch and BEAST probe events retain the active scan-phase
