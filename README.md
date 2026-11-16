@@ -266,7 +266,11 @@ If the drop-monitor thread cannot start, initialization emits a warning and
 the accumulated drop count is still reported during shutdown.
 Monitoring logs inventory loads, manual additions, allowlisted CT discovery
 counts, scan outcomes, and per-channel alert delivery outcomes without logging
-the monitored hostnames.
+the monitored hostnames. Its `monitor.started` event follows inventory and
+configuration readiness. Signal-handler setup/runtime failures emit categorized
+events, and a setup failure resets the daemon's running state.
+When idle, a shutdown request wakes the scheduler immediately instead of waiting
+for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.

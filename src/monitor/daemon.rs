@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Notify, Semaphore};
 use tokio::time::interval;
 
 /// Main monitoring daemon
@@ -28,6 +28,7 @@ pub struct MonitorDaemon {
     alert_manager: Arc<AlertManager>,
     detector: Arc<ChangeDetector>,
     running: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
     scan_semaphore: Arc<Semaphore>,
 }
 
@@ -71,6 +72,7 @@ impl MonitorDaemon {
             alert_manager,
             detector: Arc::new(ChangeDetector::new()),
             running: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             scan_semaphore: Arc::new(Semaphore::new(max_concurrent)),
         })
     }
@@ -178,14 +180,27 @@ impl MonitorDaemon {
     /// Start the monitoring daemon
     pub async fn start(&self) -> Result<()> {
         tracing::info!(
-            event_name = "monitor.started",
-            "Certificate monitoring daemon started"
+            event_name = "monitor.starting",
+            "Certificate monitoring daemon starting"
         );
 
         self.running.store(true, Ordering::SeqCst);
 
         // Setup signal handlers
-        self.setup_signal_handlers()?;
+        let started = Instant::now();
+        if let Err(error) = self.setup_signal_handlers() {
+            self.running.store(false, Ordering::SeqCst);
+            tracing::error!(
+                event_name = "monitor.start.failed",
+                operation = "register_signal_handlers",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "Certificate monitoring daemon failed to start"
+            );
+            return Err(error);
+        }
 
         // Log configuration
         let inventory = self.inventory.lock().await;
@@ -203,12 +218,28 @@ impl MonitorDaemon {
             concurrency = self.config.monitor.max_concurrent_scans,
             "Monitoring configuration loaded"
         );
+        tracing::info!(
+            event_name = "monitor.started",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "running",
+            "Certificate monitoring daemon started"
+        );
 
         // Main monitoring loop
         let mut tick_interval = interval(crate::constants::MONITOR_POLL_INTERVAL);
 
-        while self.running.load(Ordering::SeqCst) {
-            tick_interval.tick().await;
+        loop {
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::select! {
+                _ = tick_interval.tick() => {}
+                _ = self.shutdown_notify.notified() => {}
+            }
+
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
 
             if let Err(error) = self.run_scan_cycle().await {
                 tracing::error!(
@@ -223,6 +254,8 @@ impl MonitorDaemon {
 
         tracing::info!(
             event_name = "monitor.stopped",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "stopped",
             "Certificate monitoring daemon stopped"
         );
         Ok(())
@@ -235,6 +268,7 @@ impl MonitorDaemon {
             "Monitoring shutdown requested"
         );
         self.running.store(false, Ordering::SeqCst);
+        self.shutdown_notify.notify_one();
     }
 
     /// Run a single scan cycle
@@ -586,37 +620,18 @@ impl MonitorDaemon {
     /// Setup signal handlers for graceful shutdown
     fn setup_signal_handlers(&self) -> Result<()> {
         let running = Arc::clone(&self.running);
+        let shutdown_notify = Arc::clone(&self.shutdown_notify);
 
-        tokio::spawn(async move {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{SignalKind, signal};
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
 
-                let mut sigterm = match signal(SignalKind::terminate()) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        tracing::error!(
-                            event_name = "monitor.signal_handler.setup_failed",
-                            error_type = "signal_handler",
-                            signal = "SIGTERM",
-                            "Failed to set up signal handler"
-                        );
-                        return;
-                    }
-                };
-                let mut sigint = match signal(SignalKind::interrupt()) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        tracing::error!(
-                            event_name = "monitor.signal_handler.setup_failed",
-                            error_type = "signal_handler",
-                            signal = "SIGINT",
-                            "Failed to set up signal handler"
-                        );
-                        return;
-                    }
-                };
+            let mut sigterm = signal(SignalKind::terminate())
+                .map_err(|_| crate::TlsError::Other("Failed to set up SIGTERM handler".into()))?;
+            let mut sigint = signal(SignalKind::interrupt())
+                .map_err(|_| crate::TlsError::Other("Failed to set up SIGINT handler".into()))?;
 
+            tokio::spawn(async move {
                 tokio::select! {
                     _ = sigterm.recv() => {
                         tracing::info!(event_name = "monitor.signal.received", signal = "SIGTERM");
@@ -627,22 +642,24 @@ impl MonitorDaemon {
                 }
 
                 running.store(false, Ordering::SeqCst);
-            }
+                shutdown_notify.notify_one();
+            });
+        }
 
-            #[cfg(not(unix))]
-            {
-                if tokio::signal::ctrl_c().await.is_err() {
-                    tracing::error!(
-                        event_name = "monitor.signal_handler.failed",
-                        error_type = "signal_handler",
-                        "Failed to setup Ctrl+C handler"
-                    );
-                    return;
-                }
-
+        #[cfg(not(unix))]
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_err() {
+                tracing::error!(
+                    event_name = "monitor.signal_handler.failed",
+                    error_type = "signal_handler",
+                    "Failed to set up Ctrl+C handler"
+                );
+            } else {
                 tracing::info!(event_name = "monitor.signal.received", signal = "SIGINT");
-                running.store(false, Ordering::SeqCst);
             }
+
+            running.store(false, Ordering::SeqCst);
+            shutdown_notify.notify_one();
         });
 
         Ok(())
@@ -787,6 +804,97 @@ mod tests {
         assert_eq!(stats.total_domains, 0);
         assert_eq!(stats.enabled_domains, 0);
         assert!(!stats.running);
+    }
+
+    #[tokio::test]
+    async fn test_start_logs_ready_before_started_and_stopped() {
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>, Arc<Notify>);
+        struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>, Arc<Notify>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                self.1.notify_one();
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone(), self.1.clone())
+            }
+        }
+
+        let daemon = Arc::new(
+            MonitorDaemon::new(MonitorConfig::default())
+                .await
+                .expect("daemon should initialize"),
+        );
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log_changed = Arc::new(Notify::new());
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(Buffer(output.clone(), log_changed.clone()))
+            .finish();
+        let start_daemon = Arc::clone(&daemon);
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let start_task =
+            tokio::spawn(async move { start_daemon.start().with_subscriber(dispatch).await });
+
+        loop {
+            let notified = log_changed.notified();
+            if String::from_utf8(output.lock().unwrap().clone())
+                .expect("valid JSON logs")
+                .contains("monitor.started")
+            {
+                break;
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(1), notified)
+                .await
+                .expect("daemon should reach its started event");
+        }
+        daemon.stop();
+        tokio::time::timeout(std::time::Duration::from_secs(1), start_task)
+            .await
+            .expect("daemon should stop promptly")
+            .expect("daemon task should join")
+            .expect("daemon should stop successfully");
+        assert!(!daemon.stats().await.running);
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON logs");
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("structured event"))
+            .collect::<Vec<_>>();
+        let event_names = events
+            .iter()
+            .map(|event| event["fields"]["event_name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        let ready_index = event_names
+            .iter()
+            .position(|name| *name == "monitor.inventory.ready")
+            .expect("inventory should be ready");
+        let started_index = event_names
+            .iter()
+            .position(|name| *name == "monitor.started")
+            .expect("daemon should report started");
+        let stopped_index = event_names
+            .iter()
+            .position(|name| *name == "monitor.stopped")
+            .expect("daemon should report stopped");
+        assert!(ready_index < started_index);
+        assert!(started_index < stopped_index);
+        assert_eq!(events[started_index]["fields"]["outcome"], "running");
+        assert!(events[started_index]["fields"]["duration_ms"].is_number());
+        assert_eq!(events[stopped_index]["fields"]["outcome"], "stopped");
+        assert!(events[stopped_index]["fields"]["duration_ms"].is_number());
     }
 
     #[tokio::test]
