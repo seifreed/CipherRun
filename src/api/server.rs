@@ -29,6 +29,23 @@ use tracing::info;
 #[derive(Clone, Copy)]
 pub(crate) struct PeerAddr(pub(crate) std::net::SocketAddr);
 
+const ACCEPT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const ACCEPT_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
+
+fn next_accept_retry_delay(current: Duration) -> Duration {
+    current.saturating_mul(2).min(ACCEPT_RETRY_MAX_DELAY)
+}
+
+fn log_listener_accept_failure(retry_delay: Duration) {
+    tracing::warn!(
+        event_name = "api.tls_listener.accept_failed",
+        error_type = "tls_listener",
+        retry_delay_ms = u64::try_from(retry_delay.as_millis()).unwrap_or(u64::MAX),
+        outcome = "retrying",
+        "TLS listener accept failed"
+    );
+}
+
 struct TlsListener {
     listener: TcpListener,
     acceptor: TlsAcceptor,
@@ -39,15 +56,17 @@ impl axum::serve::Listener for TlsListener {
     type Addr = std::net::SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        let mut retry_delay = ACCEPT_RETRY_INITIAL_DELAY;
         loop {
             let (stream, address) = match self.listener.accept().await {
-                Ok(connection) => connection,
+                Ok(connection) => {
+                    retry_delay = ACCEPT_RETRY_INITIAL_DELAY;
+                    connection
+                }
                 Err(_) => {
-                    tracing::warn!(
-                        event_name = "api.tls_listener.accept_failed",
-                        error_type = "tls_listener",
-                        "TLS listener accept failed"
-                    );
+                    log_listener_accept_failure(retry_delay);
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay = next_accept_retry_delay(retry_delay);
                     continue;
                 }
             };
@@ -482,6 +501,71 @@ mod tests {
         http::{Request, StatusCode},
     };
     use tower::ServiceExt;
+
+    #[test]
+    fn listener_accept_backoff_is_exponential_and_capped() {
+        assert_eq!(
+            next_accept_retry_delay(ACCEPT_RETRY_INITIAL_DELAY),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            next_accept_retry_delay(Duration::from_secs(4)),
+            ACCEPT_RETRY_MAX_DELAY
+        );
+        assert_eq!(
+            next_accept_retry_delay(ACCEPT_RETRY_MAX_DELAY),
+            ACCEPT_RETRY_MAX_DELAY
+        );
+    }
+
+    #[test]
+    fn listener_accept_failure_logs_retry_context() {
+        use std::{io::Write, sync::Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            log_listener_accept_failure(Duration::from_millis(400));
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "api.tls_listener.accept_failed"
+        );
+        assert_eq!(event["fields"]["retry_delay_ms"], 400);
+        assert_eq!(event["fields"]["outcome"], "retrying");
+    }
 
     #[test]
     fn test_server_creation() {

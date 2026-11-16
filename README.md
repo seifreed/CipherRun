@@ -285,6 +285,9 @@ version and cipher-list operation, while its result stays on stdout.
 If an OpenSSL subprocess remains active after a timeout but the operating
 system refuses the termination request, a separate sanitized warning records
 that process-control failure.
+The API TLS listener reports accept failures with a retry delay and outcome; its
+backoff grows from 100 ms to a 5 s cap to limit CPU and warning volume during
+persistent listener errors.
 
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and matched route template around downstream request handling.
