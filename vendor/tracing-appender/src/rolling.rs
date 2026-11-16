@@ -910,6 +910,47 @@ mod test {
     }
 
     #[test]
+    fn daily_rotation_rolls_open_writer_across_utc_midnight() {
+        let format = format_description::parse(
+            "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]:[offset_second]",
+        )
+        .unwrap();
+        let before_midnight =
+            OffsetDateTime::parse("2025-02-17 23:59:59 +00:00:00", &format).unwrap();
+        let after_midnight =
+            OffsetDateTime::parse("2025-02-18 00:00:01 +00:00:00", &format).unwrap();
+        let directory = tempfile::tempdir().expect("failed to create tempdir");
+        let (state, writer) = Inner::new(
+            before_midnight,
+            Rotation::DAILY,
+            directory.path(),
+            Some("daily.log".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut appender = RollingFileAppender {
+            state,
+            writer,
+            now: Box::new(move || before_midnight),
+        };
+
+        appender.write_all(b"before midnight\n").unwrap();
+        appender.now = Box::new(move || after_midnight);
+        appender.write_all(b"after midnight\n").unwrap();
+        appender.flush().unwrap();
+
+        let previous_day = directory.path().join("daily.log.2025-02-17");
+        let current_day = directory.path().join("daily.log.2025-02-18");
+        assert_eq!(
+            fs::read_to_string(previous_day).unwrap(),
+            "before midnight\n"
+        );
+        assert_eq!(fs::read_to_string(current_day).unwrap(), "after midnight\n");
+    }
+
+    #[test]
     fn write_weekly_log() {
         test_appender(Rotation::WEEKLY, "weekly.log");
     }
