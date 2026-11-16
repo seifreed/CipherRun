@@ -10,7 +10,7 @@ use crate::error::TlsError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -134,6 +134,7 @@ impl CtStreamer {
 
     /// Start streaming CT logs and deliver each parsed entry to an optional sink.
     pub async fn start_with_sink(&mut self, sink: Option<Arc<dyn CtEntrySink>>) -> Result<()> {
+        let started = Instant::now();
         info!(
             event_name = "ct_log.streaming.started",
             "Starting CT log streaming"
@@ -198,6 +199,17 @@ impl CtStreamer {
         // Get healthy sources
         let sources = self.source_manager.get_healthy_sources();
         if sources.is_empty() {
+            error!(
+                event_name = "ct_log.sources.unavailable",
+                operation = "start_streaming",
+                total_source_count = self.source_manager.total_sources(),
+                healthy_source_count = 0,
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "source_health",
+                error_code = "no_healthy_sources",
+                outcome = "failed",
+                "CT log streaming has no healthy sources"
+            );
             return Err(TlsError::ConfigError {
                 message: "No healthy CT log sources".to_string(),
             });
@@ -524,6 +536,46 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn no_healthy_sources_logs_safe_startup_failure() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let mut streamer = CtStreamer {
+            config: CtConfig::default(),
+            source_manager: SourceManager::new(),
+            stats: StatsTracker::new(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+        };
+
+        let result = streamer
+            .start_with_sink(None)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+        assert!(result.is_err());
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let event = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "ct_log.sources.unavailable")
+            .expect("source health failure should be logged");
+        assert_eq!(event["level"], "ERROR");
+        assert_eq!(event["fields"]["operation"], "start_streaming");
+        assert_eq!(event["fields"]["total_source_count"], 0);
+        assert_eq!(event["fields"]["healthy_source_count"], 0);
+        assert_eq!(event["fields"]["error_code"], "no_healthy_sources");
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("https://"));
     }
 
     #[tokio::test]
