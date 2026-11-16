@@ -77,7 +77,7 @@ pub struct AppState {
 pub struct ApiBackgroundTasks {
     shutdown: watch::Sender<bool>,
     executor: Arc<ScanExecutor>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Vec<(&'static str, JoinHandle<()>)>,
     stopped: bool,
 }
 
@@ -86,10 +86,32 @@ impl ApiBackgroundTasks {
         let executor_result = self.executor.shutdown().await;
         let _ = self.shutdown.send(true);
         self.stopped = true;
-        for task in self.tasks.drain(..) {
-            task.await.map_err(|_| {
-                crate::TlsError::Other("API background task failed during shutdown".to_string())
-            })?;
+        let mut task_failures = 0;
+        for (component, task) in self.tasks.drain(..) {
+            if let Err(error) = task.await {
+                task_failures += 1;
+                tracing::error!(
+                    event_name = "api_server.background_task.join_failed",
+                    component,
+                    error_type = if error.is_panic() {
+                        "panic"
+                    } else {
+                        "cancelled"
+                    },
+                    error_code = if error.is_panic() {
+                        "task_panicked"
+                    } else {
+                        "task_cancelled"
+                    },
+                    outcome = "shutdown_incomplete",
+                    "API background task failed during shutdown"
+                );
+            }
+        }
+        if task_failures > 0 {
+            return Err(crate::TlsError::Other(format!(
+                "{task_failures} API background task(s) failed during shutdown"
+            )));
         }
         executor_result
     }
@@ -613,7 +635,7 @@ impl AppState {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let mut tasks = Vec::with_capacity(3);
         let executor = self.executor.clone();
-        tasks.push(tokio::spawn(async move {
+        let scan_executor_task = tokio::spawn(async move {
             if let Err(error) = executor.start().await {
                 tracing::error!(
                     event_name = "scan_executor.stopped_unexpectedly",
@@ -622,11 +644,12 @@ impl AppState {
                     "Scan executor stopped unexpectedly"
                 );
             }
-        }));
+        });
+        tasks.push(("scan_executor", scan_executor_task));
 
         let job_queue = self.job_queue.clone();
         let mut queue_shutdown = shutdown_rx.clone();
-        tasks.push(tokio::spawn(async move {
+        let job_retention_task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 JOB_RETENTION_CLEANUP_INTERVAL_SECS,
             ));
@@ -659,7 +682,8 @@ impl AppState {
                     }
                 }
             }
-        }));
+        });
+        tasks.push(("job_retention_cleanup", job_retention_task));
 
         // Periodically evict stale rate-limiter entries. cleanup() is the only
         // mechanism that bounds the limiter's maps; without this sweeper they
@@ -667,7 +691,7 @@ impl AppState {
         // never freed) — a slow memory leak.
         let rate_limiter = self.rate_limiter.clone();
         let mut rate_limit_shutdown = shutdown_rx;
-        tasks.push(tokio::spawn(async move {
+        let rate_limit_cleanup_task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 RATE_LIMITER_CLEANUP_INTERVAL_SECS,
             ));
@@ -682,7 +706,8 @@ impl AppState {
                     _ = ticker.tick() => rate_limiter.cleanup(),
                 }
             }
-        }));
+        });
+        tasks.push(("rate_limiter_cleanup", rate_limit_cleanup_task));
 
         Ok(ApiBackgroundTasks {
             shutdown: shutdown_tx,
@@ -886,6 +911,85 @@ pub(crate) fn load_webhook_signing_secret(path: &std::path::Path) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_task_join_failure_is_logged_and_remaining_tasks_are_joined() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        #[derive(Clone)]
+        struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        struct CapturedOutputWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl Write for CapturedOutputWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+            type Writer = CapturedOutputWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                CapturedOutputWriter(self.0.clone())
+            }
+        }
+
+        let state = AppState::new(ApiConfig::default()).unwrap();
+        let executor = Arc::new(ScanExecutor::new(state.job_queue.clone(), 1));
+        let (shutdown, _shutdown_rx) = watch::channel(false);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let remaining_task_joined = Arc::new(AtomicBool::new(false));
+        let task_joined = remaining_task_joined.clone();
+        let (cancelled, remaining) = runtime.block_on(async move {
+            let cancelled = tokio::spawn(std::future::pending::<()>());
+            cancelled.abort();
+            let remaining = tokio::spawn(async move {
+                task_joined.store(true, Ordering::SeqCst);
+            });
+            (cancelled, remaining)
+        });
+        let background_tasks = ApiBackgroundTasks {
+            shutdown,
+            executor,
+            tasks: vec![
+                ("cancelled_test_task", cancelled),
+                ("remaining_test_task", remaining),
+            ],
+            stopped: false,
+        };
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(background_tasks.shutdown())
+        });
+
+        assert!(result.is_err());
+        assert!(remaining_task_joined.load(Ordering::SeqCst));
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "api_server.background_task.join_failed"
+        );
+        assert_eq!(event["fields"]["component"], "cancelled_test_task");
+        assert_eq!(event["fields"]["error_type"], "cancelled");
+        assert_eq!(event["fields"]["error_code"], "task_cancelled");
+        assert_eq!(event["fields"]["outcome"], "shutdown_incomplete");
+    }
 
     #[tokio::test]
     async fn local_background_tasks_stop_and_join() {
