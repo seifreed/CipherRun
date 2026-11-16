@@ -67,7 +67,9 @@ pub async fn get_stats_for_auth(
             (!is_admin).then_some(auth.tenant_id.as_deref()).flatten(),
         )
         .await
-        .map_err(|_| ApiError::Internal("Failed to load top domains".to_string()))?
+        .map_err(|error| {
+            ApiError::internal_with_diagnostic("query_top_domains", error.observability_code())
+        })?
     } else {
         vec![] // No database configured
     };

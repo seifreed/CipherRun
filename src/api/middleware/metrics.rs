@@ -56,6 +56,8 @@ pub async fn metrics(
         request_id = %request_id,
         http.method = %method,
         http.route = %path,
+        error_operation = tracing::field::Empty,
+        error_cause_code = tracing::field::Empty,
     );
     #[cfg(feature = "otel")]
     if let Some(parent) = remote_parent_context(request.headers())

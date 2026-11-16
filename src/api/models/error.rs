@@ -111,6 +111,16 @@ impl ApiError {
         self.metadata().1
     }
 
+    pub(crate) fn internal_with_diagnostic(
+        operation: &'static str,
+        cause_code: &'static str,
+    ) -> Self {
+        let span = tracing::Span::current();
+        span.record("error_operation", operation);
+        span.record("error_cause_code", cause_code);
+        Self::Internal("internal operation failed".to_string())
+    }
+
     fn response_message(&self) -> String {
         match self {
             Self::Internal(_) | Self::Database(_) | Self::Scanner(_) => {
@@ -316,16 +326,26 @@ mod tests {
             .with_writer(output.clone())
             .finish();
         let responses = tracing::subscriber::with_default(subscriber, || {
-            let request_span = tracing::info_span!(
-                "http.request",
-                request_id = "test-request-id",
-                http.route = "/api/v1/stats"
-            );
-            let _entered = request_span.enter();
             errors
                 .into_iter()
                 .chain([ApiError::BadRequest("invalid input".to_string())])
-                .map(ApiError::into_response)
+                .enumerate()
+                .map(|(index, error)| {
+                    let request_span = tracing::info_span!(
+                        "http.request",
+                        request_id = "test-request-id",
+                        http.route = "/api/v1/stats",
+                        error_operation = tracing::field::Empty,
+                        error_cause_code = tracing::field::Empty
+                    );
+                    let _entered = request_span.enter();
+                    let error = if index == 0 {
+                        ApiError::internal_with_diagnostic("query_top_domains", "database_error")
+                    } else {
+                        error
+                    };
+                    error.into_response()
+                })
                 .collect::<Vec<_>>()
         });
 
@@ -359,6 +379,11 @@ mod tests {
         assert_eq!(events[0]["fields"]["error_type"], "internal");
         assert_eq!(events[0]["spans"][0]["request_id"], "test-request-id");
         assert_eq!(events[0]["spans"][0]["http.route"], "/api/v1/stats");
+        assert_eq!(
+            events[0]["spans"][0]["error_operation"],
+            "query_top_domains"
+        );
+        assert_eq!(events[0]["spans"][0]["error_cause_code"], "database_error");
         assert_eq!(events[1]["fields"]["error_code"], "DATABASE_ERROR");
         assert_eq!(events[1]["fields"]["error_type"], "database");
         assert_eq!(events[2]["fields"]["error_code"], "SCANNER_ERROR");
