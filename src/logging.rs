@@ -371,9 +371,26 @@ fn start_drop_monitor(
                 Duration::from_secs(30),
                 |delta| report_dropped_log_lines(delta, json),
             )
-        })
-        .ok()?;
+        });
+    let monitor = match monitor {
+        Ok(monitor) => monitor,
+        Err(_) => {
+            report_drop_monitor_start_failure();
+            return None;
+        }
+    };
     Some((stop, monitor))
+}
+
+fn report_drop_monitor_start_failure() {
+    tracing::warn!(
+        event_name = "logging.drop_monitor.start_failed",
+        operation = "start_drop_monitor",
+        error_type = "thread_spawn",
+        error_code = "thread_spawn_failed",
+        outcome = "shutdown_counter_only",
+        "Could not start the log drop monitor"
+    );
 }
 
 fn join_drop_monitor(monitor: JoinHandle<usize>) -> usize {
@@ -498,7 +515,8 @@ mod tests {
     use super::{
         LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
         format_log_file_write_fallback_event, join_drop_monitor, json_logs_enabled,
-        monitor_dropped_log_lines, resolve_log_filter, rolling_log_file, write_to_destinations,
+        monitor_dropped_log_lines, report_drop_monitor_start_failure, resolve_log_filter,
+        rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -773,6 +791,31 @@ mod tests {
         );
         assert!(output.contains("drop_monitor_panicked"), "{output}");
         assert!(output.contains("final_count_may_repeat"), "{output}");
+    }
+
+    #[test]
+    fn drop_monitor_start_failure_is_logged_without_platform_details() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, report_drop_monitor_start_failure);
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "logging.drop_monitor.start_failed"
+        );
+        assert_eq!(event["fields"]["operation"], "start_drop_monitor");
+        assert_eq!(event["fields"]["error_type"], "thread_spawn");
+        assert_eq!(event["fields"]["error_code"], "thread_spawn_failed");
+        assert_eq!(event["fields"]["outcome"], "shutdown_counter_only");
+        assert!(!output.contains("os error"));
     }
 
     #[test]

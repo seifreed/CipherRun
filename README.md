@@ -262,6 +262,8 @@ terminal control sequences; JSON output uses JSON escaping.
 Log writes use a bounded background writer and flush on process shutdown. If its
 queue fills, low-priority log events may be dropped rather than blocking scans;
 the writer guard remains alive for the full command/worker lifetime.
+If the drop-monitor thread cannot start, initialization emits a warning and
+the accumulated drop count is still reported during shutdown.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.
