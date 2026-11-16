@@ -130,7 +130,14 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
             #[cfg(feature = "api")]
             {
                 use cipherrun::api::ApiConfig;
-                let token_path = ApiConfig::create_example(config_path)?;
+                let started = std::time::Instant::now();
+                let result = ApiConfig::create_example(config_path);
+                command_failure_logged |= log_cli_operation(
+                    "create_api_config_example",
+                    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    &result,
+                );
+                let token_path = result?;
                 println!(
                     "✓ Example API configuration saved to: {}",
                     config_path.display()
@@ -173,7 +180,14 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         // Handle --db-config-example (generate example config and exit)
         if let Some(config_path) = &args.database.config_example {
             use cipherrun::db::DatabaseConfig;
-            DatabaseConfig::create_example_config(config_path)?;
+            let started = std::time::Instant::now();
+            let result = DatabaseConfig::create_example_config(config_path);
+            command_failure_logged |= log_cli_operation(
+                "create_database_config_example",
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                &result,
+            );
+            result?;
             println!(
                 "✓ Example database configuration saved to: {}",
                 config_path.display()
@@ -262,6 +276,37 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         );
     }
     result
+}
+
+fn log_cli_operation<T>(
+    operation: &'static str,
+    duration_ms: u64,
+    result: &cipherrun::Result<T>,
+) -> bool {
+    match result {
+        Ok(_) => {
+            info!(
+                event_name = "cli.operation.completed",
+                operation,
+                duration_ms,
+                outcome = "success",
+                "CLI operation completed"
+            );
+            false
+        }
+        Err(error) => {
+            tracing::error!(
+                event_name = "cli.operation.failed",
+                operation,
+                duration_ms,
+                error_type = "TlsError",
+                error_code = error.observability_code(),
+                outcome = "error",
+                "CLI operation failed"
+            );
+            true
+        }
+    }
 }
 
 async fn run_starttls_only(args: &Args) -> cipherrun::Result<CommandExit> {

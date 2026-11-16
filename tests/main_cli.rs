@@ -176,6 +176,8 @@ fn test_main_api_config_example() {
     let output = Command::new(exe)
         .arg("--api-config-example")
         .arg(&config_path)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
         .output()
         .expect("binary should run");
 
@@ -183,6 +185,24 @@ fn test_main_api_config_example() {
     assert!(config_path.exists());
     let contents = std::fs::read_to_string(&config_path).expect("test assertion should succeed");
     assert!(contents.contains("host ="));
+    let token_path = config_path.with_extension("token");
+    let token = std::fs::read_to_string(token_path).expect("bootstrap token should be written");
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let completed = events
+        .iter()
+        .find(|event| {
+            event["fields"]["event_name"] == "cli.operation.completed"
+                && event["fields"]["operation"] == "create_api_config_example"
+        })
+        .expect("API config generation should have a completion event");
+    assert_eq!(completed["level"], "INFO");
+    assert!(completed["fields"]["duration_ms"].is_number());
+    assert!(!stderr.contains(&dir.path().display().to_string()));
+    assert!(!stderr.contains(&token));
 }
 
 #[test]
@@ -194,6 +214,8 @@ fn test_main_db_config_example() {
     let output = Command::new(exe)
         .arg("--db-config-example")
         .arg(&config_path)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
         .output()
         .expect("binary should run");
 
@@ -202,6 +224,67 @@ fn test_main_db_config_example() {
     let contents = std::fs::read_to_string(&config_path).expect("test assertion should succeed");
     assert!(contents.contains("[database]"));
     assert!(contents.contains("type ="));
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let completed = events
+        .iter()
+        .find(|event| {
+            event["fields"]["event_name"] == "cli.operation.completed"
+                && event["fields"]["operation"] == "create_database_config_example"
+        })
+        .expect("database config generation should have a completion event");
+    assert_eq!(completed["level"], "INFO");
+    assert!(completed["fields"]["duration_ms"].is_number());
+    assert!(!stderr.contains(&dir.path().display().to_string()));
+    assert!(!stderr.contains("secure_password"));
+}
+
+#[test]
+fn api_config_example_write_failure_is_logged_once_without_paths_or_secrets() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let directory = tempdir().expect("temporary directory should be created");
+    let config_path = directory.path().join("api-config.toml");
+    std::fs::write(&config_path, "existing credentials")
+        .expect("existing config should be written");
+
+    let output = Command::new(exe)
+        .arg("--api-config-example")
+        .arg(&config_path)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let failed = events
+        .iter()
+        .find(|event| {
+            event["fields"]["event_name"] == "cli.operation.failed"
+                && event["fields"]["operation"] == "create_api_config_example"
+        })
+        .expect("API config write failure should have an operation event");
+    assert_eq!(failed["level"], "ERROR");
+    assert_eq!(failed["fields"]["outcome"], "error");
+    assert!(failed["fields"]["error_code"].is_string());
+    assert!(failed["fields"]["duration_ms"].is_number());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["fields"]["event_name"] == "cli.operation.failed")
+            .count(),
+        1
+    );
+    assert!(!stderr.contains("cli.failed"));
+    assert!(!stderr.contains(&directory.path().display().to_string()));
+    assert!(!stderr.contains("bootstrap-admin"));
 }
 
 #[test]
