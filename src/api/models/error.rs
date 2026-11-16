@@ -316,6 +316,12 @@ mod tests {
             .with_writer(output.clone())
             .finish();
         let responses = tracing::subscriber::with_default(subscriber, || {
+            let request_span = tracing::info_span!(
+                "http.request",
+                request_id = "test-request-id",
+                http.route = "/api/v1/stats"
+            );
+            let _entered = request_span.enter();
             errors
                 .into_iter()
                 .chain([ApiError::BadRequest("invalid input".to_string())])
@@ -351,6 +357,8 @@ mod tests {
         assert_eq!(events[0]["level"], "ERROR");
         assert_eq!(events[0]["fields"]["error_code"], "INTERNAL_ERROR");
         assert_eq!(events[0]["fields"]["error_type"], "internal");
+        assert_eq!(events[0]["spans"][0]["request_id"], "test-request-id");
+        assert_eq!(events[0]["spans"][0]["http.route"], "/api/v1/stats");
         assert_eq!(events[1]["fields"]["error_code"], "DATABASE_ERROR");
         assert_eq!(events[1]["fields"]["error_type"], "database");
         assert_eq!(events[2]["fields"]["error_code"], "SCANNER_ERROR");
