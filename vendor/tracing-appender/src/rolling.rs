@@ -653,54 +653,52 @@ impl Inner {
     }
 
     fn prune_old_logs(&self, max_files: usize) {
-        let files = fs::read_dir(&self.log_directory).map(|dir| {
-            dir.filter_map(|entry| {
-                let entry = entry.ok()?;
-                let metadata = entry.metadata().ok()?;
+        let mut files = match fs::read_dir(&self.log_directory) {
+            Ok(directory) => directory
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let metadata = entry.metadata().ok()?;
 
-                // the appender only creates files, not directories or symlinks,
-                // so we should never delete a dir or symlink.
-                if !metadata.is_file() {
-                    return None;
-                }
-
-                let filename = entry.file_name();
-                // if the filename is not a UTF-8 string, skip it.
-                let filename = filename.to_str()?;
-                if let Some(prefix) = &self.log_filename_prefix {
-                    if !filename.starts_with(prefix) {
+                    // the appender only creates files, not directories or symlinks,
+                    // so we should never delete a dir or symlink.
+                    if !metadata.is_file() {
                         return None;
                     }
-                }
 
-                if let Some(suffix) = &self.log_filename_suffix {
-                    if !filename.ends_with(suffix) {
+                    let filename = entry.file_name();
+                    // if the filename is not a UTF-8 string, skip it.
+                    let filename = filename.to_str()?;
+                    if let Some(prefix) = &self.log_filename_prefix {
+                        if !filename.starts_with(prefix) {
+                            return None;
+                        }
+                    }
+
+                    if let Some(suffix) = &self.log_filename_suffix {
+                        if !filename.ends_with(suffix) {
+                            return None;
+                        }
+                    }
+
+                    if self.log_filename_prefix.is_none()
+                        && self.log_filename_suffix.is_none()
+                        && Date::parse(filename, &self.date_format).is_err()
+                    {
                         return None;
                     }
-                }
 
-                if self.log_filename_prefix.is_none()
-                    && self.log_filename_suffix.is_none()
-                    && Date::parse(filename, &self.date_format).is_err()
-                {
-                    return None;
-                }
-
-                let created = metadata.created().ok().or_else(|| {
-                    parse_date_from_filename(
-                        filename,
-                        &self.date_format,
-                        self.log_filename_prefix.as_deref(),
-                        self.log_filename_suffix.as_deref(),
-                    )
-                })?;
-                Some((entry, created))
-            })
-            .collect::<Vec<_>>()
-        });
-
-        let mut files = match files {
-            Ok(files) => files,
+                    let created = metadata.created().ok().or_else(|| {
+                        parse_date_from_filename(
+                            filename,
+                            &self.date_format,
+                            self.log_filename_prefix.as_deref(),
+                            self.log_filename_suffix.as_deref(),
+                        )
+                    })?;
+                    Some((entry, created))
+                })
+                .collect::<Vec<_>>(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return,
             Err(_) => {
                 crate::report_internal_error(
                     "logging.file_retention.list_failed",
@@ -857,6 +855,31 @@ mod test {
     use super::*;
     use std::fs;
     use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn find_str_in_log(dir_path: &Path, expected_value: &str) -> bool {
         let dir_contents = fs::read_dir(dir_path).expect("Failed to read directory");
@@ -907,6 +930,28 @@ mod test {
     #[test]
     fn write_daily_log() {
         test_appender(Rotation::DAILY, "daily.log");
+    }
+
+    #[test]
+    fn missing_log_directory_is_not_reported_as_retention_failure() {
+        let directory = tempfile::tempdir().expect("failed to create tempdir");
+        let log_directory = directory.path().join("new-log-directory");
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            RollingFileAppender::builder()
+                .rotation(Rotation::DAILY)
+                .max_log_files(7)
+                .build(&log_directory)
+                .expect("new log directory should be created");
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("logging.file_retention.list_failed"));
+        assert!(log_directory.is_dir());
     }
 
     #[test]

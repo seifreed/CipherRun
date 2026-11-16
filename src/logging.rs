@@ -779,14 +779,21 @@ mod tests {
         monitor.join().unwrap();
 
         let log_directory = directory.path().join(".soak.jsonl.d");
-        let written = std::fs::read_dir(log_directory)
-            .unwrap()
-            .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
-            .map(|bytes| bytes.iter().filter(|byte| **byte == b'\n').count())
-            .sum::<usize>();
         let attempted = attempted.load(Ordering::Relaxed);
         let dropped = dropped_lines.dropped_lines();
         let reported = reported_rx.iter().sum::<usize>();
+        let drain_deadline = Instant::now() + Duration::from_secs(30);
+        let written = loop {
+            let written = std::fs::read_dir(&log_directory)
+                .unwrap()
+                .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+                .map(|bytes| bytes.iter().filter(|byte| **byte == b'\n').count())
+                .sum::<usize>();
+            if written + dropped >= attempted || Instant::now() >= drain_deadline {
+                break written;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert_eq!(attempted, written + dropped);
         assert_eq!(dropped, reported);
         assert!(written > 0);

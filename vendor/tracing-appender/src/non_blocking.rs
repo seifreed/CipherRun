@@ -277,6 +277,13 @@ impl WorkerGuard {
             shutdown,
         }
     }
+
+    fn wait_for_worker_flush(&self, timeout: Duration) -> bool {
+        matches!(
+            self.shutdown.send_timeout((), timeout),
+            Err(SendTimeoutError::Timeout(_))
+        )
+    }
 }
 
 impl Drop for WorkerGuard {
@@ -290,7 +297,15 @@ impl Drop for WorkerGuard {
                 // when the `Worker` calls `recv()` on a zero-capacity channel. Use `send_timeout`
                 // so that drop is not blocked indefinitely.
                 // TODO: Make timeout configurable.
-                let _ = self.shutdown.send_timeout((), Duration::from_millis(1000));
+                if self.wait_for_worker_flush(Duration::from_millis(1000)) {
+                    crate::report_internal_error(
+                        "logging.worker.shutdown_timeout",
+                        "wait_for_worker_flush",
+                        "worker",
+                        "shutdown_timeout",
+                        "worker_may_not_flush",
+                    );
+                }
             }
             Err(SendTimeoutError::Disconnected(_)) => (),
             Err(SendTimeoutError::Timeout(_)) => crate::report_internal_error(
@@ -347,6 +362,23 @@ mod test {
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn worker_flush_timeout_is_detected() {
+        let (sender, _receiver) = bounded(1);
+        let (shutdown, shutdown_receiver) = bounded(0);
+        let guard = WorkerGuard {
+            _guard: None,
+            sender,
+            shutdown,
+        };
+
+        assert!(guard.wait_for_worker_flush(Duration::ZERO));
+
+        let worker = thread::spawn(move || shutdown_receiver.recv().unwrap());
+        drop(guard);
+        worker.join().unwrap();
+    }
 
     struct MockWriter {
         tx: mpsc::SyncSender<String>,
