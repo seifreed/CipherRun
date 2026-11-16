@@ -58,7 +58,7 @@ where
         .build()
         .map_err(|_| crate::TlsError::Other("Failed to build OTLP exporter".to_string()))?;
     let provider = SdkTracerProvider::builder()
-        .with_resource(telemetry_resource())
+        .with_resource(telemetry_resource(std::env::var("OTEL_SERVICE_NAME").ok()))
         .with_batch_exporter(exporter)
         .build();
     global::set_tracer_provider(provider.clone());
@@ -69,8 +69,11 @@ where
     ))
 }
 
-fn telemetry_resource() -> Resource {
-    Resource::builder().with_service_name("cipherrun").build()
+fn telemetry_resource(service_name: Option<String>) -> Resource {
+    let service_name = service_name
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "cipherrun".to_string());
+    Resource::builder().with_service_name(service_name).build()
 }
 
 #[cfg(test)]
@@ -86,11 +89,30 @@ mod tests {
 
     #[test]
     fn resource_identifies_the_service() {
-        let resource = telemetry_resource();
-        assert!(
+        let resource = telemetry_resource(None);
+        assert_eq!(
             resource
                 .get(&Key::from_static_str("service.name"))
-                .is_some()
+                .map(|value| value.as_str().into_owned()),
+            Some("cipherrun".to_string())
+        );
+        let empty_name = telemetry_resource(Some(String::new()));
+        assert_eq!(
+            empty_name
+                .get(&Key::from_static_str("service.name"))
+                .map(|value| value.as_str().into_owned()),
+            Some("cipherrun".to_string())
+        );
+    }
+
+    #[test]
+    fn configured_service_name_overrides_default_without_mutating_environment() {
+        let resource = telemetry_resource(Some("cipherrun-production".to_string()));
+        assert_eq!(
+            resource
+                .get(&Key::from_static_str("service.name"))
+                .map(|value| value.as_str().into_owned()),
+            Some("cipherrun-production".to_string())
         );
     }
 
