@@ -41,6 +41,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
             Some,
         )
     });
+    let file_destination_enabled = file.is_some();
     let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .lossy(true)
         .finish(LogWriter {
@@ -119,6 +120,15 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     }
 
     let drop_monitor = start_drop_monitor(dropped_log_lines.clone(), json);
+    tracing::info!(
+        event_name = "logging.subscriber.initialized",
+        operation = "initialize",
+        outcome = "started",
+        format = if json { "json" } else { "text" },
+        file_destination_enabled,
+        drop_monitor_enabled = drop_monitor.is_some(),
+        "Tracing subscriber initialized"
+    );
     Ok(LoggingGuard {
         writer_guard: Some(writer_guard),
         dropped_log_lines: Some(dropped_log_lines),
@@ -140,6 +150,15 @@ pub struct LoggingGuard {
 
 impl Drop for LoggingGuard {
     fn drop(&mut self) {
+        if self.writer_guard.is_some() {
+            tracing::info!(
+                event_name = "logging.subscriber.shutdown",
+                operation = "flush",
+                outcome = "flush_requested",
+                "Flushing tracing subscriber during shutdown"
+            );
+        }
+
         #[cfg(feature = "otel")]
         if let Some(provider) = &self.tracer_provider
             && provider.shutdown().is_err()

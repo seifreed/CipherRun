@@ -16,6 +16,42 @@ fn test_main_version_output() {
 }
 
 #[test]
+fn logger_lifecycle_events_stay_on_stderr() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let output = Command::new(exe)
+        .arg("--version")
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("CLI output should be UTF-8");
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    assert!(stdout.contains("CipherRun v"));
+    assert!(!stdout.contains("logging.subscriber."));
+
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let initialized = events
+        .iter()
+        .find(|event| event["fields"]["event_name"] == "logging.subscriber.initialized")
+        .expect("subscriber initialization should be observable");
+    assert_eq!(initialized["level"], "INFO");
+    assert_eq!(initialized["fields"]["outcome"], "started");
+    assert_eq!(initialized["fields"]["format"], "json");
+
+    let shutdown = events
+        .iter()
+        .find(|event| event["fields"]["event_name"] == "logging.subscriber.shutdown")
+        .expect("subscriber shutdown should be observable");
+    assert_eq!(shutdown["level"], "INFO");
+    assert_eq!(shutdown["fields"]["outcome"], "flush_requested");
+}
+
+#[test]
 fn test_main_list_compliance_output() {
     let exe = env!("CARGO_BIN_EXE_cipherrun");
     let output = Command::new(exe)
