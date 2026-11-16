@@ -39,3 +39,7 @@ The MCP server returns "not initialized." Ask the user: *"I notice this project 
 ## README upkeep
 
 Keep each project's README aligned with every functional advancement. Update it in the same change as the code, tests, and support evidence; describe user-visible behavior and support limits accurately, and do not promote bounded evidence into a broader support claim.
+
+## Main-only publishing
+
+For r2morph, integrate work into `main` and push only `main` (`git push origin main`). Never force-push. Before deleting a branch, verify its commits are reachable from `main`; remove integrated work branches after publishing.
