@@ -368,13 +368,33 @@ fn test_parse_nslookup_output_trims_dot_and_spaces() {
 
 #[tokio::test]
 async fn test_query_mx_records_rejects_invalid_domain_before_lookup() {
+    use tracing::instrument::WithSubscriber;
+
     let tester = MxTester::new("example.com/path".to_string());
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(CapturedLog(output.clone()))
+        .finish();
 
     let err = tester
         .query_mx_records()
+        .with_subscriber(tracing::Dispatch::new(subscriber))
         .await
         .expect_err("invalid MX domain should fail before lookup");
     assert!(err.to_string().contains("Invalid MX domain"));
+
+    let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+    assert_eq!(event["level"], "WARN");
+    assert_eq!(event["fields"]["event_name"], "dns.mx.lookup.failed");
+    assert_eq!(event["fields"]["operation"], "query_mx_records");
+    assert_eq!(event["fields"]["error_type"], "mx_lookup");
+    assert_eq!(event["fields"]["error_code"], "invalid_input");
+    assert_eq!(event["fields"]["outcome"], "failed");
+    assert!(event["fields"]["duration_ms"].is_number());
+    assert!(!output.contains("example.com/path"));
 }
 
 #[test]

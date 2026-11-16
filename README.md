@@ -273,6 +273,8 @@ When idle, a shutdown request wakes the scheduler immediately instead of waiting
 for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
+MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
+and a stable error code; resolver output and domain names stay out of that event.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.

@@ -47,6 +47,22 @@ impl MxTester {
     /// Query MX records for the domain
     pub async fn query_mx_records(&self) -> Result<Vec<MxRecord>> {
         let started = Instant::now();
+        let result = self.query_mx_records_inner(started).await;
+        if let Err(error) = &result {
+            warn!(
+                event_name = "dns.mx.lookup.failed",
+                operation = "query_mx_records",
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "mx_lookup",
+                error_code = error.observability_code(),
+                outcome = "failed",
+                "MX record lookup failed"
+            );
+        }
+        result
+    }
+
+    async fn query_mx_records_inner(&self, started: Instant) -> Result<Vec<MxRecord>> {
         crate::security::validate_hostname(&self.domain).map_err(|error| {
             crate::error::TlsError::InvalidInput {
                 message: format!("Invalid MX domain: {error}"),
