@@ -487,8 +487,17 @@ impl Clone for PerKeyRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::ApiConfig;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
     use std::io::Write;
     use std::sync::Mutex;
+    use tower::ServiceExt;
     use tracing_subscriber::fmt::MakeWriter;
 
     #[derive(Clone)]
@@ -578,6 +587,47 @@ mod tests {
         assert!(!logs.contains("secret-key-id"));
         assert!(!logs.contains("secret-principal-id"));
         assert!(!logs.contains("secret-tenant-id"));
+    }
+
+    #[test]
+    fn stream_ticket_bypass_is_debug_logged_without_ticket_data() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(output.clone())
+            .finish();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+
+        let response = tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(async {
+                let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+                let app = Router::new()
+                    .route("/api/v1/scan/{id}/stream", get(|| async { StatusCode::OK }))
+                    .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
+                    .with_state(state);
+
+                app.oneshot(
+                    Request::builder()
+                        .uri("/api/v1/scan/scan-id/stream?ticket=secret-ticket")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            })
+        });
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("api.rate_limit.stream_ticket"), "{logs}");
+        assert!(logs.contains("DEBUG"), "{logs}");
+        assert!(!logs.contains("secret-ticket"), "{logs}");
+        assert!(!logs.contains("api.rate_limit.auth_missing"), "{logs}");
     }
 
     #[test]
