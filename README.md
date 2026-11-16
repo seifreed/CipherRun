@@ -256,6 +256,8 @@ filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
 DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
 per-target debug noise during bulk scans.
+OpenSSL certificate-fetch events retain the active scan-phase span while the
+blocking subprocess runs on Tokio's worker pool.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
 default. This setting applies to both the CLI and standalone worker.
 Text output escapes control characters in event fields and messages so

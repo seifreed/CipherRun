@@ -132,11 +132,15 @@ impl CertificatePhase {
         // block a tokio worker (and `s_client` has no effective TCP handshake
         // timeout, so a slow/black-holed host can stall it for minutes). Offload
         // to a blocking thread, matching the logjam weak-DH probe.
-        let result = tokio::task::spawn_blocking(move || openssl.run(&options))
-            .await
-            .map_err(|e| {
-                crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
-            })??;
+        let span = tracing::Span::current();
+        let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
+        let result = tokio::task::spawn_blocking(move || {
+            tracing::dispatcher::with_default(&dispatch, || span.in_scope(|| openssl.run(&options)))
+        })
+        .await
+        .map_err(|e| {
+            crate::TlsError::Other(format!("openssl certificate fetch task failed: {e}"))
+        })??;
         if !result.success && !has_pem_certificates(&result.stdout) {
             let error_output = if result.stderr.trim().is_empty() {
                 result.stdout.trim()
@@ -379,8 +383,93 @@ fn has_pem_certificates(output: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_support::example_com_loopback_target;
+    use crate::utils::test_support::{example_com_loopback_target, example_com_target};
     use std::sync::Arc;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn openssl_subprocess_event_keeps_certificate_phase_span() {
+        use std::{
+            fs,
+            io::Write,
+            os::unix::fs::PermissionsExt,
+            sync::{Arc, Mutex},
+        };
+        use tracing::{Instrument, instrument::WithSubscriber};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("temporary directory should be created");
+        let openssl = dir.path().join("openssl");
+        fs::write(&openssl, "#!/bin/sh\nexit 7\n").expect("script should be written");
+        let mut permissions = fs::metadata(&openssl)
+            .expect("script metadata should be available")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&openssl, permissions).expect("script should be executable");
+
+        let mut args = ScanRequest::default();
+        args.tls.openssl_path = Some(openssl);
+        let context = ScanContext::new(example_com_target(), Arc::new(args), None, None);
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_span_list(true)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(output.clone())
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let span = tracing::dispatcher::with_default(&dispatch, || {
+            tracing::info_span!("scan.phase", phase = "certificate")
+        });
+
+        let result = CertificatePhase::new()
+            .parse_certificate_chain_with_openssl(&context)
+            .instrument(span)
+            .with_subscriber(dispatch)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "nonzero OpenSSL exit should fail certificate fetch"
+        );
+        let output = String::from_utf8(output.0.lock().unwrap().clone())
+            .expect("JSON output should be UTF-8");
+        let event: serde_json::Value =
+            serde_json::from_str(output.trim()).expect("event should be valid JSON");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "subprocess.openssl.s_client.completed"
+        );
+        assert_eq!(
+            event["spans"][0]["name"], "scan.phase",
+            "captured event: {event}"
+        );
+        assert_eq!(event["spans"][0]["phase"], "certificate");
+        assert!(!output.contains("93.184.216.34"));
+    }
 
     #[test]
     fn test_certificate_phase_should_run() {
