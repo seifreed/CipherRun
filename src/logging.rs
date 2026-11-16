@@ -502,7 +502,7 @@ mod tests {
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::{Duration, Instant};
     use tracing_subscriber::fmt::MakeWriter;
 
@@ -848,6 +848,84 @@ mod tests {
         assert_eq!(
             output.iter().filter(|byte| **byte == b'\n').count(),
             PRODUCERS * EVENTS_PER_PRODUCER
+        );
+    }
+
+    #[test]
+    #[ignore = "manual 30-second paced 1,000 events/s logging load validation"]
+    fn rolling_file_writer_handles_paced_production_rate_without_loss() {
+        const PRODUCERS: usize = 8;
+        const EVENTS_PER_PRODUCER: usize = 3_750;
+        const INTERVAL: Duration = Duration::from_millis(8);
+
+        let directory = tempfile::tempdir().unwrap();
+        let logfile = directory.path().join("paced.jsonl");
+        let file = rolling_log_file(&logfile).unwrap();
+        let (writer, worker_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .lossy(true)
+            .finish(file);
+        let dropped_lines = writer.error_counter();
+        let subscriber = tracing_subscriber::fmt()
+            .event_format(SafeTextFormat::default())
+            .with_writer(writer)
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let start_gate = Arc::new(Barrier::new(PRODUCERS));
+        let started = Instant::now();
+        let producers = (0..PRODUCERS)
+            .map(|producer| {
+                let dispatch = dispatch.clone();
+                let start_gate = start_gate.clone();
+                std::thread::spawn(move || {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        start_gate.wait();
+                        let began = Instant::now();
+                        let mut latencies = Vec::with_capacity(EVENTS_PER_PRODUCER);
+                        for event in 0..EVENTS_PER_PRODUCER {
+                            let scheduled = began + INTERVAL * event as u32;
+                            if let Some(delay) = scheduled.checked_duration_since(Instant::now()) {
+                                std::thread::sleep(delay);
+                            }
+                            let emitted = Instant::now();
+                            tracing::info!(
+                                event_name = "logging.load.paced",
+                                producer,
+                                event,
+                                "paced load event"
+                            );
+                            latencies.push(emitted.elapsed().as_nanos());
+                        }
+                        latencies
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut latencies = producers
+            .into_iter()
+            .flat_map(|producer| producer.join().unwrap())
+            .collect::<Vec<_>>();
+        drop(dispatch);
+        drop(worker_guard);
+
+        let attempted = PRODUCERS * EVENTS_PER_PRODUCER;
+        let dropped = dropped_lines.dropped_lines();
+        let log_directory = directory.path().join(".paced.jsonl.d");
+        let written = std::fs::read_dir(log_directory)
+            .unwrap()
+            .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+            .map(|bytes| bytes.iter().filter(|byte| **byte == b'\n').count())
+            .sum::<usize>();
+        let elapsed_ms = started.elapsed().as_millis().max(1);
+        latencies.sort_unstable();
+        let p50_us = latencies[latencies.len() / 2] / 1_000;
+        let p99_us = latencies[latencies.len() * 99 / 100] / 1_000;
+
+        assert_eq!(dropped, 0);
+        assert_eq!(written, attempted);
+        eprintln!(
+            "paced logging load: attempted={attempted}, written={written}, dropped={dropped}, events_per_second={}, emit_p50_us={p50_us}, emit_p99_us={p99_us}",
+            attempted as u128 * 1_000 / elapsed_ms
         );
     }
 
