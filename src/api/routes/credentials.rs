@@ -75,7 +75,7 @@ fn map_store_error(error: crate::TlsError) -> ApiError {
     match error {
         crate::TlsError::InvalidInput { message } => ApiError::BadRequest(message),
         crate::TlsError::ConfigError { message } => ApiError::Conflict(message),
-        other => ApiError::Internal(other.to_string()),
+        other => ApiError::internal_with_diagnostic("credential_store", other.observability_code()),
     }
 }
 

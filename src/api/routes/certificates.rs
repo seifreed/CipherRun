@@ -89,7 +89,9 @@ fn present_inventory_record(
             hostnames: record.hostnames,
         },
     )
-    .map_err(|e| ApiError::Internal(e.to_string()))
+    .map_err(|_| {
+        ApiError::internal_with_diagnostic("present_certificate", "certificate_presentation_error")
+    })
 }
 
 fn validate_certificate_fingerprint(fingerprint: &str) -> Result<(), ApiError> {

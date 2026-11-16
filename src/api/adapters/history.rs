@@ -12,10 +12,12 @@ pub async fn load_scan_history(
 }
 
 pub fn history_service_from_state(state: &AppState) -> Result<ScanHistoryService<'_>, ApiError> {
-    let db_pool = state
-        .db_pool
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Database not configured".to_string()))?;
+    let db_pool = state.db_pool.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable_with_diagnostic(
+            "load_scan_history",
+            "database_not_configured",
+        )
+    })?;
 
     Ok(ScanHistoryService::new(db_pool))
 }

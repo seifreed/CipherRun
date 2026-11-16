@@ -29,10 +29,12 @@ pub(super) struct PolicyOwner {
 }
 
 pub(super) fn policy_dir_from_state(state: &AppState) -> Result<&PathBuf, ApiError> {
-    state
-        .policy_dir
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Policy storage not configured".to_string()))
+    state.policy_dir.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable_with_diagnostic(
+            "load_policy_storage",
+            "policy_storage_not_configured",
+        )
+    })
 }
 
 pub(super) fn sanitized_policy_path(policy_dir: &Path, id: &str) -> Result<PathBuf, ApiError> {
@@ -96,8 +98,9 @@ pub(super) fn build_policy_content_with_owner(
 }
 
 pub(super) fn read_policy_owner(policy_path: &Path) -> Result<Option<PolicyOwner>, ApiError> {
-    let metadata = fs::metadata(policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
+    let metadata = fs::metadata(policy_path).map_err(|_| {
+        ApiError::internal_with_diagnostic("read_policy_metadata", "filesystem_error")
+    })?;
     if metadata.len() > MAX_STORED_POLICY_BYTES {
         return Err(ApiError::BadRequest(format!(
             "Policy file is too large: {} bytes (max {})",
@@ -106,7 +109,7 @@ pub(super) fn read_policy_owner(policy_path: &Path) -> Result<Option<PolicyOwner
         )));
     }
     let content = fs::read_to_string(policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
+        .map_err(|_| ApiError::internal_with_diagnostic("read_policy_file", "filesystem_error"))?;
     let principal_id = content.lines().find_map(|line| {
         line.strip_prefix("# Principal: ")
             .map(str::trim)
@@ -152,8 +155,11 @@ pub(super) fn parse_policy_file_content(
             }
         } else if in_metadata && line.starts_with("# Created: ") {
             let date_str = line.trim_start_matches("# Created: ");
-            let dt = chrono::DateTime::parse_from_rfc3339(date_str).map_err(|error| {
-                ApiError::Internal(format!("Invalid policy Created metadata: {error}"))
+            let dt = chrono::DateTime::parse_from_rfc3339(date_str).map_err(|_| {
+                ApiError::internal_with_diagnostic(
+                    "parse_policy_metadata",
+                    "invalid_policy_timestamp",
+                )
             })?;
             created_at = dt.with_timezone(&Utc);
         } else if in_metadata && line.starts_with("# Enabled: ") {
@@ -178,8 +184,9 @@ pub(super) fn read_policy_with_metadata(
     policy_path: &Path,
     fallback_id: String,
 ) -> Result<PolicyMetadata, ApiError> {
-    let metadata = fs::metadata(policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to get policy metadata: {}", e)))?;
+    let metadata = fs::metadata(policy_path).map_err(|_| {
+        ApiError::internal_with_diagnostic("read_policy_metadata", "filesystem_error")
+    })?;
     let size = metadata.len();
     if size > MAX_STORED_POLICY_BYTES {
         return Err(ApiError::BadRequest(format!(
@@ -189,13 +196,13 @@ pub(super) fn read_policy_with_metadata(
     }
 
     let content = fs::read_to_string(policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to read policy file: {}", e)))?;
+        .map_err(|_| ApiError::internal_with_diagnostic("read_policy_file", "filesystem_error"))?;
     let (name, description, created_at, enabled, rules_content) =
         parse_policy_file_content(fallback_id, &content)?;
 
-    let modified = metadata
-        .modified()
-        .map_err(|e| ApiError::Internal(format!("Failed to get policy modified time: {}", e)))?;
+    let modified = metadata.modified().map_err(|_| {
+        ApiError::internal_with_diagnostic("read_policy_modified_time", "filesystem_error")
+    })?;
     let updated_at: chrono::DateTime<Utc> = modified.into();
 
     Ok((

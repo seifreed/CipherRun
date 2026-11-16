@@ -76,8 +76,12 @@ impl ComplianceResponseFormat {
             Self::Csv => Ok((
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/csv; charset=utf-8")],
-                Reporter::to_csv(report)
-                    .map_err(|e| ApiError::Internal(format!("Failed to render CSV: {}", e)))?,
+                Reporter::to_csv(report).map_err(|_| {
+                    ApiError::internal_with_diagnostic(
+                        "render_compliance_csv",
+                        "serialization_error",
+                    )
+                })?,
             )
                 .into_response()),
         }

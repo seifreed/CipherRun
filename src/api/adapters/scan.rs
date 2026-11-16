@@ -5,7 +5,10 @@ use crate::api::models::error::ApiError;
 pub async fn enqueue_scan(queue: &dyn JobQueue, job: ScanJob) -> Result<String, ApiError> {
     queue.enqueue(job).await.map_err(|error| match error {
         crate::TlsError::InvalidInput { message } => ApiError::Conflict(message),
-        other => ApiError::ServiceUnavailable(format!("Failed to queue scan: {other}")),
+        other => ApiError::service_unavailable_with_diagnostic(
+            "enqueue_scan",
+            other.observability_code(),
+        ),
     })
 }
 
@@ -14,6 +17,8 @@ pub async fn get_scan(queue: &dyn JobQueue, id: &str) -> Result<ScanJob, ApiErro
     queue
         .get_job(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(|error| {
+            ApiError::internal_with_diagnostic("get_scan_job", error.observability_code())
+        })?
         .ok_or_else(|| ApiError::NotFound(format!("Scan {} not found", id)))
 }

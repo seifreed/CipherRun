@@ -43,10 +43,12 @@ pub async fn load_inventory_record_for_owner(
 pub fn inventory_service_from_state(
     state: &AppState,
 ) -> Result<CertificateInventoryService<'_>, ApiError> {
-    let db_pool = state
-        .db_pool
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Database not configured".to_string()))?;
+    let db_pool = state.db_pool.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable_with_diagnostic(
+            "load_certificate_inventory",
+            "database_not_configured",
+        )
+    })?;
 
     Ok(CertificateInventoryService::new(db_pool))
 }

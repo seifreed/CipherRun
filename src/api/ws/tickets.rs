@@ -51,8 +51,8 @@ impl StreamTicketManager {
             tenant_id: auth.tenant_id.clone(),
             expires_at: expires_at.timestamp(),
         };
-        let payload = serde_json::to_vec(&claims).map_err(|error| {
-            ApiError::Internal(format!("Failed to encode stream ticket: {error}"))
+        let payload = serde_json::to_vec(&claims).map_err(|_| {
+            ApiError::internal_with_diagnostic("issue_stream_ticket", "serialization_error")
         })?;
         let signature = hmac::sign(&self.signing_key, &payload);
         let token = format!(
@@ -65,8 +65,9 @@ impl StreamTicketManager {
         let now = chrono::Utc::now().timestamp();
         issued.retain(|_, ticket| ticket.expires_at > now);
         if issued.len() >= MAX_OUTSTANDING_TICKETS {
-            return Err(ApiError::Internal(
-                "Too many outstanding stream tickets".to_string(),
+            return Err(ApiError::service_unavailable_with_diagnostic(
+                "issue_stream_ticket",
+                "outstanding_ticket_capacity",
             ));
         }
         issued.insert(claims.nonce.clone(), claims);

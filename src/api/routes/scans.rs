@@ -61,8 +61,9 @@ fn scan_request_fingerprint(
     options: &crate::api::models::request::ScanOptions,
     webhook_url: Option<&str>,
 ) -> Result<String, ApiError> {
-    let encoded = serde_json::to_vec(&(target, options, webhook_url))
-        .map_err(|error| ApiError::Internal(format!("Failed to hash scan request: {error}")))?;
+    let encoded = serde_json::to_vec(&(target, options, webhook_url)).map_err(|_| {
+        ApiError::internal_with_diagnostic("fingerprint_scan_request", "serialization_error")
+    })?;
     let digest = ring::digest::digest(&ring::digest::SHA256, &encoded);
     Ok(hex::encode(digest.as_ref()))
 }
@@ -116,7 +117,7 @@ pub async fn create_scan(
     let options = normalize_scan_options(request.options)?;
     let validated_request = scan_request_from_target_and_options(&request.target, &options)?;
     let final_target = validated_request.target.clone().ok_or_else(|| {
-        ApiError::Internal("Validated scan request is missing target".to_string())
+        ApiError::internal_with_diagnostic("validate_scan_request", "missing_validated_target")
     })?;
 
     if let Some(webhook_url) = request.webhook_url.as_deref() {
@@ -124,8 +125,9 @@ pub async fn create_scan(
             .await
             .map_err(|error| ApiError::BadRequest(format!("Invalid webhook_url: {}", error)))?;
         if !state.executor.has_webhook_signing_secret() {
-            return Err(ApiError::ServiceUnavailable(
-                "Scan webhooks require webhook_signing_secret_file".to_string(),
+            return Err(ApiError::service_unavailable_with_diagnostic(
+                "enqueue_scan_with_webhook",
+                "webhook_signing_secret_not_configured",
             ));
         }
     }
@@ -247,13 +249,14 @@ pub async fn get_scan_results(
     }
 
     // Get results
-    let results = job
-        .results
-        .ok_or_else(|| ApiError::Internal("Scan completed but results not found".to_string()))?;
+    let results = job.results.ok_or_else(|| {
+        ApiError::internal_with_diagnostic("get_scan_results", "completed_results_missing")
+    })?;
 
     // Convert to JSON
-    let json = serde_json::to_value(&results)
-        .map_err(|e| ApiError::Internal(format!("Failed to serialize results: {}", e)))?;
+    let json = serde_json::to_value(&results).map_err(|_| {
+        ApiError::internal_with_diagnostic("serialize_scan_results", "serialization_error")
+    })?;
 
     Ok(Json(json))
 }
@@ -291,11 +294,9 @@ pub async fn cancel_scan(
         ));
     }
 
-    let cancelled = state
-        .job_queue
-        .cancel_job(&id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let cancelled = state.job_queue.cancel_job(&id).await.map_err(|error| {
+        ApiError::internal_with_diagnostic("cancel_scan", error.observability_code())
+    })?;
 
     if cancelled {
         info!(

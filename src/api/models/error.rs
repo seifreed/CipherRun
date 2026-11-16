@@ -115,10 +115,22 @@ impl ApiError {
         operation: &'static str,
         cause_code: &'static str,
     ) -> Self {
+        Self::record_diagnostic(operation, cause_code);
+        Self::Internal("internal operation failed".to_string())
+    }
+
+    pub(crate) fn service_unavailable_with_diagnostic(
+        operation: &'static str,
+        cause_code: &'static str,
+    ) -> Self {
+        Self::record_diagnostic(operation, cause_code);
+        Self::ServiceUnavailable("service unavailable".to_string())
+    }
+
+    fn record_diagnostic(operation: &'static str, cause_code: &'static str) {
         let span = tracing::Span::current();
         span.record("error_operation", operation);
         span.record("error_cause_code", cause_code);
-        Self::Internal("internal operation failed".to_string())
     }
 
     fn response_message(&self) -> String {
@@ -339,10 +351,16 @@ mod tests {
                         error_cause_code = tracing::field::Empty
                     );
                     let _entered = request_span.enter();
-                    let error = if index == 0 {
-                        ApiError::internal_with_diagnostic("query_top_domains", "database_error")
-                    } else {
-                        error
+                    let error = match index {
+                        0 => ApiError::internal_with_diagnostic(
+                            "query_top_domains",
+                            "database_error",
+                        ),
+                        3 => ApiError::service_unavailable_with_diagnostic(
+                            "enqueue_scan",
+                            "queue_unavailable",
+                        ),
+                        _ => error,
                     };
                     error.into_response()
                 })
@@ -391,6 +409,11 @@ mod tests {
         assert_eq!(events[3]["level"], "WARN");
         assert_eq!(events[3]["fields"]["error_code"], "SERVICE_UNAVAILABLE");
         assert_eq!(events[3]["fields"]["error_type"], "dependency");
+        assert_eq!(events[3]["spans"][0]["error_operation"], "enqueue_scan");
+        assert_eq!(
+            events[3]["spans"][0]["error_cause_code"],
+            "queue_unavailable"
+        );
         assert!(
             events
                 .iter()

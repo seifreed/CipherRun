@@ -113,8 +113,9 @@ pub async fn create_policy(
 ) -> Result<(StatusCode, Json<PolicyResponse>), ApiError> {
     let policy_dir = policy_dir_from_state(&state)?;
 
-    fs::create_dir_all(policy_dir)
-        .map_err(|e| ApiError::Internal(format!("Failed to create policy directory: {}", e)))?;
+    fs::create_dir_all(policy_dir).map_err(|_| {
+        ApiError::internal_with_diagnostic("create_policy_directory", "filesystem_error")
+    })?;
 
     // Validate policy YAML by parsing it
     PolicyLoader::load_from_string(&request.rules)
@@ -148,7 +149,7 @@ pub async fn create_policy(
     let policy_content = build_policy_content_with_owner(&request, now, Some(&owner));
 
     fs::write(&policy_path, policy_content)
-        .map_err(|e| ApiError::Internal(format!("Failed to write policy file: {}", e)))?;
+        .map_err(|_| ApiError::internal_with_diagnostic("write_policy_file", "filesystem_error"))?;
 
     let status = if existed {
         StatusCode::OK
@@ -244,7 +245,12 @@ pub async fn evaluate_policy(
 
     let policy = FilesystemPolicySource
         .load_policy(&policy_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to load policy: {}", e)))?;
+        .map_err(|error| {
+            ApiError::internal_with_diagnostic(
+                "load_policy_for_evaluation",
+                error.observability_code(),
+            )
+        })?;
 
     let options = request
         .options

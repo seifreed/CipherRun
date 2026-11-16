@@ -143,7 +143,7 @@ async fn handle_timeout_error(error: BoxError) -> ApiError {
     if error.is::<tower::timeout::error::Elapsed>() {
         ApiError::Timeout("Request timed out".to_string())
     } else {
-        ApiError::Internal(format!("Unhandled middleware error: {error}"))
+        ApiError::internal_with_diagnostic("request_middleware", "middleware_error")
     }
 }
 
