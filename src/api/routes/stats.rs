@@ -145,7 +145,36 @@ mod tests {
     use crate::db::{DatabaseConfig, DatabasePool, create_unique_test_db_path, run_migrations};
     use axum::{extract::State, response::IntoResponse};
     use chrono::Utc;
-    use std::sync::Arc;
+    use std::{
+        io::Write,
+        sync::{Arc, Mutex},
+    };
+    use tracing::{Instrument, instrument::WithSubscriber};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     async fn build_state_with_db() -> Arc<AppState> {
         let config = DatabaseConfig::sqlite(create_unique_test_db_path("stats"));
@@ -265,11 +294,32 @@ mod tests {
         let pool = state.db_pool.as_ref().unwrap().clone();
         pool.close().await;
 
-        let err = get_stats(State(state))
-            .await
-            .expect_err("configured db failure should bubble up");
-        assert!(matches!(err, ApiError::Internal(_)));
-        let response = err.into_response();
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let span = tracing::dispatcher::with_default(&dispatch, || {
+            tracing::info_span!(
+                "http.request",
+                request_id = "stats-db-failure",
+                http.route = "/api/v1/stats",
+                error_operation = tracing::field::Empty,
+                error_cause_code = tracing::field::Empty
+            )
+        });
+        let response = async {
+            let err = get_stats(State(state))
+                .await
+                .expect_err("configured db failure should bubble up");
+            assert!(matches!(err, ApiError::Internal(_)));
+            err.into_response()
+        }
+        .instrument(span)
+        .with_subscriber(dispatch)
+        .await;
         assert_eq!(
             response.status(),
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -281,6 +331,22 @@ mod tests {
             serde_json::from_slice(&body).expect("response should be JSON");
         assert_eq!(body["message"], "Internal server error");
         assert!(!body.to_string().contains("closed pool"));
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["level"], "ERROR");
+        assert_eq!(events[0]["fields"]["event_name"], "api.error.response");
+        assert_eq!(events[0]["fields"]["error_code"], "INTERNAL_ERROR");
+        assert_eq!(events[0]["spans"][0]["request_id"], "stats-db-failure");
+        assert_eq!(
+            events[0]["spans"][0]["error_operation"],
+            "query_top_domains"
+        );
+        assert_eq!(events[0]["spans"][0]["error_cause_code"], "database_error");
     }
 
     #[test]
