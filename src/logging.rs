@@ -169,13 +169,13 @@ impl Drop for LoggingGuard {
             );
         }
 
-        drop(self.writer_guard.take());
         let already_reported = if let Some((stop, monitor)) = self.drop_monitor.take() {
             let _ = stop.send(());
-            monitor.join().unwrap_or(0)
+            join_drop_monitor(monitor)
         } else {
             0
         };
+        drop(self.writer_guard.take());
         let dropped_lines = self
             .dropped_log_lines
             .as_ref()
@@ -304,6 +304,23 @@ fn start_drop_monitor(
     Some((stop, monitor))
 }
 
+fn join_drop_monitor(monitor: JoinHandle<usize>) -> usize {
+    match monitor.join() {
+        Ok(reported) => reported,
+        Err(_) => {
+            tracing::warn!(
+                event_name = "logging.drop_monitor.join_failed",
+                operation = "shutdown",
+                error_type = "panic",
+                error_code = "drop_monitor_panicked",
+                outcome = "final_count_may_repeat",
+                "Log drop monitor failed before shutdown"
+            );
+            0
+        }
+    }
+}
+
 fn monitor_dropped_log_lines(
     mut dropped_lines: impl FnMut() -> usize,
     shutdown: mpsc::Receiver<()>,
@@ -408,8 +425,8 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 mod tests {
     use super::{
         LogWriter, format_dropped_log_event, format_log_file_fallback_event,
-        format_log_file_write_fallback_event, json_logs_enabled, monitor_dropped_log_lines,
-        resolve_log_filter, rolling_log_file, write_to_destinations,
+        format_log_file_write_fallback_event, join_drop_monitor, json_logs_enabled,
+        monitor_dropped_log_lines, resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -637,6 +654,27 @@ mod tests {
         shutdown_tx.send(()).unwrap();
         assert_eq!(reported_rx.recv_timeout(Duration::from_secs(1)).unwrap(), 3);
         assert_eq!(monitor.join().unwrap(), 7);
+    }
+
+    #[test]
+    fn drop_monitor_panic_is_logged_during_shutdown() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+        let monitor = std::thread::spawn(|| panic!("simulated monitor panic"));
+
+        let reported = tracing::subscriber::with_default(subscriber, || join_drop_monitor(monitor));
+
+        assert_eq!(reported, 0);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("logging.drop_monitor.join_failed"),
+            "{output}"
+        );
+        assert!(output.contains("drop_monitor_panicked"), "{output}");
+        assert!(output.contains("final_count_may_repeat"), "{output}");
     }
 
     #[test]
