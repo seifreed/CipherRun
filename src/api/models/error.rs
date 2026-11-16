@@ -110,6 +110,16 @@ impl ApiError {
     pub fn error_code(&self) -> &str {
         self.metadata().1
     }
+
+    fn response_message(&self) -> String {
+        match self {
+            Self::Internal(_) | Self::Database(_) | Self::Scanner(_) => {
+                "Internal server error".to_string()
+            }
+            Self::ServiceUnavailable(_) => "Service unavailable".to_string(),
+            _ => self.to_string(),
+        }
+    }
 }
 
 impl ApiErrorResponse {
@@ -171,7 +181,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         let error_code = self.error_code();
-        let message = self.to_string();
+        let message = self.response_message();
 
         let body = ApiErrorResponse::new(status, error_code, message);
 
@@ -189,6 +199,7 @@ impl IntoResponse for ApiErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
 
     #[test]
     fn test_api_error_status_and_code() {
@@ -231,5 +242,34 @@ mod tests {
         assert_eq!(resp.status, 429);
         assert_eq!(resp.error, "RATE_LIMITED");
         assert_eq!(resp.message, "slow down");
+    }
+
+    #[tokio::test]
+    async fn internal_error_responses_hide_diagnostic_details() {
+        let errors = [
+            ApiError::Internal("private database path".to_string()),
+            ApiError::Database(sqlx::Error::Protocol("private SQL details".to_string())),
+            ApiError::Scanner("private target details".to_string()),
+            ApiError::ServiceUnavailable("private queue path".to_string()),
+        ];
+
+        for error in errors {
+            let expected_message = if error.status_code() == StatusCode::SERVICE_UNAVAILABLE {
+                "Service unavailable"
+            } else {
+                "Internal server error"
+            };
+            let expected_code = error.error_code().to_string();
+            let response = error.into_response();
+            let body = to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("response body should be readable");
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).expect("response should be JSON");
+
+            assert_eq!(body["message"], expected_message);
+            assert_eq!(body["error"], expected_code);
+            assert!(!body.to_string().contains("private"));
+        }
     }
 }

@@ -134,12 +134,8 @@ async fn test_scan_webhook_requires_signing_secret() {
     let (status, body) = common::api::create_scan(&app, Some("test-user-key"), payload).await;
 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("webhook_signing_secret_file")
-    );
+    assert_eq!(body["message"], "Service unavailable");
+    assert!(!body.to_string().contains("webhook_signing_secret_file"));
 }
 
 #[tokio::test]
