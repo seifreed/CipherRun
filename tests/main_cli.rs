@@ -52,6 +52,41 @@ fn logger_lifecycle_events_stay_on_stderr() {
 }
 
 #[test]
+fn starttls_only_failures_have_operation_specific_events() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let output = Command::new(exe)
+        .args(["--starttls-only", "--starttls-smtp"])
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "failed operation should not emit results"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let failed = events
+        .iter()
+        .find(|event| event["fields"]["event_name"] == "cli.starttls_only.failed")
+        .expect("STARTTLS-only failure should have an operation event");
+    assert_eq!(failed["level"], "ERROR");
+    assert_eq!(failed["fields"]["operation"], "starttls_only");
+    assert_eq!(failed["fields"]["error_type"], "TlsError");
+    assert_eq!(failed["fields"]["outcome"], "error");
+    assert!(failed["fields"]["duration_ms"].is_number());
+    assert!(
+        !stderr.contains("cli.failed"),
+        "failure must not be logged twice"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn rolling_file_startup_fallback_redacts_paths_and_os_errors() {
     use std::os::unix::fs::PermissionsExt;

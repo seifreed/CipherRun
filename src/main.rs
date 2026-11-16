@@ -96,7 +96,33 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
         }
 
         if args.starttls.only {
-            return run_starttls_only(&args).await;
+            let started = std::time::Instant::now();
+            let result = run_starttls_only(&args).await;
+            let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            match &result {
+                Ok(exit) => info!(
+                    event_name = "cli.starttls_only.completed",
+                    operation = "starttls_only",
+                    duration_ms,
+                    exit_code = exit.code(),
+                    supported = exit.is_success(),
+                    outcome = "complete",
+                    "STARTTLS-only operation completed"
+                ),
+                Err(error) => {
+                    command_failure_logged = true;
+                    tracing::error!(
+                        event_name = "cli.starttls_only.failed",
+                        operation = "starttls_only",
+                        duration_ms,
+                        error_type = "TlsError",
+                        error_code = error.observability_code(),
+                        outcome = "error",
+                        "STARTTLS-only operation failed"
+                    );
+                }
+            }
+            return result;
         }
 
         // Handle --api-config-example (generate API config example and exit)
