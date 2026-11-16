@@ -181,6 +181,33 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         let error_code = self.error_code();
+        if status.is_server_error() {
+            let error_type = match &self {
+                Self::Database(_) => "database",
+                Self::Scanner(_) => "scanner",
+                Self::ServiceUnavailable(_) => "dependency",
+                _ => "internal",
+            };
+            if status == StatusCode::SERVICE_UNAVAILABLE {
+                tracing::warn!(
+                    event_name = "api.error.response",
+                    status_code = status.as_u16(),
+                    error_code,
+                    error_type,
+                    outcome = "error",
+                    "API request failed"
+                );
+            } else {
+                tracing::error!(
+                    event_name = "api.error.response",
+                    status_code = status.as_u16(),
+                    error_code,
+                    error_type,
+                    outcome = "error",
+                    "API request failed"
+                );
+            }
+        }
         let message = self.response_message();
 
         let body = ApiErrorResponse::new(status, error_code, message);
@@ -200,6 +227,35 @@ impl IntoResponse for ApiErrorResponse {
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+    use std::{
+        io::Write,
+        sync::{Arc, Mutex},
+    };
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_api_error_status_and_code() {
@@ -253,23 +309,60 @@ mod tests {
             ApiError::ServiceUnavailable("private queue path".to_string()),
         ];
 
-        for error in errors {
-            let expected_message = if error.status_code() == StatusCode::SERVICE_UNAVAILABLE {
-                "Service unavailable"
-            } else {
-                "Internal server error"
-            };
-            let expected_code = error.error_code().to_string();
-            let response = error.into_response();
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let responses = tracing::subscriber::with_default(subscriber, || {
+            errors
+                .into_iter()
+                .chain([ApiError::BadRequest("invalid input".to_string())])
+                .map(ApiError::into_response)
+                .collect::<Vec<_>>()
+        });
+
+        for (index, response) in responses.into_iter().enumerate() {
             let body = to_bytes(response.into_body(), 64 * 1024)
                 .await
                 .expect("response body should be readable");
             let body: serde_json::Value =
                 serde_json::from_slice(&body).expect("response should be JSON");
-
-            assert_eq!(body["message"], expected_message);
-            assert_eq!(body["error"], expected_code);
-            assert!(!body.to_string().contains("private"));
+            if index < 4 {
+                let expected_message = if index == 3 {
+                    "Service unavailable"
+                } else {
+                    "Internal server error"
+                };
+                assert_eq!(body["message"], expected_message);
+                assert!(!body.to_string().contains("private"));
+            } else {
+                assert_eq!(body["message"], "Bad request: invalid input");
+            }
         }
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0]["level"], "ERROR");
+        assert_eq!(events[0]["fields"]["error_code"], "INTERNAL_ERROR");
+        assert_eq!(events[0]["fields"]["error_type"], "internal");
+        assert_eq!(events[1]["fields"]["error_code"], "DATABASE_ERROR");
+        assert_eq!(events[1]["fields"]["error_type"], "database");
+        assert_eq!(events[2]["fields"]["error_code"], "SCANNER_ERROR");
+        assert_eq!(events[2]["fields"]["error_type"], "scanner");
+        assert_eq!(events[3]["level"], "WARN");
+        assert_eq!(events[3]["fields"]["error_code"], "SERVICE_UNAVAILABLE");
+        assert_eq!(events[3]["fields"]["error_type"], "dependency");
+        assert!(
+            events
+                .iter()
+                .all(|event| event["fields"]["outcome"] == "error")
+        );
+        assert!(!output.contains("private"));
     }
 }

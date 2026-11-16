@@ -60,30 +60,14 @@ pub async fn get_stats_for_auth(
     // Get top domains from database if available
     let top_domains = if let Some(db) = &state.db_pool {
         // Query top 10 domains from database
-        let started = std::time::Instant::now();
-        match get_top_domains_from_db(
+        get_top_domains_from_db(
             db,
             10,
             (!is_admin).then_some(auth.principal_id.as_str()),
             (!is_admin).then_some(auth.tenant_id.as_deref()).flatten(),
         )
         .await
-        {
-            Ok(top_domains) => top_domains,
-            Err(error) => {
-                tracing::error!(
-                    event_name = "api.stats.top_domains.failed",
-                    operation = "query_top_domains",
-                    scope = if is_admin { "admin" } else { "owner" },
-                    duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    error_type = "TlsError",
-                    error_code = error.observability_code(),
-                    outcome = "error",
-                    "Failed to load top domains"
-                );
-                return Err(ApiError::Internal("Failed to load top domains".to_string()));
-            }
-        }
+        .map_err(|_| ApiError::Internal("Failed to load top domains".to_string()))?
     } else {
         vec![] // No database configured
     };
@@ -157,37 +141,9 @@ mod tests {
     use crate::api::state::AppState;
     use crate::api::test_support::build_test_state;
     use crate::db::{DatabaseConfig, DatabasePool, create_unique_test_db_path, run_migrations};
-    use axum::extract::State;
+    use axum::{extract::State, response::IntoResponse};
     use chrono::Utc;
-    use std::{
-        io::Write,
-        sync::{Arc, Mutex},
-    };
-    use tracing_subscriber::fmt::MakeWriter;
-
-    #[derive(Clone)]
-    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
-
-    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl<'a> MakeWriter<'a> for CapturedOutput {
-        type Writer = CapturedWriter;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            CapturedWriter(self.0.clone())
-        }
-    }
-
-    impl Write for CapturedWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
+    use std::sync::Arc;
 
     async fn build_state_with_db() -> Arc<AppState> {
         let config = DatabaseConfig::sqlite(create_unique_test_db_path("stats"));
@@ -301,42 +257,28 @@ mod tests {
         assert_eq!(response.top_domains[0].domain, "owned.example");
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_get_stats_logs_and_redacts_configured_db_failure() {
+    #[tokio::test]
+    async fn test_get_stats_redacts_configured_db_failure() {
         let state = build_state_with_db().await;
         let pool = state.db_pool.as_ref().unwrap().clone();
-        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .without_time()
-            .with_writer(output.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
         pool.close().await;
 
         let err = get_stats(State(state))
             .await
             .expect_err("configured db failure should bubble up");
         assert!(matches!(err, ApiError::Internal(_)));
+        let response = err.into_response();
         assert_eq!(
-            err.to_string(),
-            "Internal server error: Failed to load top domains"
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
         );
-
-        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        let event = output
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-            .find(|event| event["fields"]["event_name"] == "api.stats.top_domains.failed")
-            .expect("database query failure should be logged");
-        assert_eq!(event["level"], "ERROR");
-        assert_eq!(event["fields"]["operation"], "query_top_domains");
-        assert_eq!(event["fields"]["scope"], "admin");
-        assert_eq!(event["fields"]["error_type"], "TlsError");
-        assert_eq!(event["fields"]["error_code"], "database_error");
-        assert_eq!(event["fields"]["outcome"], "error");
-        assert!(event["fields"]["duration_ms"].as_u64().is_some());
-        assert!(!output.contains("attempted to acquire a connection on a closed pool"));
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("response body should be readable");
+        let body: serde_json::Value =
+            serde_json::from_slice(&body).expect("response should be JSON");
+        assert_eq!(body["message"], "Internal server error");
+        assert!(!body.to_string().contains("closed pool"));
     }
 
     #[test]
