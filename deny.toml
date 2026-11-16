@@ -184,6 +184,9 @@ skip = [
     # RustCrypto 0.10 digests are still required by axum ws and sqlx transitive deps
     { crate = "cpufeatures@0.2", reason = "sha1/sha2 0.10 remain in the graph through axum websocket and sqlx dependencies" },
 
+    # The proc-macro ecosystem is split between syn 2 and syn 3.
+    { crate = "syn@2", reason = "Existing derive macros and SQLx 0.8 require syn 2 while utoipa-gen 6 uses syn 3" },
+
     # governor/sqlx/indexmap each pin different hashbrown/foldhash lines
     { crate = "foldhash@0.1", reason = "sqlx transitively pins hashbrown 0.15 while governor/indexmap use newer foldhash" },
     { crate = "hashbrown@0.16", reason = "governor currently depends on hashbrown 0.16 while the broader ecosystem is on 0.17" },
@@ -197,14 +200,8 @@ skip = [
     { crate = "rand_core@0.9", reason = "axum websocket/tungstenite currently depend on rand_core 0.9" },
 
     # Windows support matrix still spans old and new windows-sys lines.
-    # These are platform-only (cfg(windows)) linker-shim crates; duplicate
-    # versions are benign and arise from transitive deps pinning different
-    # windows-sys lines (sqlx-postgres/etcetera on 0.48, errno on 0.52, others on 0.61).
+    # These are platform-only linker-shim crates required by different transitive deps.
     { crate = "windows-sys@0.48", reason = "sqlx-postgres depends on etcetera/windows-sys 0.48 while the rest of the Windows stack is already on 0.61" },
-    { crate = "windows-sys@0.52", reason = "errno still pins windows-sys 0.52 while the newest stack is on 0.61" },
-    { crate = "windows-targets@0.48", reason = "pulled by windows-sys 0.48; newest stack uses windows-targets 0.53" },
-    { crate = "windows_x86_64_gnu@0.48", reason = "pulled by windows-targets 0.48; newest stack uses 0.53" },
-    { crate = "windows_x86_64_msvc@0.48", reason = "pulled by windows-targets 0.48; newest stack uses 0.53" },
 ]
 
 # Skip entire dependency trees for these crates

@@ -16,8 +16,13 @@ scripts/check-stable-contracts.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
-# RUSTSEC-2023-0071 has no upstream fix; rsa is only retained transitively in
-# Cargo.lock through sqlx-mysql and is not compiled into the default binary.
+# SQLx 0.8 retains rsa 0.9 in Cargo.lock through its optional MySQL driver. Keep
+# the exception valid only while rsa is absent from every enabled project feature.
+rsa_tree="$(cargo tree --all-features --target all --locked -e features -i rsa -q)"
+if [[ -n "${rsa_tree}" ]]; then
+  echo "RUSTSEC-2023-0071: rsa entered the active dependency graph" >&2
+  exit 1
+fi
 cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo package -p cipherrun-core --locked --allow-dirty

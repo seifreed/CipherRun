@@ -450,7 +450,10 @@ substitute for an independent audit.
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
-cargo audit
+# SQLx 0.8 retains rsa through its inactive optional MySQL driver in Cargo.lock.
+# The quality gate checks all enabled features before applying this exception.
+cargo tree --all-features --target all --locked -e features -i rsa -q
+cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo +nightly udeps
 cargo tarpaulin --engine llvm --all-features --all-targets --no-fail-fast --out Xml
