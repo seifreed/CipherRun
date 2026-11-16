@@ -21,8 +21,17 @@ pub fn ca_stores() -> Arc<CAStores> {
 }
 
 fn ca_stores_from_load_result(result: Result<CAStores>) -> Arc<CAStores> {
-    Arc::new(result.unwrap_or_else(|e| {
-        panic!("Failed to load CA stores: {e}");
+    Arc::new(result.unwrap_or_else(|error| {
+        tracing::error!(
+            event_name = "ca_stores.load_failed",
+            component = "data.ca_stores",
+            operation = "load_embedded_ca_stores",
+            error_type = "TlsError",
+            error_code = "CA_STORE_LOAD_FAILED",
+            outcome = "fatal",
+            "Failed to load embedded CA stores"
+        );
+        panic!("Failed to load CA stores: {error}");
     }))
 }
 
@@ -258,8 +267,57 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Failed to load CA stores")]
-    fn test_ca_stores_load_error_is_not_suppressed() {
-        let _ = ca_stores_from_load_result(Err(crate::TlsError::Other("broken store".into())));
+    fn test_ca_stores_load_error_is_logged_before_panicking() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+        struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for CapturedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+            type Writer = CapturedWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                CapturedWriter(self.0.clone())
+            }
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        let panic = tracing::subscriber::with_default(subscriber, || {
+            std::panic::catch_unwind(|| {
+                let _ =
+                    ca_stores_from_load_result(Err(crate::TlsError::Other("broken store".into())));
+            })
+            .expect_err("CA store load failures must remain fatal")
+        });
+        let panic_message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(panic_message.contains("Failed to load CA stores"));
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("ca_stores.load_failed"), "{output}");
+        assert!(output.contains("CA_STORE_LOAD_FAILED"), "{output}");
+        assert!(output.contains("outcome=\"fatal\""), "{output}");
+        assert!(!output.contains("broken store"), "{output}");
     }
 }
