@@ -52,6 +52,59 @@ fn logger_lifecycle_events_stay_on_stderr() {
 }
 
 #[test]
+#[cfg(unix)]
+fn rolling_file_startup_fallback_redacts_paths_and_os_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let directory = tempdir().expect("temporary directory should be created");
+    let log_path = directory.path().join("diagnostics.jsonl");
+    let log_dir = directory.path().join(".diagnostics.jsonl.d");
+    std::fs::create_dir(&log_dir).expect("log directory should be created");
+    for days_ago in 10..18 {
+        let date = (chrono::Utc::now() - chrono::Duration::days(days_ago))
+            .format("%Y-%m-%d")
+            .to_string();
+        std::fs::write(
+            log_dir.join(format!("diagnostics.jsonl.{date}")),
+            b"old log\n",
+        )
+        .expect("old log entry should be created");
+    }
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    std::fs::write(
+        log_dir.join(format!("diagnostics.jsonl.{today}")),
+        b"existing\n",
+    )
+    .expect("current log should be created");
+    std::fs::set_permissions(&log_dir, std::fs::Permissions::from_mode(0o555))
+        .expect("log directory should become read-only");
+
+    let output = Command::new(exe)
+        .args(["--version", "--logfile"])
+        .arg(&log_path)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    std::fs::set_permissions(&log_dir, std::fs::Permissions::from_mode(0o755))
+        .expect("log directory should become writable for cleanup");
+    let sanitized_stderr = stderr.replace(
+        &directory.path().display().to_string(),
+        "<temporary-log-directory>",
+    );
+    assert!(
+        sanitized_stderr.contains("logging.file_retention.delete_failed"),
+        "{sanitized_stderr}"
+    );
+    assert!(!stderr.contains(&directory.path().display().to_string()));
+    assert!(!stderr.contains("Failed to remove old log file"));
+}
+
+#[test]
 fn test_main_list_compliance_output() {
     let exe = env!("CARGO_BIN_EXE_cipherrun");
     let output = Command::new(exe)

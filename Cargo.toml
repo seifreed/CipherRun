@@ -47,8 +47,11 @@ resolver = "2"
 
 # SQLx 0.8 pins libsqlite3-sys to 0.30.x, whose bundled SQLite predates the
 # security fix. This minimal local patch widens that dependency to the fixed 0.39 line.
+# tracing-appender is patched to route rotation/retention failures through tracing
+# without writing filesystem paths or raw OS errors to stderr.
 [patch.crates-io]
 sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
+tracing-appender = { path = "vendor/tracing-appender" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
