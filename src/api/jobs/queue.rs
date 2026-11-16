@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -360,13 +361,18 @@ impl InMemoryJobQueue {
         storage: Option<Arc<dyn JobStorage>>,
         retention: Option<chrono::Duration>,
     ) -> Result<Self> {
+        let started = Instant::now();
+        let storage_enabled = storage.is_some();
         let mut loaded = storage
             .as_ref()
             .map_or_else(|| Ok(Vec::new()), |storage| storage.load_all_jobs())?;
+        let loaded_jobs = loaded.len();
         loaded.sort_by_key(|job| job.queued_at);
 
         let mut queue = VecDeque::new();
         let mut jobs = HashMap::new();
+        let mut expired_jobs = 0;
+        let mut recovered_jobs = 0;
         for mut job in loaded {
             if retention.is_some_and(|retention| {
                 Self::is_terminal(job.status)
@@ -377,6 +383,7 @@ impl InMemoryJobQueue {
                 if let Some(storage) = &storage {
                     storage.delete_job(&job.id)?;
                 }
+                expired_jobs += 1;
                 continue;
             }
             if jobs.contains_key(&job.id) {
@@ -387,6 +394,7 @@ impl InMemoryJobQueue {
                 if let Some(storage) = &storage {
                     storage.save_job(&job)?;
                 }
+                recovered_jobs += 1;
             }
             if matches!(job.status, ScanStatus::Queued) {
                 queue.push_back(job.clone());
@@ -405,6 +413,19 @@ impl InMemoryJobQueue {
                 max_capacity
             );
         }
+
+        tracing::info!(
+            event_name = "scan_jobs.initialized",
+            storage_enabled,
+            loaded_jobs,
+            queued_jobs = queue.len(),
+            pending_jobs = active,
+            recovered_jobs,
+            expired_jobs,
+            duration_ms = started.elapsed().as_millis() as u64,
+            outcome = "ready",
+            "Scan job queue initialized"
+        );
 
         Ok(Self {
             queue: Arc::new(RwLock::new(queue)),
@@ -690,6 +711,30 @@ mod tests {
     use super::*;
     use crate::api::jobs::{FileJobStorage, JobStorage};
     use std::io::Write;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
 
     #[test]
     fn prune_storage_failures_are_aggregated_without_job_ids() {
@@ -1060,7 +1105,7 @@ mod tests {
         );
         let id = job.id.clone();
 
-        let queue = InMemoryJobQueue::with_storage(10, storage.clone())
+        let queue = InMemoryJobQueue::with_options(10, Some(storage.clone()), None)
             .expect("persistent queue should initialize");
         queue.enqueue(job).await.expect("job should enqueue");
         let running = queue
@@ -1069,10 +1114,54 @@ mod tests {
             .expect("dequeue should succeed")
             .expect("job should exist");
         assert_eq!(running.status, ScanStatus::Running);
+        let mut expired = ScanJob::new(
+            "expired-target.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        let expired_id = expired.id.clone();
+        expired.mark_failed("expired fixture");
+        expired.completed_at = Some(Utc::now() - chrono::Duration::seconds(61));
+        queue
+            .update_job(&expired)
+            .await
+            .expect("expired job should persist before recovery");
         drop(queue);
 
-        let recovered =
-            InMemoryJobQueue::with_storage(10, storage).expect("queue should recover from disk");
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let recovered = tracing::subscriber::with_default(subscriber, || {
+            InMemoryJobQueue::with_options(
+                10,
+                Some(storage.clone()),
+                Some(chrono::Duration::seconds(60)),
+            )
+            .expect("queue should recover from disk")
+        });
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1, "{output}");
+        assert_eq!(events[0]["fields"]["event_name"], "scan_jobs.initialized");
+        assert_eq!(events[0]["fields"]["storage_enabled"], true);
+        assert_eq!(events[0]["fields"]["loaded_jobs"], 2);
+        assert_eq!(events[0]["fields"]["queued_jobs"], 1);
+        assert_eq!(events[0]["fields"]["pending_jobs"], 1);
+        assert_eq!(events[0]["fields"]["recovered_jobs"], 1);
+        assert_eq!(events[0]["fields"]["expired_jobs"], 1);
+        assert_eq!(events[0]["fields"]["outcome"], "ready");
+        assert!(events[0]["fields"]["duration_ms"].is_number());
+        assert!(!output.contains(&id));
+        assert!(!output.contains("example.com"));
+        assert!(!output.contains(&expired_id));
+        assert!(!output.contains("expired-target.example"));
+        assert!(storage.load_job(&expired_id).unwrap().is_none());
         let recovered_job = recovered
             .get_job(&id)
             .await
