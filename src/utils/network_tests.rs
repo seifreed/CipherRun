@@ -1,6 +1,65 @@
 use super::*;
 
 #[tokio::test]
+async fn dns_cache_hit_diagnostics_are_trace_only_and_redacted() {
+    use std::{
+        io::Write,
+        sync::{Arc, Mutex},
+    };
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct Output(Arc<Mutex<Vec<u8>>>);
+    struct Writer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for Output {
+        type Writer = Writer;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            Writer(self.0.clone())
+        }
+    }
+
+    let hostname = format!("{}.example.com", uuid::Uuid::new_v4());
+    crate::utils::dns_cache::global_cache()
+        .insert(
+            hostname.clone(),
+            vec!["8.8.8.8".parse().expect("public IP should parse")],
+        )
+        .await;
+
+    let output = Output(Arc::new(Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .without_time()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(output.clone())
+        .finish();
+    resolve_hostname(&hostname)
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await
+        .expect("cached public address should resolve");
+
+    let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+    assert_eq!(event["level"], "TRACE");
+    assert_eq!(event["fields"]["event_name"], "dns_cache.hit");
+    assert!(!output.contains(&hostname));
+}
+
+#[tokio::test]
 async fn test_split_target_host_port_hostname() {
     let (hostname, port) =
         split_target_host_port("example.com").expect("test assertion should succeed");

@@ -52,7 +52,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - toolchain: "1.88"
+          - toolchain: "1.89"
             experimental: false
           - toolchain: beta
             experimental: true

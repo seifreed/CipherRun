@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="Rust Version">
+  <img src="https://img.shields.io/badge/rust-1.89%2B-orange?style=flat-square" alt="Rust Version">
   <a href="https://crates.io/crates/cipherrun"><img src="https://img.shields.io/crates/v/cipherrun?style=flat-square&logo=rust&logoColor=white" alt="Crates.io Version"></a>
   <a href="https://github.com/seifreed/cipherrun/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/cipherrun/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <a href="https://github.com/seifreed/cipherrun"><img src="https://img.shields.io/github/stars/seifreed/cipherrun?style=flat-square" alt="GitHub Stars"></a>
@@ -48,7 +48,7 @@ Compliance reports are TLS posture checks mapped to selected technical controls.
 
 ### From Source
 
-Requires Rust 1.88 or newer.
+Requires Rust 1.89 or newer.
 
 ```bash
 git clone https://github.com/seifreed/cipherrun.git
@@ -254,6 +254,8 @@ precedence and supports standard module directives, for example
 `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
+DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
+per-target debug noise during bulk scans.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
 default. This setting applies to both the CLI and standalone worker.
 Text output escapes control characters in event fields and messages so

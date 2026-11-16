@@ -45,7 +45,7 @@ pub enum TlsError {
     /// Generic I/O error
     #[error("I/O error: {source}")]
     IoError {
-        #[from]
+        #[source]
         source: io::Error,
     },
 
@@ -136,6 +136,12 @@ pub enum TlsError {
     /// Generic error with context
     #[error("{0}")]
     Other(String),
+}
+
+impl From<io::Error> for TlsError {
+    fn from(err: io::Error) -> Self {
+        Self::IoError { source: err }
+    }
 }
 
 impl TlsError {
@@ -372,10 +378,13 @@ mod tests {
 
     #[test]
     fn test_error_conversion_from_io() {
+        use std::error::Error;
+
         let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
         let tls_err: TlsError = io_err.into();
 
         assert!(matches!(tls_err, TlsError::IoError { .. }));
+        assert_eq!(tls_err.source().unwrap().to_string(), "refused");
     }
 
     #[test]

@@ -233,7 +233,7 @@ async fn resolve_hostname_with_ssrf_check(
     // Check DNS cache first
     let cache = super::dns_cache::global_cache();
     if let Some(cached_ips) = cache.get(hostname).await {
-        tracing::debug!(event_name = "dns_cache.hit", "DNS cache hit");
+        tracing::trace!(event_name = "dns_cache.hit", "DNS cache hit");
         // SECURITY: Validate cached IPs against SSRF rules
         validate_resolved_ips(&cached_ips, allow_private_ips).map_err(|e| {
             TlsError::Other(format!("SSRF validation failed for cached {hostname}: {e}"))
@@ -242,7 +242,7 @@ async fn resolve_hostname_with_ssrf_check(
     }
 
     // Cache miss - perform DNS lookup
-    tracing::debug!(event_name = "dns_cache.miss", "DNS cache miss");
+    tracing::trace!(event_name = "dns_cache.miss", "DNS cache miss");
     let resolver = build_system_resolver()?;
 
     let response =
