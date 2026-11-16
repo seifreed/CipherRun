@@ -275,6 +275,8 @@ Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
 and a stable error code; resolver output and domain names stay out of that event.
+CT stream shutdown events include elapsed time and a terminal outcome, both for
+the overall stream and each source.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.

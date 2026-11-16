@@ -299,6 +299,8 @@ impl CtStreamer {
 
         info!(
             event_name = "ct_log.streaming.stopped",
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "stopped",
             "CT log streaming stopped"
         );
         Ok(())
@@ -316,6 +318,7 @@ impl CtStreamer {
         shutdown: Arc<AtomicBool>,
         config: CtConfig,
     ) {
+        let started = Instant::now();
         info!(event_name = "ct_log.source.started", source = %source_id, "Starting CT log source stream");
 
         // Determine starting index
@@ -461,7 +464,7 @@ impl CtStreamer {
             sleep(Duration::from_millis(100)).await;
         }
 
-        info!(event_name = "ct_log.source.stopped", source = %source_id, "Stopped CT log source stream");
+        info!(event_name = "ct_log.source.stopped", source = %source_id, duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), outcome = "stopped", "Stopped CT log source stream");
     }
 
     /// Stats reporter task
@@ -576,6 +579,49 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "failed");
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(!output.contains("https://"));
+    }
+
+    #[tokio::test]
+    async fn source_shutdown_logs_duration_and_outcome() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let (tx, _rx) = mpsc::channel(1);
+        let mut custom_indices = HashMap::new();
+        custom_indices.insert("test-source".to_string(), 0);
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            "https://unused.invalid".to_string(),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::new(AtomicBool::new(true)),
+            CtConfig {
+                custom_indices,
+                ..CtConfig::default()
+            },
+        )
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        let output = output.0.lock().unwrap();
+        let events: Vec<serde_json::Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("events should be JSON"))
+            .collect();
+        let event = events
+            .iter()
+            .find(|event| event["fields"]["event_name"] == "ct_log.source.stopped")
+            .expect("source shutdown event should be emitted");
+        assert_eq!(event["level"], "INFO");
+        assert!(event["fields"]["duration_ms"].as_u64().is_some());
+        assert_eq!(event["fields"]["outcome"], "stopped");
     }
 
     #[tokio::test]
