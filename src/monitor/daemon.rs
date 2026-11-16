@@ -93,9 +93,21 @@ impl MonitorDaemon {
 
     /// Add a single domain, applying the configured alert thresholds.
     pub async fn add_domain(&self, mut domain: MonitoredDomain) -> Result<()> {
+        let started = Instant::now();
         domain.alert_thresholds = (&self.config.monitor.thresholds).into();
         let mut inventory = self.inventory.lock().await;
         inventory.add_domain(domain)?;
+        let inventory_domains = inventory.len();
+        drop(inventory);
+
+        tracing::info!(
+            event_name = "monitor.inventory.domain_added",
+            operation = "add_monitored_domain",
+            inventory_domains,
+            duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = "added",
+            "Monitored domain added to inventory"
+        );
         Ok(())
     }
 
@@ -779,19 +791,62 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_domain() {
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
         let config = MonitorConfig::default();
         let daemon = MonitorDaemon::new(config)
             .await
             .expect("test assertion should succeed");
 
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(Buffer(output.clone()))
+            .finish();
         let domain = MonitoredDomain::new("example.com".to_string(), 443);
         daemon
             .add_domain(domain)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
             .await
             .expect("test assertion should succeed");
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 1);
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON logs");
+        let event: serde_json::Value =
+            serde_json::from_str(output.trim()).expect("structured event");
+        assert_eq!(event["level"], "INFO");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "monitor.inventory.domain_added"
+        );
+        assert_eq!(event["fields"]["operation"], "add_monitored_domain");
+        assert_eq!(event["fields"]["inventory_domains"], 1);
+        assert_eq!(event["fields"]["outcome"], "added");
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("example.com"));
     }
 
     #[tokio::test]
