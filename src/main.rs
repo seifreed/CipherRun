@@ -218,18 +218,27 @@ async fn run_cli() -> cipherrun::Result<CommandExit> {
 
         // Handle --local (list local OpenSSL ciphers and exit)
         if args.tls.local {
-            let openssl = if let Some(path) = &args.tls.openssl_path {
-                OpenSslClient::with_path(path.as_os_str())
-            } else {
-                OpenSslClient::new()
-            };
+            let started = std::time::Instant::now();
+            let result = (|| {
+                let openssl = if let Some(path) = &args.tls.openssl_path {
+                    OpenSslClient::with_path(path.as_os_str())
+                } else {
+                    OpenSslClient::new()
+                };
 
-            println!("OpenSSL: {}", openssl.get_version()?);
-            for cipher in openssl.list_local_ciphers()? {
-                println!("{}", cipher);
-            }
+                println!("OpenSSL: {}", openssl.get_version()?);
+                for cipher in openssl.list_local_ciphers()? {
+                    println!("{}", cipher);
+                }
 
-            return Ok(CommandExit::success());
+                Ok(CommandExit::success())
+            })();
+            command_failure_logged |= log_cli_operation(
+                "list_local_openssl_ciphers",
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                &result,
+            );
+            return result;
         }
 
         // Validate routing before creating command

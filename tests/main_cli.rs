@@ -1,6 +1,27 @@
 use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
+#[cfg(unix)]
+fn fake_openssl(cipher_exit_code: u8) -> (tempfile::TempDir, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempdir().expect("temporary directory should be created");
+    let path = directory.path().join("fake-openssl");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\nversion) echo 'OpenSSL 3.4.0' ;;\nciphers) echo 'TLS_AES_128_GCM_SHA256'; exit {cipher_exit_code} ;;\nesac\n"
+        ),
+    )
+    .expect("fake OpenSSL executable should be written");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("fake OpenSSL metadata should exist")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).expect("fake OpenSSL should be executable");
+    (directory, path)
+}
+
 #[test]
 fn test_main_version_output() {
     let exe = env!("CARGO_BIN_EXE_cipherrun");
@@ -84,6 +105,82 @@ fn starttls_only_failures_have_operation_specific_events() {
         !stderr.contains("cli.failed"),
         "failure must not be logged twice"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn local_openssl_success_has_a_cli_completion_event() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let (_directory, openssl) = fake_openssl(0);
+    let output = Command::new(exe)
+        .args(["--local", "--openssl"])
+        .arg(&openssl)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("CLI should run local OpenSSL");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("CLI output should be UTF-8");
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    assert!(stdout.contains("OpenSSL: OpenSSL 3.4.0"));
+    assert!(stdout.contains("TLS_AES_128_GCM_SHA256"));
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let completed = events
+        .iter()
+        .find(|event| {
+            event["fields"]["event_name"] == "cli.operation.completed"
+                && event["fields"]["operation"] == "list_local_openssl_ciphers"
+        })
+        .expect("local OpenSSL should have a completion event");
+    assert_eq!(completed["level"], "INFO");
+    assert_eq!(completed["fields"]["outcome"], "success");
+    assert!(completed["fields"]["duration_ms"].is_number());
+    assert!(!stderr.contains(&openssl.display().to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn local_openssl_failure_has_one_safe_operation_event() {
+    let exe = env!("CARGO_BIN_EXE_cipherrun");
+    let (_directory, openssl) = fake_openssl(7);
+    let output = Command::new(exe)
+        .args(["--local", "--openssl"])
+        .arg(&openssl)
+        .env("CIPHERRUN_LOG_FORMAT", "json")
+        .env("RUST_LOG", "info")
+        .output()
+        .expect("CLI should run local OpenSSL");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("stderr events should be JSON"))
+        .collect();
+    let failed = events
+        .iter()
+        .find(|event| {
+            event["fields"]["event_name"] == "cli.operation.failed"
+                && event["fields"]["operation"] == "list_local_openssl_ciphers"
+        })
+        .expect("local OpenSSL failure should have an operation event");
+    assert_eq!(failed["level"], "ERROR");
+    assert_eq!(failed["fields"]["outcome"], "error");
+    assert!(failed["fields"]["error_code"].is_string());
+    assert!(failed["fields"]["duration_ms"].is_number());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["fields"]["event_name"] == "cli.operation.failed")
+            .count(),
+        1
+    );
+    assert!(!stderr.contains("cli.failed"));
+    assert!(!stderr.contains(&openssl.display().to_string()));
 }
 
 #[test]
