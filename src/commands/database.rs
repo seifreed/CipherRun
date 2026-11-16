@@ -8,6 +8,8 @@ use crate::utils::network::canonical_target;
 use crate::{Args, Result};
 use async_trait::async_trait;
 use std::path::Path;
+use std::time::Instant;
+use tracing::{debug, info};
 
 /// DatabaseCommand handles database operations
 ///
@@ -46,7 +48,13 @@ impl DatabaseCommand {
 
     async fn cleanup_old_scans(&self, db: &crate::db::CipherRunDatabase) -> Result<()> {
         if let Some(days) = self.args.database.cleanup_days {
+            let started = Instant::now();
             let deleted = db.cleanup_old_scans(days).await?;
+            log_cleanup_completed(
+                days,
+                deleted,
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            );
             println!(
                 "✓ Deleted {} old scan(s) (older than {} days)",
                 deleted, days
@@ -90,14 +98,46 @@ impl DatabaseCommand {
     async fn show_history(&self, db: &crate::db::CipherRunDatabase) -> Result<()> {
         if let Some(history_target) = &self.args.database.history {
             let (hostname, port) = self.parse_history_target(history_target)?;
+            let started = Instant::now();
             let scans = db
                 .get_scan_history(&hostname, port, self.args.database.history_limit)
                 .await?;
+            log_history_query_completed(
+                port,
+                self.args.database.history_limit,
+                scans.len(),
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            );
             self.render_history(&hostname, port, &scans);
         }
 
         Ok(())
     }
+}
+
+fn log_cleanup_completed(days: i64, deleted_count: u64, duration_ms: u64) {
+    info!(
+        event_name = "database.cleanup.completed",
+        operation = "cleanup_old_scans",
+        days,
+        deleted_count,
+        duration_ms,
+        outcome = "success",
+        "Old scan cleanup completed"
+    );
+}
+
+fn log_history_query_completed(port: u16, limit: i64, result_count: usize, duration_ms: u64) {
+    debug!(
+        event_name = "database.history.query.completed",
+        operation = "get_scan_history",
+        port,
+        limit,
+        result_count,
+        duration_ms,
+        outcome = "success",
+        "Scan history query completed"
+    );
 }
 
 #[async_trait]
@@ -124,10 +164,37 @@ mod tests {
     use crate::Args;
     #[cfg(unix)]
     use std::ffi::OsString;
+    use std::io::Write;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     #[cfg(unix)]
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_database_command_name() {
@@ -142,6 +209,48 @@ mod tests {
         assert_eq!(DatabaseCommand::format_optional::<i64>(None), "N/A");
         assert_eq!(DatabaseCommand::format_optional(Some(90)), "90");
         assert_eq!(DatabaseCommand::format_optional(Some(1200)), "1200");
+    }
+
+    #[test]
+    fn database_operation_events_include_safe_structured_outcomes() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_cleanup_completed(30, 12, 27);
+            log_history_query_completed(443, 10, 3, 8);
+        });
+
+        let output = output.0.lock().unwrap();
+        let events: Vec<serde_json::Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("event should be JSON"))
+            .collect();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["level"], "INFO");
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "database.cleanup.completed"
+        );
+        assert_eq!(events[0]["fields"]["deleted_count"], 12);
+        assert_eq!(events[0]["fields"]["duration_ms"], 27);
+        assert_eq!(events[0]["fields"]["outcome"], "success");
+        assert_eq!(events[1]["level"], "DEBUG");
+        assert_eq!(
+            events[1]["fields"]["event_name"],
+            "database.history.query.completed"
+        );
+        assert_eq!(events[1]["fields"]["result_count"], 3);
+        assert_eq!(events[1]["fields"]["duration_ms"], 8);
+        assert_eq!(events[1]["fields"]["outcome"], "success");
+        assert!(!String::from_utf8_lossy(&output).contains("example.com"));
     }
 
     #[cfg(unix)]
