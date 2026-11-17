@@ -75,10 +75,7 @@ where
         tracing_opentelemetry::layer()
             .with_tracer(provider.tracer("cipherrun"))
             .with_filter(filter_fn(|metadata| {
-                !(metadata.is_event()
-                    && (metadata.target().starts_with("sqlx::query")
-                        || (metadata.target() == "cipherrun::database"
-                            && *metadata.level() == tracing::Level::DEBUG)))
+                !(metadata.is_event() && metadata.target().starts_with("sqlx::query"))
             })),
         provider,
     ))

@@ -206,6 +206,11 @@ async fn otlp_http_export_reaches_a_local_collector() {
         let span = tracing::info_span!("otlp.integration");
         span.in_scope(|| {
             tracing::info!(event_name = "otlp.test", "export test span");
+            tracing::debug!(
+                target: "cipherrun::database",
+                event_name = "database.debug.test",
+                "database diagnostic"
+            );
             tracing::event!(
                 target: "sqlx::query",
                 tracing::Level::WARN,
@@ -226,6 +231,7 @@ async fn otlp_http_export_reaches_a_local_collector() {
             .unwrap();
     let payload = String::from_utf8_lossy(&payload);
     assert!(payload.contains("otlp.test"), "{payload}");
+    assert!(payload.contains("database.debug.test"), "{payload}");
     assert!(!payload.contains("otlp-query-secret"), "{payload}");
     collector.abort();
 }
