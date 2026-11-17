@@ -193,7 +193,9 @@ async fn otlp_http_export_reaches_a_local_collector() {
     });
 
     let (otel_layer, provider) = cipherrun::telemetry::layer().unwrap();
-    let subscriber = tracing_subscriber::registry().with(otel_layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::new("info")))
+        .with(otel_layer);
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("otlp.integration");
         span.in_scope(|| tracing::info!(event_name = "otlp.test", "export test span"));

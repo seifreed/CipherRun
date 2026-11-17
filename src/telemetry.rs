@@ -1,7 +1,7 @@
 //! Optional OpenTelemetry export for the application's tracing spans.
 
 use opentelemetry::{
-    Key, global,
+    Key,
     propagation::{Extractor, TextMapPropagator},
     trace::{TraceContextExt, TracerProvider},
 };
@@ -71,8 +71,6 @@ where
         ))
         .with_batch_exporter(exporter)
         .build();
-    global::set_tracer_provider(provider.clone());
-
     Ok((
         tracing_opentelemetry::layer().with_tracer(provider.tracer("cipherrun")),
         provider,

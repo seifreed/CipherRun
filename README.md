@@ -242,7 +242,9 @@ non-admin callers.
 
 Build with `--features otel` to export tracing spans through the standard OTLP
 HTTP exporter. The exporter follows `OTEL_EXPORTER_OTLP_*` environment variables;
-without that feature, no telemetry backend is contacted.
+without that feature, no telemetry backend is contacted. The application only
+installs the global OpenTelemetry provider after its tracing subscriber starts
+successfully; constructing the telemetry layer alone has no global side effect.
 
 ### Logging and diagnosis
 

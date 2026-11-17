@@ -107,6 +107,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                     .with(otel_layer)
                     .try_init()
                     .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
+                opentelemetry::global::set_tracer_provider(provider.clone());
                 Some(provider)
             }
             Err(error) => {
