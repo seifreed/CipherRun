@@ -23,7 +23,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-use tracing::info;
+use tracing::{Instrument, Span, info};
 
 fn authorize_scan(job: &ScanJob, auth: &AuthExtension) -> Result<(), ApiError> {
     if auth.permission == Permission::Admin
@@ -393,7 +393,10 @@ pub async fn websocket_handler(
                 ping_interval_seconds: state.config.ws_ping_interval_seconds,
             });
 
-            ws.on_upgrade(move |socket| scan_websocket_handler(socket, scan_id, ws_state))
+            let span = Span::current();
+            ws.on_upgrade(move |socket| {
+                scan_websocket_handler(socket, scan_id, ws_state).instrument(span)
+            })
         }
         Ok(_) => ApiError::NotFound("Scan not found".to_string()).into_response(),
         Err(error) => error.into_response(),
