@@ -11,7 +11,7 @@ use crate::error::TlsError;
 use crate::scanner::{ScanResults, Scanner};
 use crate::security::webhook::{validate_webhook_url, webhook_http_client};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore, broadcast};
 use tracing::{Instrument, error, info, info_span, warn};
 #[cfg(feature = "otel")]
@@ -592,9 +592,11 @@ impl ScanExecutor {
         if let (Some(webhook_url), Some(secret)) =
             (&job.webhook_url, self.webhook_signing_secret.as_deref())
             && !matches!(job.status, ScanStatus::Cancelled)
-            && let Err(error) = Self::send_webhook(webhook_url, &job, secret).await
         {
-            warn!(event_name = "scan_job.webhook.failed", job_id = %job.id, error_type = "webhook", error_code = error.observability_code(), "Failed to deliver scan webhook");
+            let started = Instant::now();
+            if let Err(error) = Self::send_webhook(webhook_url, &job, secret).await {
+                log_scan_job_webhook_failed(&job.id, &error, started.elapsed());
+            }
         }
 
         let duration_ms = job
@@ -781,6 +783,7 @@ impl ScanExecutor {
         max_attempts: u8,
         retry_delay: Duration,
     ) -> Result<()> {
+        let started = Instant::now();
         let event = match job.status {
             ScanStatus::Completed => "scan.completed",
             ScanStatus::Failed => "scan.failed",
@@ -820,6 +823,8 @@ impl ScanExecutor {
                         event_name = "scan_job.webhook.delivered",
                         job_id = %job.id,
                         attempt,
+                        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        outcome = "delivered",
                         "Delivered scan webhook"
                     );
                     return Ok(());
@@ -873,6 +878,18 @@ impl ScanExecutor {
             .map_err(|e| TlsError::Other(format!("Failed to send shutdown signal: {e}")))?;
         Ok(())
     }
+}
+
+fn log_scan_job_webhook_failed(job_id: &str, error: &TlsError, duration: Duration) {
+    warn!(
+        event_name = "scan_job.webhook.failed",
+        job_id,
+        error_type = "webhook",
+        error_code = error.observability_code(),
+        duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+        outcome = "failed",
+        "Failed to deliver scan webhook"
+    );
 }
 
 fn webhook_signature(secret: &[u8], timestamp: &str, payload: &[u8]) -> String {
@@ -1324,6 +1341,15 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_is_signed_and_retries_transient_failures() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
         let state = Arc::new(WebhookTestState {
             attempts: AtomicUsize::new(0),
             signature_valid: AtomicBool::new(true),
@@ -1346,12 +1372,51 @@ mod tests {
             3,
             Duration::from_millis(1),
         )
+        .with_subscriber(tracing::Dispatch::new(subscriber))
         .await
         .unwrap();
 
         assert_eq!(state.attempts.load(Ordering::SeqCst), 3);
         assert!(state.signature_valid.load(Ordering::SeqCst));
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|event| event["fields"]["event_name"] == "scan_job.webhook.delivered")
+            .expect("delivery event should be recorded");
+        assert_eq!(event["fields"]["attempt"], 3);
+        assert_eq!(event["fields"]["outcome"], "delivered");
+        assert!(event["fields"]["duration_ms"].is_u64());
+        assert!(!output.contains("/hook"));
         server.abort();
+    }
+
+    #[test]
+    fn webhook_failure_event_has_duration_and_redacts_error_details() {
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let error = TlsError::HttpError {
+            status: 403,
+            details: "https://private.example/hook?api_key=secret-value".to_string(),
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_scan_job_webhook_failed("job-123", &error, Duration::from_millis(12));
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "scan_job.webhook.failed");
+        assert_eq!(event["fields"]["error_code"], "http_error");
+        assert_eq!(event["fields"]["duration_ms"], 12);
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("secret-value"));
     }
 
     #[test]

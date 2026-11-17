@@ -332,6 +332,9 @@ before any background task starts.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.
+Successful scan completion webhook events include the attempt count, duration
+and outcome; terminal failures include duration and a stable error code without
+exposing webhook URLs or response details.
 The `--local` OpenSSL inventory emits one terminal outcome for the combined
 version and cipher-list operation, while its result stays on stdout.
 If an OpenSSL subprocess remains active after a timeout but the operating
