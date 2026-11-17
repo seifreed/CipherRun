@@ -272,6 +272,10 @@ queue fills, low-priority log events may be dropped rather than blocking scans;
 the writer guard remains alive for the full command/worker lifetime.
 If the drop-monitor thread cannot start, initialization emits a warning and
 the accumulated drop count is still reported during shutdown.
+The CLI and standalone worker install a panic hook before argument parsing; it
+emits a sanitized `process.panic` event (or fixed stderr fallback before logger
+initialization) with the source line, never the panic payload. Applications
+embedding the library can opt in with `logging::install_safe_panic_hook()`.
 The API emits `api_server.background_tasks.shutdown` with duration, task count,
 failure count, and completion outcome after joining its background tasks;
 individual failed tasks retain their own categorized error events. If the task

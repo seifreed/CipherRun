@@ -2,6 +2,7 @@ use crate::{Args, Result, TlsError};
 use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::Once;
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -15,6 +16,31 @@ use tracing_subscriber::fmt::{
     format::{FormatEvent, FormatFields, Writer},
 };
 use tracing_subscriber::registry::LookupSpan;
+
+static SAFE_PANIC_HOOK: Once = Once::new();
+
+/// Replace Rust's default panic hook, which prints the caller-controlled payload.
+pub fn install_safe_panic_hook() {
+    SAFE_PANIC_HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let source_line = info.location().map_or(0, std::panic::Location::line);
+            if tracing::dispatcher::has_been_set() {
+                tracing::error!(
+                    event_name = "process.panic",
+                    error_type = "panic",
+                    error_code = "panic_unwind",
+                    source_line,
+                    outcome = "panicked",
+                    "Process panicked; panic payload omitted"
+                );
+            } else {
+                eprintln!(
+                    "ERROR process.panic error_type=panic error_code=panic_unwind source_line={source_line} outcome=panicked message=\"Panic payload omitted\""
+                );
+            }
+        }));
+    });
+}
 
 pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
@@ -514,15 +540,81 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 mod tests {
     use super::{
         LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
-        format_log_file_write_fallback_event, join_drop_monitor, json_logs_enabled,
-        monitor_dropped_log_lines, report_drop_monitor_start_failure, resolve_log_filter,
-        rolling_log_file, write_to_destinations,
+        format_log_file_write_fallback_event, install_safe_panic_hook, join_drop_monitor,
+        json_logs_enabled, monitor_dropped_log_lines, report_drop_monitor_start_failure,
+        resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::{Duration, Instant};
     use tracing_subscriber::fmt::MakeWriter;
+
+    #[test]
+    fn safe_panic_hook_child() {
+        let Ok(mode) = std::env::var("CIPHERRUN_SAFE_PANIC_HOOK_CHILD") else {
+            return;
+        };
+
+        if mode == "json" {
+            tracing_subscriber::fmt()
+                .json()
+                .with_max_level(tracing::Level::ERROR)
+                .try_init()
+                .unwrap();
+        }
+        install_safe_panic_hook();
+        panic!("private-panic-payload");
+    }
+
+    #[test]
+    fn safe_panic_hook_redacts_payload_with_and_without_subscriber() {
+        let run_child = |mode| {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "logging::tests::safe_panic_hook_child",
+                    "--nocapture",
+                ])
+                .env("CIPHERRUN_SAFE_PANIC_HOOK_CHILD", mode)
+                .output()
+                .unwrap()
+        };
+        let structured = run_child("json");
+        assert!(!structured.status.success());
+        let structured_output = format!(
+            "{}{}",
+            String::from_utf8(structured.stdout).unwrap(),
+            String::from_utf8(structured.stderr).unwrap()
+        );
+        let event = structured_output
+            .lines()
+            .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .unwrap_or_else(|| panic!("panic hook should emit a JSON event: {structured_output}"));
+        assert_eq!(event["fields"]["event_name"], "process.panic");
+        assert_eq!(event["fields"]["error_type"], "panic");
+        assert_eq!(event["fields"]["error_code"], "panic_unwind");
+        assert_eq!(event["fields"]["outcome"], "panicked");
+        assert!(event["fields"]["source_line"].is_number());
+        assert!(!structured_output.contains("private-panic-payload"));
+
+        let fallback = run_child("stderr");
+        assert!(!fallback.status.success());
+        let fallback_output = format!(
+            "{}{}",
+            String::from_utf8(fallback.stdout).unwrap(),
+            String::from_utf8(fallback.stderr).unwrap()
+        );
+        assert!(
+            fallback_output.contains("ERROR process.panic"),
+            "{fallback_output}"
+        );
+        assert!(
+            fallback_output.contains("error_code=panic_unwind"),
+            "{fallback_output}"
+        );
+        assert!(!fallback_output.contains("private-panic-payload"));
+    }
 
     #[derive(Clone)]
     struct Buffer(Arc<Mutex<Vec<u8>>>);

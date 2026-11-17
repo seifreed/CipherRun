@@ -22,6 +22,7 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    cipherrun::logging::install_safe_panic_hook();
     match run_cli().await {
         Ok(exit) => {
             let code = exit.code();

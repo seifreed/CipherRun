@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    cipherrun::logging::install_safe_panic_hook();
     let args = match Args::parse_with_sources() {
         Ok(args) => args,
         Err(_) => {
