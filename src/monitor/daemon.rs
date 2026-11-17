@@ -410,6 +410,8 @@ impl MonitorDaemon {
                     event_name = "monitor.target_validation.failed",
                     error_type = "target_validation",
                     error_code = e.observability_code(),
+                    duration_ms =
+                        u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     outcome = "failed",
                     "Monitoring target validation failed"
                 );
@@ -436,6 +438,8 @@ impl MonitorDaemon {
                     event_name = "monitor.certificate_fetch.failed",
                     error_type = "TlsError",
                     error_code = e.observability_code(),
+                    duration_ms =
+                        u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     outcome = "failed",
                     "Failed to fetch monitored certificate"
                 );
@@ -1154,6 +1158,7 @@ mod tests {
             event["fields"]["event_name"] == "monitor.target_validation.failed"
                 && event["fields"]["error_type"] == "target_validation"
                 && event["fields"]["error_code"].is_string()
+                && event["fields"]["duration_ms"].is_number()
                 && event["fields"]["outcome"] == "failed"
         }));
         assert!(!output.contains("bad:host:secret"));

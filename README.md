@@ -283,6 +283,8 @@ counts, scan outcomes, and per-channel alert delivery outcomes without logging
 the monitored hostnames. Its `monitor.started` event follows inventory and
 configuration readiness. Signal-handler setup/runtime failures emit categorized
 events, and a setup failure resets the daemon's running state.
+Target-validation and certificate-fetch failure events include elapsed scan
+duration and categorized errors without logging the monitored target.
 When idle, a shutdown request wakes the scheduler immediately instead of waiting
 for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
