@@ -203,7 +203,7 @@ impl MassScanner {
             let request = Arc::clone(&self.request);
             let multi_progress = Arc::clone(multi_progress);
 
-            let task = tokio::spawn(async move {
+            let task = crate::utils::task::spawn_with_current_span(async move {
                 let _permit = match semaphore.acquire().await {
                     Ok(permit) => permit,
                     Err(_) => {
@@ -257,7 +257,17 @@ impl MassScanner {
                 Err(join_err) => {
                     tracing::error!(
                         event_name = "scan.target.task.failed",
-                        error_type = "task_join",
+                        error_type = if join_err.is_panic() {
+                            "panic"
+                        } else {
+                            "cancelled"
+                        },
+                        error_code = if join_err.is_panic() {
+                            "task_panicked"
+                        } else {
+                            "task_cancelled"
+                        },
+                        outcome = "failed",
                         "Scan task failed before returning a result"
                     );
                     main_pb.inc(1);
@@ -267,7 +277,11 @@ impl MassScanner {
                     results.push((
                         target_name.clone(),
                         Err(crate::error::TlsError::ParseError {
-                            message: format!("Scan task panicked: {}", join_err),
+                            message: if join_err.is_panic() {
+                                "Scan task panicked".to_string()
+                            } else {
+                                "Scan task was cancelled".to_string()
+                            },
                         }),
                     ));
                     main_pb.set_message(format!("Failed: {}", target_name));
@@ -517,6 +531,10 @@ impl MassScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::fmt::MakeWriter;
 
     use crate::application::ScanRequest;
     use crate::rating::grader::Grade;
@@ -524,6 +542,70 @@ mod tests {
     use crate::scanner::RatingResults;
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
     use tempfile::tempdir;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn parallel_task_panic_is_categorized_without_payload_or_target() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let mut request = ScanRequest::default();
+        request.scan.scope.all = true;
+        let scanner = MassScanner::new(request, MassScanConfig::default(), Vec::new());
+        let task = tokio::spawn(async {
+            panic!("SyntheticSecretPanicPayload");
+        });
+        let main_pb = ProgressBar::hidden();
+
+        let results = scanner
+            .collect_scan_results(
+                vec![("private-target.example".to_string(), task)],
+                &main_pb,
+                1,
+            )
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        assert!(results[0].1.is_err());
+        assert_eq!(
+            results[0].1.as_ref().unwrap_err().to_string(),
+            "Parse error: Scan task panicked"
+        );
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "scan.target.task.failed");
+        assert_eq!(event["fields"]["error_type"], "panic");
+        assert_eq!(event["fields"]["error_code"], "task_panicked");
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(!output.contains("SyntheticSecretPanicPayload"));
+        assert!(!output.contains("private-target.example"));
+    }
 
     #[test]
     fn test_effective_parallel_limit() {

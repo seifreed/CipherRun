@@ -284,7 +284,9 @@ records whether a shutdown signal was sent and whether the executor cleanup coul
 be scheduled in the active Tokio runtime.
 `scan_job.task.join_failed` classifies unexpected task panics and cancellations
 with stable error codes and an outcome; its structured event omits the panic
-payload.
+payload. Parallel mass-scan tasks inherit the command span; join failures use
+the same safe categorization and return a fixed error message without exposing
+panic payloads or target names in the diagnostic event.
 Monitoring logs inventory loads, manual additions, allowlisted CT discovery
 counts, scan outcomes, and per-channel alert delivery outcomes without logging
 the monitored hostnames. Its `monitor.started` event follows inventory and
