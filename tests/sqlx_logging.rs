@@ -1,10 +1,8 @@
 #![cfg(feature = "db-sqlite")]
 
-use std::{
-    io::Write,
-    sync::{Arc, Mutex},
-};
-
+use sqlx::ConnectOptions;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Clone)]
@@ -32,43 +30,47 @@ impl Write for CapturedOutputWriter {
 }
 
 #[tokio::test]
-async fn sqlx_query_logs_timing_without_bound_values() {
+async fn sqlx_query_logging_omits_bound_secret_values() {
     let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .json()
         .without_time()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::TRACE)
         .with_writer(output.clone())
         .finish();
     tracing::subscriber::set_global_default(subscriber)
-        .expect("this integration test binary has one global subscriber");
+        .expect("the dedicated integration-test process has no global subscriber");
 
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(":memory:")
+        .log_statements("debug".parse().expect("debug log level should parse"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+        .connect_with(options)
         .await
-        .expect("SQLite pool should connect");
-    let secret = "bound-value-must-not-be-logged";
-    output.0.lock().unwrap().clear();
-
-    let value: String = sqlx::query_scalar("SELECT ?")
+        .expect("in-memory SQLx pool should connect");
+    let secret = "sql-bound-secret-must-not-be-logged";
+    sqlx::query("SELECT ? AS value WHERE 1 = 1 AND 2 = 2")
         .bind(secret)
         .fetch_one(&pool)
         .await
-        .expect("SQLite query should succeed");
-    assert_eq!(value, secret);
+        .expect("bound query should succeed");
 
-    let output = output.0.lock().unwrap();
-    let events: Vec<serde_json::Value> = output
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| serde_json::from_slice(line).expect("events should be JSON"))
-        .collect();
-    let event = events
-        .iter()
-        .find(|event| event["target"] == "sqlx::query")
-        .expect("SQLx query event should be captured from its worker thread");
-    assert_eq!(event["fields"]["summary"], "SELECT ?");
-    assert!(event["fields"]["elapsed_secs"].as_f64().is_some());
-    assert!(!String::from_utf8_lossy(&output).contains(secret));
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    let event = logs
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|event| {
+            event["target"] == "sqlx::query"
+                && event["fields"]["db.statement"]
+                    .as_str()
+                    .is_some_and(|statement| statement.contains("SELECT ? AS value"))
+        })
+        .unwrap_or_else(|| panic!("SQLx query event should be captured; logs: {logs}"));
+    assert_eq!(event["level"], "DEBUG");
+    assert!(event["fields"]["elapsed_secs"].is_number());
+    assert_eq!(event["fields"]["rows_returned"], 1, "logs: {logs}");
+    assert!(event["fields"]["db.statement"].as_str().is_some());
+    assert!(!logs.contains(secret));
+
+    pool.close().await;
 }

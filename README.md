@@ -254,6 +254,13 @@ precedence and supports standard module directives, for example
 `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
+SQLx emits native `sqlx::query` events: enabled statements are `DEBUG`, while
+statements taking at least one second are `WARN` by default. They include elapsed
+time and row counts; the `db.statement` field contains SQL text but not bound
+parameter values. Keep variable data bound instead of embedding it in SQL text.
+To disable SQLx statement events while retaining other `INFO` logs, use
+`RUST_LOG=info,sqlx::query=off`. These dependency events retain SQLx's field
+names rather than CipherRun's `event_name` convention.
 Successful database pool creation emits `database.pool.connected` with the
 backend, connection duration, and outcome; the event omits database paths and
 connection strings. Successful migration setup emits
