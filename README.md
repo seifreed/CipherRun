@@ -254,8 +254,9 @@ the requested path. Up to seven daily files are retained. The default level is
 `info`; `-v` enables `debug` and `-vv` enables `trace`. `RUST_LOG` takes
 precedence and supports standard module directives, for example
 `RUST_LOG=warn,cipherrun::api=debug`. Invalid
-filters fall back to the selected verbosity. The standalone worker uses the
-same `RUST_LOG` filter and defaults to `info`.
+filters fall back to the selected verbosity. The same filter limits events sent
+to OTLP. The standalone worker uses the same `RUST_LOG` filter and defaults to
+`info`.
 Concurrent initialization calls are serialized; later callers reuse the
 already installed global subscriber.
 SQLx query statement events are suppressed from CipherRun's built-in text, JSON,

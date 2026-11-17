@@ -118,7 +118,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                 };
                 tracing_subscriber::registry()
                     .with(fmt_layer)
-                    .with(otel_layer)
+                    .with(otel_layer.with_filter(filter.clone()))
                     .try_init()
                     .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
                 opentelemetry::global::set_tracer_provider(provider.clone());
