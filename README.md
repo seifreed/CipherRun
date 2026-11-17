@@ -256,6 +256,8 @@ precedence and supports standard module directives, for example
 `RUST_LOG=warn,cipherrun::api=debug`. Invalid
 filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
+Concurrent initialization calls are serialized; later callers reuse the
+already installed global subscriber.
 SQLx emits native `sqlx::query` events: enabled statements are `DEBUG`, while
 statements taking at least one second are `WARN` by default. They include elapsed
 time and row counts; the `db.statement` field contains SQL text but not bound

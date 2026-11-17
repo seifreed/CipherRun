@@ -2,7 +2,7 @@
 
 use axum::{Router, body::Bytes, extract::State, http::StatusCode, routing::post};
 use cipherrun::{Args, logging};
-use std::sync::mpsc;
+use std::sync::{Arc, Barrier, mpsc};
 use std::time::Duration;
 
 async fn receive_spans(State(sender): State<mpsc::Sender<usize>>, body: Bytes) -> StatusCode {
@@ -68,11 +68,30 @@ async fn logging_initializer_exports_to_a_local_collector() {
         .unwrap();
     });
 
-    let guard = logging::initialize(&Args::default()).unwrap();
+    let start = Arc::new(Barrier::new(9));
+    let initializers = (0..8)
+        .map(|_| {
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                logging::initialize(&Args::default())
+            })
+        })
+        .collect::<Vec<_>>();
+    start.wait();
+    let guards = initializers
+        .into_iter()
+        .map(|initializer| {
+            initializer
+                .join()
+                .expect("logger initialization thread should not panic")
+                .expect("concurrent logger initialization should reuse the installed subscriber")
+        })
+        .collect::<Vec<_>>();
     let span = tracing::info_span!("logging.otlp.integration");
     span.in_scope(|| tracing::info!(event_name = "logging.otlp.test", "export test span"));
     drop(span);
-    tokio::task::spawn_blocking(move || drop(guard))
+    tokio::task::spawn_blocking(move || drop(guards))
         .await
         .unwrap();
 

@@ -2,8 +2,8 @@ use crate::{Args, Result, TlsError};
 use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::Once;
 use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Mutex, Once};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tracing::{Event, Subscriber};
@@ -18,6 +18,7 @@ use tracing_subscriber::fmt::{
 use tracing_subscriber::registry::LookupSpan;
 
 static SAFE_PANIC_HOOK: Once = Once::new();
+static LOGGING_INITIALIZATION: Mutex<()> = Mutex::new(());
 
 /// Replace Rust's default panic hook, which prints the caller-controlled payload.
 pub fn install_safe_panic_hook() {
@@ -43,6 +44,9 @@ pub fn install_safe_panic_hook() {
 }
 
 pub fn initialize(args: &Args) -> Result<LoggingGuard> {
+    let _initialization = LOGGING_INITIALIZATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
     if tracing::dispatcher::has_been_set() {
         tracing::info!(
