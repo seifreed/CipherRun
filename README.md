@@ -306,7 +306,10 @@ and outcome, without the target name or address.
 MX lookup failures emit a terminal `dns.mx.lookup.failed` event with duration
 and a stable error code; resolver output and domain names stay out of that event.
 CT stream shutdown events include elapsed time and a terminal outcome, both for
-the overall stream and each source.
+the overall stream and each source. Signal, output, and stats tasks inherit the
+current command span; each source task has its own `ct_log.source` span. Dropping
+the stream future aborts its owned tasks, and source-health validation happens
+before any background task starts.
 Completed CLI commands and standalone worker runs emit one terminal event with
 operation, duration, outcome and exit/error type; they do not log scan targets
 or raw error text.

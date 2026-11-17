@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 /// Default batch size for fetching entries
 const DEFAULT_BATCH_SIZE: u64 = 1000;
@@ -39,6 +39,23 @@ pub struct CtConfig {
     pub json_output: bool,
     /// Silent mode (no stats output)
     pub silent: bool,
+}
+
+#[derive(Default)]
+struct SpawnedTaskGuard(Vec<tokio::task::AbortHandle>);
+
+impl SpawnedTaskGuard {
+    fn track<T>(&mut self, task: &tokio::task::JoinHandle<T>) {
+        self.0.push(task.abort_handle());
+    }
+}
+
+impl Drop for SpawnedTaskGuard {
+    fn drop(&mut self) {
+        for task in &self.0 {
+            task.abort();
+        }
+    }
 }
 
 impl Default for CtConfig {
@@ -140,9 +157,29 @@ impl CtStreamer {
             "Starting CT log streaming"
         );
 
+        let sources = self.source_manager.get_healthy_sources();
+        if sources.is_empty() {
+            error!(
+                event_name = "ct_log.sources.unavailable",
+                operation = "start_streaming",
+                total_source_count = self.source_manager.total_sources(),
+                healthy_source_count = 0,
+                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                error_type = "source_health",
+                error_code = "no_healthy_sources",
+                outcome = "failed",
+                "CT log streaming has no healthy sources"
+            );
+            return Err(TlsError::ConfigError {
+                message: "No healthy CT log sources".to_string(),
+            });
+        }
+
+        let mut spawned_tasks = SpawnedTaskGuard::default();
+
         // Setup signal handler for graceful shutdown
         let shutdown_clone = Arc::clone(&self.shutdown);
-        tokio::spawn(async move {
+        let signal_handle = crate::utils::task::spawn_with_current_span(async move {
             match crate::utils::shutdown::shutdown_signal().await {
                 Ok(signal) => info!(event_name = "ct_log.shutdown.requested", signal),
                 Err(_) => error!(
@@ -154,6 +191,7 @@ impl CtStreamer {
             }
             shutdown_clone.store(true, Ordering::Release);
         });
+        spawned_tasks.track(&signal_handle);
 
         // Create channel for certificate entries
         // Buffer size limited to prevent memory spike on burst of certificates
@@ -162,7 +200,7 @@ impl CtStreamer {
         // Spawn output handler
         let json_output = self.config.json_output;
         let sink_for_output = sink.clone();
-        let output_handle = tokio::spawn(async move {
+        let output_handle = crate::utils::task::spawn_with_current_span(async move {
             while let Some(entry) = rx.recv().await {
                 if let Some(sink) = &sink_for_output
                     && let Err(error) = sink.handle_entry(&entry).await
@@ -195,25 +233,7 @@ impl CtStreamer {
                 }
             }
         });
-
-        // Get healthy sources
-        let sources = self.source_manager.get_healthy_sources();
-        if sources.is_empty() {
-            error!(
-                event_name = "ct_log.sources.unavailable",
-                operation = "start_streaming",
-                total_source_count = self.source_manager.total_sources(),
-                healthy_source_count = 0,
-                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                error_type = "source_health",
-                error_code = "no_healthy_sources",
-                outcome = "failed",
-                "CT log streaming has no healthy sources"
-            );
-            return Err(TlsError::ConfigError {
-                message: "No healthy CT log sources".to_string(),
-            });
-        }
+        spawned_tasks.track(&output_handle);
 
         info!(
             event_name = "ct_log.sources.streaming",
@@ -234,14 +254,20 @@ impl CtStreamer {
             let shutdown = Arc::clone(&self.shutdown);
             let config = self.config.clone();
 
-            let handle = tokio::spawn(async move {
-                Self::stream_source(
-                    source_id, source_url, client, parser, tx, stats, shutdown, config,
-                )
-                .await
-            });
+            let source_id_for_log = source_id.clone();
+            let source_span = info_span!("ct_log.source", source = %source_id);
+            let handle = tokio::spawn(
+                async move {
+                    Self::stream_source(
+                        source_id, source_url, client, parser, tx, stats, shutdown, config,
+                    )
+                    .await
+                }
+                .instrument(source_span),
+            );
+            spawned_tasks.track(&handle);
 
-            handles.push(handle);
+            handles.push((source_id_for_log, handle));
         }
 
         // Drop the original sender so the output task can finish
@@ -251,20 +277,28 @@ impl CtStreamer {
         let stats_handle = if !self.config.silent {
             let stats = self.stats.clone();
             let shutdown = Arc::clone(&self.shutdown);
-            Some(tokio::spawn(async move {
+            let handle = crate::utils::task::spawn_with_current_span(async move {
                 Self::stats_reporter(stats, shutdown).await;
-            }))
+            });
+            spawned_tasks.track(&handle);
+            Some(handle)
         } else {
             None
         };
 
         // Wait for all streaming tasks to complete
-        for handle in handles {
+        for (source_id, handle) in handles {
             if let Err(error) = handle.await {
                 error!(
                     event_name = "ct_log.stream_task.failed",
-                    error_type = "join_error",
-                    error_code = if error.is_panic() { "panic" } else { "other" },
+                    source = %source_id,
+                    error_type = if error.is_panic() { "panic" } else { "cancelled" },
+                    error_code = if error.is_panic() {
+                        "task_panicked"
+                    } else {
+                        "task_cancelled"
+                    },
+                    outcome = "failed",
                     "CT log streaming task failed"
                 );
             }
@@ -274,8 +308,17 @@ impl CtStreamer {
         if let Err(error) = output_handle.await {
             error!(
                 event_name = "ct_log.output_task.failed",
-                error_type = "join_error",
-                error_code = if error.is_panic() { "panic" } else { "other" },
+                error_type = if error.is_panic() {
+                    "panic"
+                } else {
+                    "cancelled"
+                },
+                error_code = if error.is_panic() {
+                    "task_panicked"
+                } else {
+                    "task_cancelled"
+                },
+                outcome = "failed",
                 "CT log output task failed"
             );
         }
@@ -286,9 +329,33 @@ impl CtStreamer {
         {
             error!(
                 event_name = "ct_log.stats_task.failed",
-                error_type = "join_error",
-                error_code = if error.is_panic() { "panic" } else { "other" },
+                error_type = if error.is_panic() {
+                    "panic"
+                } else {
+                    "cancelled"
+                },
+                error_code = if error.is_panic() {
+                    "task_panicked"
+                } else {
+                    "task_cancelled"
+                },
+                outcome = "failed",
                 "CT log stats reporter failed"
+            );
+        }
+
+        if !signal_handle.is_finished() {
+            signal_handle.abort();
+        }
+        if let Err(error) = signal_handle.await
+            && !error.is_cancelled()
+        {
+            error!(
+                event_name = "ct_log.shutdown_task.failed",
+                error_type = "panic",
+                error_code = "task_panicked",
+                outcome = "failed",
+                "CT log shutdown task failed"
             );
         }
 
@@ -539,6 +606,21 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn spawned_task_guard_aborts_detached_tasks_when_dropped() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        let mut guard = SpawnedTaskGuard::default();
+        guard.track(&task);
+
+        drop(guard);
+
+        assert!(
+            task.await
+                .expect_err("guard should abort the task")
+                .is_cancelled()
+        );
     }
 
     #[tokio::test]
