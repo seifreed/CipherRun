@@ -316,7 +316,7 @@ impl ScanExecutor {
         let queue_for_scan = queue.clone();
         let job_for_scan = job.clone();
         let worker_allowed_cidrs = self.worker_allowed_cidrs.clone();
-        let mut scan_task = tokio::spawn(async move {
+        let mut scan_task = crate::utils::task::spawn_with_current_span(async move {
             Self::run_scan(
                 &job_for_scan,
                 &queue_for_scan,

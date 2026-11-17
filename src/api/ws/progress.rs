@@ -1,4 +1,5 @@
 use crate::api::models::response::ProgressMessage;
+use crate::utils::task::spawn_with_current_span;
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -11,15 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{Instrument, Span, debug, error, info, trace, warn};
-
-fn spawn_with_current_span<T>(
-    future: impl std::future::Future<Output = T> + Send + 'static,
-) -> tokio::task::JoinHandle<T>
-where
-    T: Send + 'static,
-{
-    tokio::spawn(future.instrument(Span::current()))
-}
 
 /// AppState subset for WebSocket
 pub struct WsState {
@@ -425,32 +417,6 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
 mod tests {
     use super::*;
     use crate::api::models::response::ProgressMessage;
-    use std::io::Write;
-    use std::sync::{Arc, Mutex};
-    use tracing_subscriber::fmt::MakeWriter;
-
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    struct BufferWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for BufferWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> MakeWriter<'a> for Buffer {
-        type Writer = BufferWriter;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            BufferWriter(self.0.clone())
-        }
-    }
 
     #[tokio::test]
     async fn test_ws_state_broadcast_sends_progress() {
@@ -467,37 +433,5 @@ mod tests {
         assert_eq!(received.scan_id, "scan1");
         assert_eq!(received.progress, 5);
         assert_eq!(received.stage, "stage");
-    }
-
-    #[test]
-    fn spawned_websocket_tasks_keep_request_context() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(Buffer(output.clone()))
-            .finish();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-
-        tracing::subscriber::with_default(subscriber, || {
-            let span = tracing::info_span!("http.request", request_id = "request-123");
-            runtime.block_on(async move {
-                span.in_scope(|| {
-                    spawn_with_current_span(async {
-                        tracing::info!(event_name = "websocket.test", "task event");
-                    })
-                })
-                .await
-                .unwrap();
-            });
-        });
-
-        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        let event: serde_json::Value =
-            serde_json::from_str(output.lines().next().unwrap()).unwrap();
-        assert_eq!(event["fields"]["event_name"], "websocket.test");
-        assert_eq!(event["spans"][0]["request_id"], "request-123");
     }
 }

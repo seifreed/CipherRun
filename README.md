@@ -313,7 +313,8 @@ persistent listener errors.
 API middleware creates a `http.request` span with the generated `request_id`,
 HTTP method, and matched route template around downstream request handling.
 The span is carried through scan WebSocket upgrades and their send/receive tasks,
-so connection diagnostics retain the same request correlation. The response's
+and queued scan jobs retain their `scan.job` span through the spawned scan task,
+so asynchronous diagnostics retain their operation context. The response's
 `X-Request-ID` can be used to find that request's structured audit event and
 related spans. Unmatched paths use a fixed marker; client IPs, query strings,
 request bodies and authorization headers are not written to logs. Do not add credentials,
