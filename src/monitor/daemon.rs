@@ -33,6 +33,17 @@ pub struct MonitorDaemon {
 }
 
 impl MonitorDaemon {
+    fn log_certificate_fetch_failed(error: &crate::TlsError, duration_ms: u64) {
+        tracing::error!(
+            event_name = "monitor.certificate_fetch.failed",
+            error_type = "TlsError",
+            error_code = error.observability_code(),
+            duration_ms,
+            outcome = "failed",
+            "Failed to fetch monitored certificate"
+        );
+    }
+
     /// Create new monitoring daemon
     pub async fn new(config: MonitorConfig) -> Result<Self> {
         let started = Instant::now();
@@ -434,14 +445,9 @@ impl MonitorDaemon {
         let current_cert = match parser.get_leaf_certificate().await {
             Ok(cert) => cert,
             Err(e) => {
-                tracing::error!(
-                    event_name = "monitor.certificate_fetch.failed",
-                    error_type = "TlsError",
-                    error_code = e.observability_code(),
-                    duration_ms =
-                        u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    outcome = "failed",
-                    "Failed to fetch monitored certificate"
+                Self::log_certificate_fetch_failed(
+                    &e,
+                    u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 );
 
                 // Send scan failure alert if any monitoring threshold is enabled
@@ -1100,7 +1106,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_monitor_scan_logs_safe_error_codes() {
+    fn monitor_failure_events_log_safe_codes_duration_and_redact_details() {
         struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
         struct BufferWriter(Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -1140,14 +1146,19 @@ mod tests {
             .expect("runtime should build");
 
         tracing::subscriber::with_default(subscriber, || {
-            runtime.block_on(MonitorDaemon::scan_domain_static(
-                &domain,
-                inventory,
-                alert_manager,
-                Arc::new(ChangeDetector::new()),
-            ))
-        })
-        .expect("invalid targets are reported without failing the daemon");
+            runtime
+                .block_on(MonitorDaemon::scan_domain_static(
+                    &domain,
+                    inventory,
+                    alert_manager,
+                    Arc::new(ChangeDetector::new()),
+                ))
+                .expect("invalid targets are reported without failing the daemon");
+            MonitorDaemon::log_certificate_fetch_failed(
+                &crate::TlsError::Other("private-certificate-error".to_string()),
+                17,
+            );
+        });
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let events = output
@@ -1161,7 +1172,15 @@ mod tests {
                 && event["fields"]["duration_ms"].is_number()
                 && event["fields"]["outcome"] == "failed"
         }));
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "monitor.certificate_fetch.failed"
+                && event["fields"]["error_type"] == "TlsError"
+                && event["fields"]["error_code"] == "other"
+                && event["fields"]["duration_ms"] == 17
+                && event["fields"]["outcome"] == "failed"
+        }));
         assert!(!output.contains("bad:host:secret"));
+        assert!(!output.contains("private-certificate-error"));
         assert!(!output.contains("channel failed"));
     }
 
