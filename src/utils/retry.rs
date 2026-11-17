@@ -552,7 +552,6 @@ mod tests {
     fn retry_events_are_structured_and_exclude_raw_errors() {
         use std::io::Write;
         use std::sync::Mutex;
-        use tracing::instrument::WithSubscriber;
         use tracing_subscriber::fmt::MakeWriter;
 
         struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -591,8 +590,8 @@ mod tests {
             .enable_time()
             .build()
             .unwrap();
-        let result = runtime.block_on(
-            async {
+        let result = tracing::dispatcher::with_default(&dispatch, || {
+            runtime.block_on(async {
                 retry_with_backoff(&config, || async {
                     if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                         Err(TlsError::Other(
@@ -604,9 +603,8 @@ mod tests {
                     }
                 })
                 .await
-            }
-            .with_subscriber(dispatch),
-        );
+            })
+        });
 
         assert!(result.is_ok());
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
