@@ -47,6 +47,11 @@ async fn receive_spans(State(sender): State<mpsc::Sender<usize>>, body: Bytes) -
     StatusCode::OK
 }
 
+async fn receive_span_body(State(sender): State<mpsc::Sender<Vec<u8>>>, body: Bytes) -> StatusCode {
+    let _ = sender.send(body.to_vec());
+    StatusCode::OK
+}
+
 async fn reject_spans(
     State(sender): State<mpsc::Sender<(usize, StatusCode)>>,
     body: Bytes,
@@ -186,7 +191,7 @@ async fn otlp_http_export_reaches_a_local_collector() {
         axum::serve(
             listener,
             Router::new()
-                .route("/v1/traces", post(receive_spans))
+                .route("/v1/traces", post(receive_span_body))
                 .with_state(sender),
         )
         .await
@@ -195,21 +200,33 @@ async fn otlp_http_export_reaches_a_local_collector() {
 
     let (otel_layer, provider) = cipherrun::telemetry::layer().unwrap();
     let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::new("info,sqlx::query=off")))
         .with(otel_layer);
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("otlp.integration");
-        span.in_scope(|| tracing::info!(event_name = "otlp.test", "export test span"));
+        span.in_scope(|| {
+            tracing::info!(event_name = "otlp.test", "export test span");
+            tracing::event!(
+                target: "sqlx::query",
+                tracing::Level::WARN,
+                db.statement = "SELECT 'otlp-query-secret'",
+                elapsed_secs = 1.5,
+                rows_returned = 1,
+                "slow query"
+            );
+        });
     });
     tokio::task::spawn_blocking(move || provider.shutdown().unwrap())
         .await
         .unwrap();
 
-    let payload_size =
+    let payload =
         tokio::task::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(5)).unwrap())
             .await
             .unwrap();
-    assert!(payload_size > 0);
+    let payload = String::from_utf8_lossy(&payload);
+    assert!(payload.contains("otlp.test"), "{payload}");
+    assert!(!payload.contains("otlp-query-secret"), "{payload}");
     collector.abort();
 }
 

@@ -258,18 +258,14 @@ filters fall back to the selected verbosity. The standalone worker uses the
 same `RUST_LOG` filter and defaults to `info`.
 Concurrent initialization calls are serialized; later callers reuse the
 already installed global subscriber.
-SQLx emits native `sqlx::query` events: enabled statements are `DEBUG`, while
-statements taking at least one second are `WARN` by default. They include elapsed
-time and row counts; the `db.statement` field contains SQL text but not bound
-parameter values, and retain the active tracing span for request/job correlation.
-Keep variable data bound instead of embedding it in SQL text.
-To disable SQLx statement events while retaining other `INFO` logs, use
-`RUST_LOG=info,sqlx::query=off`. These dependency events retain SQLx's field
-names rather than CipherRun's `event_name` convention.
-Successful database pool creation emits `database.pool.connected` with the
-backend, connection duration, and outcome; the event omits database paths and
-connection strings. Successful migration setup emits
-`database.migrations.completed` with backend, duration, and readiness outcome.
+SQLx query statement events are suppressed from CipherRun's built-in text, JSON,
+and OTLP destinations because SQL text can contain sensitive literals. Keep
+variable data bound instead of embedding it in SQL text, especially with a
+custom subscriber. Database lifecycle events remain available: successful pool
+creation emits `database.pool.connected` with the backend, connection duration,
+and outcome; the event omits database paths and connection strings. Successful
+migration setup emits `database.migrations.completed` with backend, duration,
+and readiness outcome.
 DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
 per-target debug noise during bulk scans.
 HTTP/3 ALPN probes emit one `http3.request.inconclusive` event with aggregate

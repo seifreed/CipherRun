@@ -6,16 +6,18 @@ use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Mutex, Once};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tracing::{Event, Subscriber};
+use tracing::{Event, Metadata, Subscriber};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use tracing_subscriber::EnvFilter;
-#[cfg(not(feature = "otel"))]
-use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::fmt::{
     FmtContext,
     format::{FormatEvent, FormatFields, Writer},
 };
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{
+    EnvFilter,
+    filter::{FilterExt, filter_fn},
+    layer::Layer,
+};
 
 static SAFE_PANIC_HOOK: Once = Once::new();
 static LOGGING_INITIALIZATION: Mutex<()> = Mutex::new(());
@@ -89,7 +91,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
 
     #[cfg(feature = "otel")]
     let tracer_provider = {
-        use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
         match crate::telemetry::layer() {
             Ok((otel_layer, provider)) => {
@@ -97,13 +99,21 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                     tracing_subscriber::fmt::layer()
                         .json()
                         .with_writer(writer)
-                        .with_filter(filter)
+                        .with_filter(
+                            filter
+                                .clone()
+                                .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                        )
                         .boxed()
                 } else {
                     tracing_subscriber::fmt::layer()
                         .event_format(SafeTextFormat::default())
                         .with_writer(writer)
-                        .with_filter(filter)
+                        .with_filter(
+                            filter
+                                .clone()
+                                .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                        )
                         .boxed()
                 };
                 tracing_subscriber::registry()
@@ -115,20 +125,30 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
                 Some(provider)
             }
             Err(error) => {
-                let result = if json {
-                    tracing_subscriber::fmt()
+                let fmt_layer = if json {
+                    tracing_subscriber::fmt::layer()
                         .json()
-                        .with_env_filter(filter)
                         .with_writer(writer)
-                        .try_init()
+                        .with_filter(
+                            filter
+                                .clone()
+                                .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                        )
+                        .boxed()
                 } else {
-                    tracing_subscriber::fmt()
+                    tracing_subscriber::fmt::layer()
                         .event_format(SafeTextFormat::default())
-                        .with_env_filter(filter)
                         .with_writer(writer)
-                        .try_init()
+                        .with_filter(
+                            filter
+                                .clone()
+                                .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                        )
+                        .boxed()
                 };
-                result
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .try_init()
                     .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
                 tracing::warn!(
                     event_name = "telemetry.exporter.initialization_failed",
@@ -144,20 +164,33 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
 
     #[cfg(not(feature = "otel"))]
     {
-        let result = if json {
-            FmtSubscriber::builder()
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+        let fmt_layer = if json {
+            tracing_subscriber::fmt::layer()
                 .json()
-                .with_env_filter(filter)
                 .with_writer(writer)
-                .try_init()
+                .with_filter(
+                    filter
+                        .clone()
+                        .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                )
+                .boxed()
         } else {
-            FmtSubscriber::builder()
+            tracing_subscriber::fmt::layer()
                 .event_format(SafeTextFormat::default())
-                .with_env_filter(filter)
                 .with_writer(writer)
-                .try_init()
+                .with_filter(
+                    filter
+                        .clone()
+                        .and(filter_fn(|metadata| !is_sqlx_query(metadata))),
+                )
+                .boxed()
         };
-        result.map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .try_init()
+            .map_err(|_| TlsError::Other("Failed to set tracing subscriber".to_string()))?;
     }
 
     let drop_monitor = start_drop_monitor(dropped_log_lines.clone(), json);
@@ -178,6 +211,10 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
         #[cfg(feature = "otel")]
         tracer_provider,
     })
+}
+
+fn is_sqlx_query(metadata: &Metadata<'_>) -> bool {
+    metadata.is_event() && metadata.target().starts_with("sqlx::query")
 }
 
 #[derive(Default)]
@@ -560,15 +597,17 @@ fn format_dropped_log_event(dropped_lines: usize, json: bool, timestamp: &str) -
 mod tests {
     use super::{
         LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
-        format_log_file_write_fallback_event, install_safe_panic_hook, join_drop_monitor,
-        json_logs_enabled, monitor_dropped_log_lines, report_drop_monitor_start_failure,
-        resolve_log_filter, rolling_log_file, write_to_destinations,
+        format_log_file_write_fallback_event, install_safe_panic_hook, is_sqlx_query,
+        join_drop_monitor, json_logs_enabled, monitor_dropped_log_lines,
+        report_drop_monitor_start_failure, resolve_log_filter, rolling_log_file,
+        write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, Mutex, mpsc};
     use std::time::{Duration, Instant};
     use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::prelude::*;
 
     #[test]
     fn safe_panic_hook_child() {
@@ -851,6 +890,68 @@ mod tests {
         assert!(content.contains("\\n"), "{serialized:?}");
         assert!(content.contains("\\r"), "{serialized:?}");
         assert!(content.contains("\\u{1b}"), "{serialized:?}");
+    }
+
+    #[test]
+    fn sqlx_query_events_are_suppressed_from_structured_json() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_writer(output.clone())
+            .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                !is_sqlx_query(metadata)
+            }));
+        let subscriber = tracing_subscriber::registry().with(fmt_layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("db.operation", request_id = "sql-redaction-test");
+            span.in_scope(|| {
+                tracing::event!(
+                    target: "sqlx::query",
+                    tracing::Level::WARN,
+                    db.statement = "SELECT 'literal-secret'",
+                    elapsed_secs = 1.5,
+                    rows_returned = 1,
+                    "slow query"
+                );
+                tracing::info!(target: "cipherrun::database", event_name = "database.pool.connected", "Database pool connected");
+            });
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("literal-secret"), "{output}");
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["target"], "cipherrun::database");
+        assert_eq!(event["fields"]["event_name"], "database.pool.connected");
+    }
+
+    #[test]
+    fn sqlx_query_events_are_suppressed_from_safe_text() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .event_format(SafeTextFormat::default())
+            .with_writer(output.clone())
+            .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                !is_sqlx_query(metadata)
+            }));
+        let subscriber = tracing_subscriber::registry().with(fmt_layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::event!(
+                target: "sqlx::query",
+                tracing::Level::DEBUG,
+                db.statement = "SELECT 'literal-secret'",
+                elapsed_secs = 0.01,
+                rows_affected = 1,
+                "query complete"
+            );
+            tracing::info!(target: "cipherrun::database", event_name = "database.pool.connected", "Database pool connected");
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("literal-secret"), "{output}");
+        assert!(output.contains("database.pool.connected"), "{output}");
     }
 
     #[test]

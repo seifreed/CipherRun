@@ -14,7 +14,7 @@ use opentelemetry_sdk::{
 };
 use std::collections::HashMap;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
-use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{Layer, filter::filter_fn, registry::LookupSpan};
 
 pub fn current_traceparent() -> Option<String> {
     let context = tracing::Span::current().context();
@@ -72,7 +72,14 @@ where
         .with_batch_exporter(exporter)
         .build();
     Ok((
-        tracing_opentelemetry::layer().with_tracer(provider.tracer("cipherrun")),
+        tracing_opentelemetry::layer()
+            .with_tracer(provider.tracer("cipherrun"))
+            .with_filter(filter_fn(|metadata| {
+                !(metadata.is_event()
+                    && (metadata.target().starts_with("sqlx::query")
+                        || (metadata.target() == "cipherrun::database"
+                            && *metadata.level() == tracing::Level::DEBUG)))
+            })),
         provider,
     ))
 }
