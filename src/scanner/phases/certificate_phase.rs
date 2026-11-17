@@ -380,7 +380,9 @@ fn has_pem_certificates(output: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_support::{example_com_loopback_target, example_com_target};
+    use crate::utils::test_support::example_com_loopback_target;
+    #[cfg(unix)]
+    use crate::utils::test_support::example_com_target;
     use std::sync::Arc;
 
     #[cfg(unix)]
