@@ -257,7 +257,8 @@ same `RUST_LOG` filter and defaults to `info`.
 SQLx emits native `sqlx::query` events: enabled statements are `DEBUG`, while
 statements taking at least one second are `WARN` by default. They include elapsed
 time and row counts; the `db.statement` field contains SQL text but not bound
-parameter values. Keep variable data bound instead of embedding it in SQL text.
+parameter values, and retain the active tracing span for request/job correlation.
+Keep variable data bound instead of embedding it in SQL text.
 To disable SQLx statement events while retaining other `INFO` logs, use
 `RUST_LOG=info,sqlx::query=off`. These dependency events retain SQLx's field
 names rather than CipherRun's `event_name` convention.

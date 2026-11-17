@@ -3,6 +3,7 @@
 use sqlx::ConnectOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use tracing::Instrument;
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Clone)]
@@ -52,6 +53,10 @@ async fn sqlx_query_logging_omits_bound_secret_values() {
     sqlx::query("SELECT ? AS value WHERE 1 = 1 AND 2 = 2")
         .bind(secret)
         .fetch_one(&pool)
+        .instrument(tracing::info_span!(
+            "db.operation",
+            request_id = "sqlx-correlation-test"
+        ))
         .await
         .expect("bound query should succeed");
 
@@ -70,6 +75,14 @@ async fn sqlx_query_logging_omits_bound_secret_values() {
     assert!(event["fields"]["elapsed_secs"].is_number());
     assert_eq!(event["fields"]["rows_returned"], 1, "logs: {logs}");
     assert!(event["fields"]["db.statement"].as_str().is_some());
+    assert!(
+        event["spans"]
+            .as_array()
+            .is_some_and(|spans| spans.iter().any(|span| {
+                span["name"] == "db.operation" && span["request_id"] == "sqlx-correlation-test"
+            })),
+        "SQLx event should inherit its operation correlation span; logs: {logs}"
+    );
     assert!(!logs.contains(secret));
 
     pool.close().await;
