@@ -118,12 +118,8 @@ impl ScanExecutor {
                     "Waiting for active scan jobs to finish"
                 );
                 while let Some(result) = active_tasks.join_next().await {
-                    if result.is_err() {
-                        error!(
-                            event_name = "scan_job.task.join_failed",
-                            error_type = "join_error",
-                            "Scan job task failed"
-                        );
+                    if let Err(error) = result {
+                        log_scan_job_task_join_failed(&error);
                     }
                 }
                 info!(
@@ -140,12 +136,8 @@ impl ScanExecutor {
                 result = self.job_queue.dequeue() => result,
                 _ = shutdown_rx.changed() => continue,
                 result = active_tasks.join_next(), if !active_tasks.is_empty() => {
-                    if matches!(result, Some(Err(_))) {
-                        error!(
-                            event_name = "scan_job.task.join_failed",
-                            error_type = "join_error",
-                            "Scan job task failed"
-                        );
+                    if let Some(Err(error)) = result {
+                        log_scan_job_task_join_failed(&error);
                     }
                     continue;
                 }
@@ -161,12 +153,8 @@ impl ScanExecutor {
                         _ = shutdown_rx.changed() => {},
                         _ = tokio::time::sleep(Duration::from_millis(500)) => {},
                         result = active_tasks.join_next(), if !active_tasks.is_empty() => {
-                            if matches!(result, Some(Err(_))) {
-                                error!(
-                                    event_name = "scan_job.task.join_failed",
-                                    error_type = "join_error",
-                                    "Scan job task failed"
-                                );
+                            if let Some(Err(error)) = result {
+                                log_scan_job_task_join_failed(&error);
                             }
                         }
                     }
@@ -338,12 +326,7 @@ impl ScanExecutor {
                             return;
                         }
                         Err(error) => {
-                            error!(
-                                event_name = "scan_job.task.join_failed",
-                                error_type = "join_error",
-                                error_code = scan_task_join_error_code(&error),
-                                "Scan task failed while joining"
-                            );
+                            log_scan_job_task_join_failed(&error);
                             Err(TlsError::Other("Scan task join error".to_string()))
                         }
                     };
@@ -421,12 +404,7 @@ impl ScanExecutor {
                             }
                             Err(error) => {
                                 if error.is_panic() {
-                                    error!(
-                                        event_name = "scan_job.task.join_failed",
-                                        error_type = "join_error",
-                                        error_code = scan_task_join_error_code(&error),
-                                        "Scan task panicked while cancellation was being handled"
-                                    );
+                                    log_scan_job_task_join_failed(&error);
                                 }
                                 let _ = self
                                     .progress_tx
@@ -917,7 +895,25 @@ fn is_retryable_webhook_status(status: reqwest::StatusCode) -> bool {
 }
 
 fn scan_task_join_error_code(error: &tokio::task::JoinError) -> &'static str {
-    if error.is_panic() { "panic" } else { "other" }
+    if error.is_panic() {
+        "task_panicked"
+    } else {
+        "task_cancelled"
+    }
+}
+
+fn log_scan_job_task_join_failed(error: &tokio::task::JoinError) {
+    error!(
+        event_name = "scan_job.task.join_failed",
+        error_type = if error.is_panic() {
+            "panic"
+        } else {
+            "cancelled"
+        },
+        error_code = scan_task_join_error_code(error),
+        outcome = "failed",
+        "Scan job task failed"
+    );
 }
 
 async fn get_job_for_status_check(
@@ -976,14 +972,58 @@ mod tests {
         let panic = tokio::spawn(async { panic!("test panic") })
             .await
             .expect_err("task should panic");
-        assert_eq!(scan_task_join_error_code(&panic), "panic");
+        assert_eq!(scan_task_join_error_code(&panic), "task_panicked");
 
         let cancelled_task = tokio::spawn(std::future::pending::<()>());
         cancelled_task.abort();
         let cancelled = cancelled_task
             .await
             .expect_err("aborted task should be cancelled");
-        assert_eq!(scan_task_join_error_code(&cancelled), "other");
+        assert_eq!(scan_task_join_error_code(&cancelled), "task_cancelled");
+    }
+
+    #[tokio::test]
+    async fn scan_task_join_failure_events_are_categorized_and_redacted() {
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let panic = tokio::spawn(async { panic!("private-panic-detail") })
+            .await
+            .expect_err("task should panic");
+        let cancelled_task = tokio::spawn(std::future::pending::<()>());
+        cancelled_task.abort();
+        let cancelled = cancelled_task
+            .await
+            .expect_err("aborted task should be cancelled");
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_scan_job_task_join_failed(&panic);
+            log_scan_job_task_join_failed(&cancelled);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2, "{output}");
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.task.join_failed"
+                && event["fields"]["error_type"] == "panic"
+                && event["fields"]["error_code"] == "task_panicked"
+                && event["fields"]["outcome"] == "failed"
+        }));
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.task.join_failed"
+                && event["fields"]["error_type"] == "cancelled"
+                && event["fields"]["error_code"] == "task_cancelled"
+                && event["fields"]["outcome"] == "failed"
+        }));
+        assert!(!output.contains("private-panic-detail"));
     }
 
     #[test]

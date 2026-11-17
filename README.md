@@ -278,6 +278,9 @@ individual failed tasks retain their own categorized error events. If the task
 owner is dropped before graceful shutdown, `api_server.background_tasks.drop_cleanup`
 records whether a shutdown signal was sent and whether the executor cleanup could
 be scheduled in the active Tokio runtime.
+`scan_job.task.join_failed` classifies unexpected task panics and cancellations
+with stable error codes and an outcome; its structured event omits the panic
+payload.
 Monitoring logs inventory loads, manual additions, allowlisted CT discovery
 counts, scan outcomes, and per-channel alert delivery outcomes without logging
 the monitored hostnames. Its `monitor.started` event follows inventory and
