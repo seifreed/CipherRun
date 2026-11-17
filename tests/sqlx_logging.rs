@@ -86,4 +86,30 @@ async fn sqlx_query_logging_omits_bound_secret_values() {
     assert!(!logs.contains(secret));
 
     pool.close().await;
+
+    output.0.lock().unwrap().clear();
+    let database_dir = tempfile::tempdir().expect("temporary database directory should exist");
+    let database = cipherrun::db::DatabasePool::new(&cipherrun::db::DatabaseConfig::sqlite(
+        database_dir.path().join("app-pool.db"),
+    ))
+    .await
+    .expect("CipherRun database pool should connect");
+    let cipherrun::db::DatabasePool::Sqlite(pool) = database else {
+        panic!("SQLite config should create a SQLite pool");
+    };
+    sqlx::query("SELECT 'app-pool-literal-secret'")
+        .fetch_one(&pool)
+        .await
+        .expect("literal query should succeed");
+
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert!(!logs.contains("app-pool-literal-secret"), "{logs}");
+    assert!(
+        logs.lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .all(|event| event["target"] != "sqlx::query"),
+        "CipherRun's pool should disable SQLx statement logging: {logs}"
+    );
+    assert!(logs.contains("database.pool.connected"), "{logs}");
+    pool.close().await;
 }

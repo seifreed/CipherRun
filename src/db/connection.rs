@@ -2,7 +2,7 @@
 // Manages PostgreSQL and SQLite connection pools with sqlx
 
 use crate::db::config::{DatabaseConfig, DatabaseType};
-use sqlx::{Pool, Postgres, Row, Sqlite};
+use sqlx::{ConnectOptions, Pool, Postgres, Row, Sqlite};
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -263,10 +263,18 @@ impl DatabasePool {
                     ));
                 }
 
+                let connect_options =
+                    sqlx::postgres::PgConnectOptions::from_str(&connection_string)
+                        .map_err(|_| {
+                            crate::TlsError::DatabaseError(
+                                "PostgreSQL connection options are invalid".to_string(),
+                            )
+                        })?
+                        .disable_statement_logging();
                 let pool = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(max_connections)
                     .acquire_timeout(crate::constants::DB_ACQUIRE_TIMEOUT)
-                    .connect(&connection_string)
+                    .connect_with(connect_options)
                     .await
                     .map_err(|e| {
                         crate::TlsError::DatabaseError(format!(
@@ -298,7 +306,8 @@ impl DatabasePool {
                         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
                         // Set busy timeout for write operations
                         // This allows waiting instead of immediately failing on lock contention
-                        .busy_timeout(crate::constants::DB_BUSY_TIMEOUT);
+                        .busy_timeout(crate::constants::DB_BUSY_TIMEOUT)
+                        .disable_statement_logging();
 
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     // Allow multiple connections for read concurrency
