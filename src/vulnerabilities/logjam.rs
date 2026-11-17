@@ -182,64 +182,66 @@ impl LogjamTester {
         );
 
         // Wrap blocking SSL operations in spawn_blocking
-        let result = tokio::task::spawn_blocking(move || -> crate::Result<WeakDhStatus> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate validity is irrelevant to the negotiated DH parameter
-            // size; a verifying connector would false-negative (report Strong) on
-            // bad-cert hosts by failing the handshake at cert validation.
-            builder.set_verify(SslVerifyMode::NONE);
+        let result = crate::utils::task::spawn_blocking_with_current_span(
+            move || -> crate::Result<WeakDhStatus> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to the negotiated DH parameter
+                // size; a verifying connector would false-negative (report Strong) on
+                // bad-cert hosts by failing the handshake at cert validation.
+                builder.set_verify(SslVerifyMode::NONE);
 
-            // A security scanner must be able to *measure* weak DH parameters.
-            // OpenSSL's default security level rejects sub-2048-bit DH groups
-            // during the handshake, so a weak-DH server would fail to connect and
-            // be mis-reported as Strong (the weaker the group, the more likely the
-            // rejection — a backwards false negative). Drop the security level so
-            // the weak parameters are negotiated and measurable via peer_tmp_key().
-            builder.set_security_level(0);
+                // A security scanner must be able to *measure* weak DH parameters.
+                // OpenSSL's default security level rejects sub-2048-bit DH groups
+                // during the handshake, so a weak-DH server would fail to connect and
+                // be mis-reported as Strong (the weaker the group, the more likely the
+                // rejection — a backwards false negative). Drop the security level so
+                // the weak parameters are negotiated and measurable via peer_tmp_key().
+                builder.set_security_level(0);
 
-            // Set DHE ciphers only
-            builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
-            // DHE cipher lists do not constrain TLS 1.3. Limit the probe to
-            // TLS <= 1.2 so peer_tmp_key() measures finite-field DH.
-            builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+                // Set DHE ciphers only
+                builder.set_cipher_list("DHE:EDH:!aNULL:!eNULL")?;
+                // DHE cipher lists do not constrain TLS 1.3. Limit the probe to
+                // TLS <= 1.2 so peer_tmp_key() measures finite-field DH.
+                builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-            let connector = builder.build();
-            match connector
-                .configure()?
-                .use_server_name_indication(use_sni)
-                .connect(&hostname, std_stream)
-            {
-                Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
-                    Ok(tmp_key) => {
-                        if tmp_key.id() == Id::DH {
-                            let bits = tmp_key.bits();
-                            Ok(if bits < MIN_SECURE_DH_BITS {
-                                WeakDhStatus::Weak { bits }
+                let connector = builder.build();
+                match connector
+                    .configure()?
+                    .use_server_name_indication(use_sni)
+                    .connect(&hostname, std_stream)
+                {
+                    Ok(ssl_stream) => match ssl_stream.ssl().peer_tmp_key() {
+                        Ok(tmp_key) => {
+                            if tmp_key.id() == Id::DH {
+                                let bits = tmp_key.bits();
+                                Ok(if bits < MIN_SECURE_DH_BITS {
+                                    WeakDhStatus::Weak { bits }
+                                } else {
+                                    WeakDhStatus::Strong
+                                })
                             } else {
-                                WeakDhStatus::Strong
-                            })
+                                Ok(WeakDhStatus::Strong)
+                            }
+                        }
+                        Err(_) => Ok(WeakDhStatus::Inconclusive),
+                    },
+                    Err(e) => {
+                        // OpenSSL enforces a hard minimum DH modulus (e.g. 512-bit
+                        // groups) that even security level 0 will not lower, so the
+                        // handshake fails with "dh key too small". That refusal is
+                        // itself positive evidence of a dangerously weak group —
+                        // report it as weak (exact size unknown, hence bits 0).
+                        // Any other handshake failure means the DHE measurement did
+                        // not complete; do not report it as a clean strong result.
+                        if e.to_string().contains("dh key too small") {
+                            Ok(WeakDhStatus::Weak { bits: 0 })
                         } else {
-                            Ok(WeakDhStatus::Strong)
+                            Ok(WeakDhStatus::Inconclusive)
                         }
                     }
-                    Err(_) => Ok(WeakDhStatus::Inconclusive),
-                },
-                Err(e) => {
-                    // OpenSSL enforces a hard minimum DH modulus (e.g. 512-bit
-                    // groups) that even security level 0 will not lower, so the
-                    // handshake fails with "dh key too small". That refusal is
-                    // itself positive evidence of a dangerously weak group —
-                    // report it as weak (exact size unknown, hence bits 0).
-                    // Any other handshake failure means the DHE measurement did
-                    // not complete; do not report it as a clean strong result.
-                    if e.to_string().contains("dh key too small") {
-                        Ok(WeakDhStatus::Weak { bits: 0 })
-                    } else {
-                        Ok(WeakDhStatus::Inconclusive)
-                    }
                 }
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| crate::error::TlsError::Other(format!("Spawn blocking failed: {}", e)))??;
 
@@ -322,50 +324,53 @@ impl LogjamTester {
         );
 
         // Wrap blocking SSL operations in spawn_blocking
-        let result = tokio::task::spawn_blocking(move || -> Result<LogjamProbeStatus> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate validity is irrelevant to export-DHE cipher support;
-            // without this a bad-cert host would false-negative.
-            builder.set_verify(SslVerifyMode::NONE);
-            // Negotiate weak DHE groups too (see test_weak_dh_params): the
-            // default security level would otherwise reject them and hide a
-            // weak-DH server's DHE support.
-            builder.set_security_level(0);
+        let result = crate::utils::task::spawn_blocking_with_current_span(
+            move || -> Result<LogjamProbeStatus> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to export-DHE cipher support;
+                // without this a bad-cert host would false-negative.
+                builder.set_verify(SslVerifyMode::NONE);
+                // Negotiate weak DHE groups too (see test_weak_dh_params): the
+                // default security level would otherwise reject them and hide a
+                // weak-DH server's DHE support.
+                builder.set_security_level(0);
 
-            // Allow SSL 3.0 for export ciphers
-            if cipher.starts_with("EXP")
-                && builder
-                    .set_min_proto_version(Some(SslVersion::SSL3))
-                    .is_err()
-            {
-                return Ok(LogjamProbeStatus::Inconclusive);
-            }
+                // Allow SSL 3.0 for export ciphers
+                if cipher.starts_with("EXP")
+                    && builder
+                        .set_min_proto_version(Some(SslVersion::SSL3))
+                        .is_err()
+                {
+                    return Ok(LogjamProbeStatus::Inconclusive);
+                }
 
-            // Try to set the specific cipher
-            match builder.set_cipher_list(&cipher) {
-                Ok(_) => {
-                    // set_cipher_list does not apply to TLS 1.3 ciphersuites.
-                    // Keep per-DHE probes on TLS <= 1.2.
-                    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
-                    let connector = builder.build();
-                    match connector
-                        .configure()?
-                        .use_server_name_indication(use_sni)
-                        .connect(&hostname, std_stream)
-                    {
-                        Ok(_) => Ok(LogjamProbeStatus::Supported),
-                        Err(e) => {
-                            if crate::utils::network::is_transport_anomaly_error(&e.to_string()) {
-                                Ok(LogjamProbeStatus::Inconclusive)
-                            } else {
-                                Ok(LogjamProbeStatus::NotSupported)
+                // Try to set the specific cipher
+                match builder.set_cipher_list(&cipher) {
+                    Ok(_) => {
+                        // set_cipher_list does not apply to TLS 1.3 ciphersuites.
+                        // Keep per-DHE probes on TLS <= 1.2.
+                        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+                        let connector = builder.build();
+                        match connector
+                            .configure()?
+                            .use_server_name_indication(use_sni)
+                            .connect(&hostname, std_stream)
+                        {
+                            Ok(_) => Ok(LogjamProbeStatus::Supported),
+                            Err(e) => {
+                                if crate::utils::network::is_transport_anomaly_error(&e.to_string())
+                                {
+                                    Ok(LogjamProbeStatus::Inconclusive)
+                                } else {
+                                    Ok(LogjamProbeStatus::NotSupported)
+                                }
                             }
                         }
                     }
+                    Err(_) => Ok(LogjamProbeStatus::Inconclusive),
                 }
-                Err(_) => Ok(LogjamProbeStatus::Inconclusive),
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| crate::error::TlsError::Other(format!("Spawn blocking failed: {}", e)))??;
 

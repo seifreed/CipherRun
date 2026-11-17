@@ -23,7 +23,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::spawn_with_current_span;
+    use super::{spawn_blocking_with_current_span, spawn_with_current_span};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -81,5 +81,38 @@ mod tests {
             serde_json::from_str(output.lines().next().unwrap()).unwrap();
         assert_eq!(event["fields"]["event_name"], "task.context.test");
         assert_eq!(event["spans"][0]["request_id"], "request-123");
+    }
+
+    #[test]
+    fn spawned_blocking_task_keeps_current_span() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("scan.phase", phase = "blocking_probe");
+            runtime.block_on(async move {
+                span.in_scope(|| {
+                    spawn_blocking_with_current_span(|| {
+                        tracing::info!(event_name = "blocking_task.context.test", "task event");
+                    })
+                })
+                .await
+                .unwrap();
+            });
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(output.lines().next().unwrap()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "blocking_task.context.test");
+        assert_eq!(event["spans"][0]["phase"], "blocking_probe");
     }
 }

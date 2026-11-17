@@ -465,28 +465,30 @@ impl ProtocolTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         );
-        tokio::task::spawn_blocking(move || -> Result<ProtocolProbeOutcome> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            builder.set_verify(SslVerifyMode::NONE);
-            builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
-            builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+        crate::utils::task::spawn_blocking_with_current_span(
+            move || -> Result<ProtocolProbeOutcome> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                builder.set_verify(SslVerifyMode::NONE);
+                builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
+                builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-            if enable_bugs_mode {
-                use openssl::ssl::SslOptions;
-                builder.set_options(SslOptions::ALL);
-            }
+                if enable_bugs_mode {
+                    use openssl::ssl::SslOptions;
+                    builder.set_options(SslOptions::ALL);
+                }
 
-            let connector = builder.build();
+                let connector = builder.build();
 
-            match connector
-                .configure()?
-                .use_server_name_indication(use_sni)
-                .connect(&sni_host, std_stream)
-            {
-                Ok(_) => Ok(ProtocolProbeOutcome::Supported),
-                Err(error) => Ok(openssl_tls12::classify_handshake_error(&error)),
-            }
-        })
+                match connector
+                    .configure()?
+                    .use_server_name_indication(use_sni)
+                    .connect(&sni_host, std_stream)
+                {
+                    Ok(_) => Ok(ProtocolProbeOutcome::Supported),
+                    Err(error) => Ok(openssl_tls12::classify_handshake_error(&error)),
+                }
+            },
+        )
         .await
         .map_err(|e| crate::TlsError::Other(format!("TLS 1.2 probe task failed: {}", e)))?
     }

@@ -647,48 +647,49 @@ pub async fn try_vuln_ssl_connection(
         openssl_hostname_and_sni(&target.hostname, config.starttls_hostname.as_deref());
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
-    let result = tokio::task::spawn_blocking(move || -> Result<VulnSslResult> {
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Vulnerability/cipher probes detect a capability by whether a handshake
-        // with a specific cipher/version succeeds; certificate validity is
-        // irrelevant and is assessed separately. A verifying connector would
-        // fail at cert validation on bad-cert hosts and false-negative.
-        builder.set_verify(SslVerifyMode::NONE);
+    let result =
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<VulnSslResult> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Vulnerability/cipher probes detect a capability by whether a handshake
+            // with a specific cipher/version succeeds; certificate validity is
+            // irrelevant and is assessed separately. A verifying connector would
+            // fail at cert validation on bad-cert hosts and false-negative.
+            builder.set_verify(SslVerifyMode::NONE);
 
-        // Legacy fixtures and real vulnerable implementations intentionally
-        // expose protocols/ciphers rejected by OpenSSL 3's default security
-        // policy. The probe has already been explicitly scoped to that legacy
-        // capability, so lower the client policy here rather than reporting a
-        // local-policy failure as a remote negative.
-        builder.set_security_level(0);
+            // Legacy fixtures and real vulnerable implementations intentionally
+            // expose protocols/ciphers rejected by OpenSSL 3's default security
+            // policy. The probe has already been explicitly scoped to that legacy
+            // capability, so lower the client policy here rather than reporting a
+            // local-policy failure as a remote negative.
+            builder.set_security_level(0);
 
-        if let Some(min_ver) = config.min_version {
-            builder.set_min_proto_version(Some(min_ver))?;
-        }
+            if let Some(min_ver) = config.min_version {
+                builder.set_min_proto_version(Some(min_ver))?;
+            }
 
-        if let Some(max_ver) = config.max_version {
-            builder.set_max_proto_version(Some(max_ver))?;
-        }
+            if let Some(max_ver) = config.max_version {
+                builder.set_max_proto_version(Some(max_ver))?;
+            }
 
-        if let Some(ciphers) = config.cipher_list
-            && builder.set_cipher_list(ciphers).is_err()
-        {
-            return Ok(VulnSslResult::Inconclusive);
-        }
+            if let Some(ciphers) = config.cipher_list
+                && builder.set_cipher_list(ciphers).is_err()
+            {
+                return Ok(VulnSslResult::Inconclusive);
+            }
 
-        let connector = builder.build();
+            let connector = builder.build();
 
-        match connector
-            .configure()?
-            .use_server_name_indication(use_sni)
-            .connect(&hostname, std_stream)
-        {
-            Ok(ssl_stream) => Ok(VulnSslResult::Connected(ssl_stream)),
-            Err(error) => Ok(classify_vuln_ssl_handshake_error(error)),
-        }
-    })
-    .await
-    .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
+                Ok(ssl_stream) => Ok(VulnSslResult::Connected(ssl_stream)),
+                Err(error) => Ok(classify_vuln_ssl_handshake_error(error)),
+            }
+        })
+        .await
+        .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 
     Ok(result)
 }
@@ -796,46 +797,48 @@ pub async fn test_cipher_support_outcome(
     let (hostname, use_sni) = openssl_hostname_and_sni(&target.hostname, None);
 
     // Wrap blocking SSL operations in spawn_blocking to avoid blocking async runtime
-    let result = tokio::task::spawn_blocking(move || -> Result<CipherSupportOutcome> {
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Cipher support is independent of certificate validity (assessed
-        // separately); a verifying connector would false-negative on bad-cert
-        // hosts by failing the handshake at cert validation.
-        builder.set_verify(SslVerifyMode::NONE);
+    let result = crate::utils::task::spawn_blocking_with_current_span(
+        move || -> Result<CipherSupportOutcome> {
+            let mut builder = SslConnector::builder(SslMethod::tls())?;
+            // Cipher support is independent of certificate validity (assessed
+            // separately); a verifying connector would false-negative on bad-cert
+            // hosts by failing the handshake at cert validation.
+            builder.set_verify(SslVerifyMode::NONE);
 
-        if allow_ssl3
-            && builder
-                .set_min_proto_version(Some(SslVersion::SSL3))
-                .is_err()
-        {
-            return Ok(CipherSupportOutcome::Inconclusive);
-        }
+            if allow_ssl3
+                && builder
+                    .set_min_proto_version(Some(SslVersion::SSL3))
+                    .is_err()
+            {
+                return Ok(CipherSupportOutcome::Inconclusive);
+            }
 
-        // A `set_cipher_list` failure means the local OpenSSL build cannot offer
-        // this cipher (e.g. RC4/3DES/export are compiled out of the vendored
-        // build), so the server's support is undeterminable — not "unsupported".
-        // Reporting NotSupported here would be a false negative.
-        if builder.set_cipher_list(&cipher).is_err() {
-            return Ok(CipherSupportOutcome::Inconclusive);
-        }
+            // A `set_cipher_list` failure means the local OpenSSL build cannot offer
+            // this cipher (e.g. RC4/3DES/export are compiled out of the vendored
+            // build), so the server's support is undeterminable — not "unsupported".
+            // Reporting NotSupported here would be a false negative.
+            if builder.set_cipher_list(&cipher).is_err() {
+                return Ok(CipherSupportOutcome::Inconclusive);
+            }
 
-        let connector = builder.build();
+            let connector = builder.build();
 
-        match connector
-            .configure()?
-            .use_server_name_indication(use_sni)
-            .connect(&hostname, std_stream)
-        {
-            Ok(_) => Ok(CipherSupportOutcome::Supported),
-            Err(error) => {
-                if is_transport_anomaly_error(&error.to_string()) {
-                    Ok(CipherSupportOutcome::Inconclusive)
-                } else {
-                    Ok(CipherSupportOutcome::NotSupported)
+            match connector
+                .configure()?
+                .use_server_name_indication(use_sni)
+                .connect(&hostname, std_stream)
+            {
+                Ok(_) => Ok(CipherSupportOutcome::Supported),
+                Err(error) => {
+                    if is_transport_anomaly_error(&error.to_string()) {
+                        Ok(CipherSupportOutcome::Inconclusive)
+                    } else {
+                        Ok(CipherSupportOutcome::NotSupported)
+                    }
                 }
             }
-        }
-    })
+        },
+    )
     .await
     .map_err(|e| TlsError::Other(format!("Spawn blocking failed: {e}")))??;
 

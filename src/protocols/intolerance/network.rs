@@ -133,7 +133,7 @@ impl IntoleranceTester {
             &self.target.hostname,
             self.sni_hostname.as_deref(),
         );
-        tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<Option<String>> {
             let builder = build_dh_prime_connector_builder()?;
 
             let connector = builder.build();

@@ -196,7 +196,7 @@ impl<'a> PaddingOracle2016Tester<'a> {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<CbcSupportStatus> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<CbcSupportStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to CBC cipher support; a verifying
             // connector would surface a "certificate verify failed" handshake error

@@ -180,7 +180,7 @@ impl BeastTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<BeastProbeStatus> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<BeastProbeStatus> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Certificate validity is irrelevant to CBC cipher support over SSL 3.0;
             // without this a bad-cert host would false-negative.

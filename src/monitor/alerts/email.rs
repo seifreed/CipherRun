@@ -219,7 +219,7 @@ impl AlertChannel for EmailChannel {
         let transport = self.get_transport()?;
 
         // Send email (blocking operation, run in blocking task)
-        tokio::task::spawn_blocking(move || {
+        crate::utils::task::spawn_blocking_with_current_span(move || {
             transport
                 .send(&message)
                 .map_err(|e| TlsError::Other(format!("Failed to send email: {e}")))
@@ -236,7 +236,7 @@ impl AlertChannel for EmailChannel {
     async fn test_connection(&self) -> Result<()> {
         let transport = self.get_transport()?;
 
-        tokio::task::spawn_blocking(move || {
+        crate::utils::task::spawn_blocking_with_current_span(move || {
             transport
                 .test_connection()
                 .map_err(|e| TlsError::Other(format!("SMTP connection test failed: {e}")))

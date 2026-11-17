@@ -334,6 +334,9 @@ so asynchronous diagnostics retain their operation context. The response's
 related spans. Unmatched paths use a fixed marker; client IPs, query strings,
 request bodies and authorization headers are not written to logs. Do not add credentials,
 webhook URLs, certificate contents, or alert message bodies to tracing fields.
+Production blocking probes and email alert sends use the same current-span
+propagation helper, so their diagnostics remain attached to the active scan or
+monitor operation.
 
 With the `otel` feature enabled, tracing spans are exported through OTLP over
 HTTP. Export failures produce sanitized SDK error events through `tracing`; the

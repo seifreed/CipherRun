@@ -323,7 +323,7 @@ impl GroupTester {
                 self.starttls_hostname.as_deref(),
             );
             let openssl_name = openssl_name.clone();
-            let outcome = match tokio::task::spawn_blocking(move || {
+            let outcome = match crate::utils::task::spawn_blocking_with_current_span(move || {
                 let mut builder = match SslConnector::builder(SslMethod::tls()) {
                     Ok(builder) => builder,
                     Err(_) => return GroupProbeOutcome::Inconclusive,

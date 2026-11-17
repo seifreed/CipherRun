@@ -763,57 +763,59 @@ impl CertificateAdvancedTester {
 
         let (hostname_to_use, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
-        tokio::task::spawn_blocking(move || -> Result<(X509, Vec<Vec<u8>>)> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // The scanner must retrieve and inspect certificates from hosts whose
-            // certificates are expired/self-signed/untrusted — exactly the cases a
-            // verifying connector rejects with a fatal handshake error. Trust is
-            // assessed separately by the certificate validator.
-            builder.set_verify(SslVerifyMode::NONE);
+        crate::utils::task::spawn_blocking_with_current_span(
+            move || -> Result<(X509, Vec<Vec<u8>>)> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // The scanner must retrieve and inspect certificates from hosts whose
+                // certificates are expired/self-signed/untrusted — exactly the cases a
+                // verifying connector rejects with a fatal handshake error. Trust is
+                // assessed separately by the certificate validator.
+                builder.set_verify(SslVerifyMode::NONE);
 
-            let connector = builder.build();
-            let ssl = connector
-                .configure()?
-                .use_server_name_indication(use_sni)
-                .into_ssl(&hostname_to_use)?;
-            let capture = Box::new(HandshakeCapture::default());
-            let capture_ptr = Box::into_raw(capture);
-            unsafe {
-                let ssl_ptr = ssl.as_ptr().cast::<c_void>();
-                SSL_set_msg_callback(ssl_ptr, Some(capture_tls_message));
-                SSL_set_msg_callback_arg(ssl_ptr, capture_ptr.cast::<c_void>());
-            }
-
-            let handshake = ssl.connect(std_stream);
-            let ssl_stream = match handshake {
-                Ok(stream) => stream,
-                Err(error) => {
-                    let converted = crate::error::TlsError::from(error);
-                    // The failed stream is owned by the handshake error and is
-                    // dropped before the capture is reclaimed.
-                    let _capture = unsafe { Box::from_raw(capture_ptr) };
-                    return Err(converted);
+                let connector = builder.build();
+                let ssl = connector
+                    .configure()?
+                    .use_server_name_indication(use_sni)
+                    .into_ssl(&hostname_to_use)?;
+                let capture = Box::new(HandshakeCapture::default());
+                let capture_ptr = Box::into_raw(capture);
+                unsafe {
+                    let ssl_ptr = ssl.as_ptr().cast::<c_void>();
+                    SSL_set_msg_callback(ssl_ptr, Some(capture_tls_message));
+                    SSL_set_msg_callback_arg(ssl_ptr, capture_ptr.cast::<c_void>());
                 }
-            };
 
-            let cert = match ssl_stream.ssl().peer_certificate() {
-                Some(cert) => cert,
-                None => {
-                    drop(ssl_stream);
-                    let _capture = unsafe { Box::from_raw(capture_ptr) };
-                    return Err(crate::error::TlsError::Other(
-                        "No certificate presented".into(),
-                    ));
-                }
-            };
+                let handshake = ssl.connect(std_stream);
+                let ssl_stream = match handshake {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        let converted = crate::error::TlsError::from(error);
+                        // The failed stream is owned by the handshake error and is
+                        // dropped before the capture is reclaimed.
+                        let _capture = unsafe { Box::from_raw(capture_ptr) };
+                        return Err(converted);
+                    }
+                };
 
-            drop(ssl_stream);
-            let transcript = unsafe { Box::from_raw(capture_ptr) }
-                .messages
-                .into_inner()
-                .unwrap_or_default();
-            Ok((cert, transcript))
-        })
+                let cert = match ssl_stream.ssl().peer_certificate() {
+                    Some(cert) => cert,
+                    None => {
+                        drop(ssl_stream);
+                        let _capture = unsafe { Box::from_raw(capture_ptr) };
+                        return Err(crate::error::TlsError::Other(
+                            "No certificate presented".into(),
+                        ));
+                    }
+                };
+
+                drop(ssl_stream);
+                let transcript = unsafe { Box::from_raw(capture_ptr) }
+                    .messages
+                    .into_inner()
+                    .unwrap_or_default();
+                Ok((cert, transcript))
+            },
+        )
         .await
         .map_err(|e| crate::TlsError::Other(format!("certificate task failed: {}", e)))?
     }
@@ -838,50 +840,52 @@ impl CertificateAdvancedTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<CertificateCompressionAnalysis> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate compression is independent of certificate validity; the
-            // scanner must probe it on bad-cert hosts too (trust assessed separately).
-            builder.set_verify(SslVerifyMode::NONE);
+        crate::utils::task::spawn_blocking_with_current_span(
+            move || -> Result<CertificateCompressionAnalysis> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate compression is independent of certificate validity; the
+                // scanner must probe it on bad-cert hosts too (trust assessed separately).
+                builder.set_verify(SslVerifyMode::NONE);
 
-            // Try to enable TLS 1.3 for certificate compression
-            builder.set_min_proto_version(Some(SslVersion::TLS1_3))?;
+                // Try to enable TLS 1.3 for certificate compression
+                builder.set_min_proto_version(Some(SslVersion::TLS1_3))?;
 
-            let connector = builder.build();
+                let connector = builder.build();
 
-            match connector
-                .configure()?
-                .use_server_name_indication(use_sni)
-                .connect(&hostname, std_stream)
-            {
-                Ok(ssl_stream) => {
-                    let cert = ssl_stream.ssl().peer_certificate();
+                match connector
+                    .configure()?
+                    .use_server_name_indication(use_sni)
+                    .connect(&hostname, std_stream)
+                {
+                    Ok(ssl_stream) => {
+                        let cert = ssl_stream.ssl().peer_certificate();
 
-                    if let Some(cert) = cert {
-                        Ok(analyze_observed_certificate_compression(&cert)?)
-                    } else {
-                        Ok(CertificateCompressionAnalysis {
-                            compression_supported: false,
-                            compression_algorithms: Vec::new(),
-                            original_size: None,
-                            compressed_size: None,
-                            compression_ratio: None,
-                            details: "No certificate presented".to_string(),
-                            inconclusive: true,
-                        })
+                        if let Some(cert) = cert {
+                            Ok(analyze_observed_certificate_compression(&cert)?)
+                        } else {
+                            Ok(CertificateCompressionAnalysis {
+                                compression_supported: false,
+                                compression_algorithms: Vec::new(),
+                                original_size: None,
+                                compressed_size: None,
+                                compression_ratio: None,
+                                details: "No certificate presented".to_string(),
+                                inconclusive: true,
+                            })
+                        }
                     }
+                    Err(e) => Ok(CertificateCompressionAnalysis {
+                        compression_supported: false,
+                        compression_algorithms: Vec::new(),
+                        original_size: None,
+                        compressed_size: None,
+                        compression_ratio: None,
+                        details: format!("TLS 1.3 connection failed: {}", e),
+                        inconclusive: true,
+                    }),
                 }
-                Err(e) => Ok(CertificateCompressionAnalysis {
-                    compression_supported: false,
-                    compression_algorithms: Vec::new(),
-                    original_size: None,
-                    compressed_size: None,
-                    compression_ratio: None,
-                    details: format!("TLS 1.3 connection failed: {}", e),
-                    inconclusive: true,
-                }),
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| {
             crate::TlsError::Other(format!("certificate compression task failed: {}", e))
@@ -1013,7 +1017,7 @@ impl CertificateAdvancedTester {
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
         let cipher_string = cipher_list.join(":");
-        tokio::task::spawn_blocking(move || -> Result<String> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<String> {
             let mut builder = SslConnector::builder(SslMethod::tls())?;
             // Cipher negotiation is independent of certificate validity; the scanner
             // must probe it on bad-cert hosts too (trust assessed separately).

@@ -122,50 +122,52 @@ impl WinshockTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<SchannelDetectionStatus> {
-            let mut builder = SslConnector::builder(SslMethod::tls())?;
-            // Certificate validity is irrelevant to which cipher a Schannel server
-            // negotiates; a verifying connector would fail the handshake at cert
-            // validation on bad-cert hosts and falsely report NotDetected.
-            builder.set_verify(SslVerifyMode::NONE);
-            let connector = builder.build();
+        crate::utils::task::spawn_blocking_with_current_span(
+            move || -> Result<SchannelDetectionStatus> {
+                let mut builder = SslConnector::builder(SslMethod::tls())?;
+                // Certificate validity is irrelevant to which cipher a Schannel server
+                // negotiates; a verifying connector would fail the handshake at cert
+                // validation on bad-cert hosts and falsely report NotDetected.
+                builder.set_verify(SslVerifyMode::NONE);
+                let connector = builder.build();
 
-            match connector
-                .configure()?
-                .use_server_name_indication(use_sni)
-                .connect(&hostname, std_stream)
-            {
-                Ok(ssl_stream) => {
-                    // Check cipher and version patterns typical of Schannel
-                    let cipher = ssl_stream
-                        .ssl()
-                        .current_cipher()
-                        .map(|c| c.name().to_string())
-                        .unwrap_or_default();
+                match connector
+                    .configure()?
+                    .use_server_name_indication(use_sni)
+                    .connect(&hostname, std_stream)
+                {
+                    Ok(ssl_stream) => {
+                        // Check cipher and version patterns typical of Schannel
+                        let cipher = ssl_stream
+                            .ssl()
+                            .current_cipher()
+                            .map(|c| c.name().to_string())
+                            .unwrap_or_default();
 
-                    // Schannel's top-negotiated ciphers. We check exact equality on the
-                    // negotiated cipher (not substring) to avoid flagging servers that merely
-                    // support these widely-used suites but prefer something else first.
-                    let schannel_ciphers = [
-                        "ECDHE-RSA-AES256-SHA384",
-                        "ECDHE-RSA-AES128-SHA256",
-                        "AES256-SHA256",
-                        "AES128-SHA256",
-                        "ECDHE-RSA-AES256-GCM-SHA384",
-                        "ECDHE-RSA-AES128-GCM-SHA256",
-                        "ECDHE-ECDSA-AES256-GCM-SHA384",
-                        "ECDHE-ECDSA-AES128-GCM-SHA256",
-                    ];
+                        // Schannel's top-negotiated ciphers. We check exact equality on the
+                        // negotiated cipher (not substring) to avoid flagging servers that merely
+                        // support these widely-used suites but prefer something else first.
+                        let schannel_ciphers = [
+                            "ECDHE-RSA-AES256-SHA384",
+                            "ECDHE-RSA-AES128-SHA256",
+                            "AES256-SHA256",
+                            "AES128-SHA256",
+                            "ECDHE-RSA-AES256-GCM-SHA384",
+                            "ECDHE-RSA-AES128-GCM-SHA256",
+                            "ECDHE-ECDSA-AES256-GCM-SHA384",
+                            "ECDHE-ECDSA-AES128-GCM-SHA256",
+                        ];
 
-                    if schannel_ciphers.contains(&cipher.as_str()) {
-                        Ok(SchannelDetectionStatus::Detected)
-                    } else {
-                        Ok(SchannelDetectionStatus::NotDetected)
+                        if schannel_ciphers.contains(&cipher.as_str()) {
+                            Ok(SchannelDetectionStatus::Detected)
+                        } else {
+                            Ok(SchannelDetectionStatus::NotDetected)
+                        }
                     }
+                    Err(_) => Ok(SchannelDetectionStatus::Inconclusive),
                 }
-                Err(_) => Ok(SchannelDetectionStatus::Inconclusive),
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| crate::TlsError::Other(format!("Winshock blocking task failed: {}", e)))?
     }

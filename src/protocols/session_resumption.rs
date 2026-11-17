@@ -295,21 +295,23 @@ impl SessionResumptionTester {
     async fn establish_session(&self) -> Result<Option<SslSession>> {
         let std_stream = self.prepare_stream().await?;
         let tester = self.clone();
-        tokio::task::spawn_blocking(move || tester.establish_session_sync(std_stream))
-            .await
-            .map_err(|err| {
-                crate::error::TlsError::Other(format!("Session establish join error: {err}"))
-            })?
+        crate::utils::task::spawn_blocking_with_current_span(move || {
+            tester.establish_session_sync(std_stream)
+        })
+        .await
+        .map_err(|err| {
+            crate::error::TlsError::Other(format!("Session establish join error: {err}"))
+        })?
     }
 
     async fn try_resume_with_session(&self, session: SslSession) -> Result<bool> {
         let std_stream = self.prepare_stream().await?;
         let tester = self.clone();
-        tokio::task::spawn_blocking(move || tester.resume_with_session_sync(std_stream, &session))
-            .await
-            .map_err(|err| {
-                crate::error::TlsError::Other(format!("Session resume join error: {err}"))
-            })?
+        crate::utils::task::spawn_blocking_with_current_span(move || {
+            tester.resume_with_session_sync(std_stream, &session)
+        })
+        .await
+        .map_err(|err| crate::error::TlsError::Other(format!("Session resume join error: {err}")))?
     }
 
     /// Test session ID reuse

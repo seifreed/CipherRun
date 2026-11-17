@@ -86,7 +86,7 @@ impl BreachTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             use std::io::Write;
 
@@ -169,7 +169,7 @@ impl BreachTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || {
+        crate::utils::task::spawn_blocking_with_current_span(move || {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             // Certificate validity is irrelevant to HTTP response compression; a
             // verifying connector would leave BREACH undetectable on bad-cert hosts.
@@ -255,7 +255,7 @@ impl BreachTester {
 
         let (hostname, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-        tokio::task::spawn_blocking(move || -> Result<Option<bool>> {
+        crate::utils::task::spawn_blocking_with_current_span(move || -> Result<Option<bool>> {
             use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
             use std::io::Write;
 

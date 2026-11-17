@@ -161,35 +161,39 @@ impl<'a> RenegotiationTester<'a> {
 
                 let (hostname, use_sni) =
                     crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-                tokio::task::spawn_blocking(move || -> Result<RenegotiationSupport> {
-                    let mut builder = SslConnector::builder(SslMethod::tls())?;
-                    // Certificate validity is irrelevant to RFC 5746 secure
-                    // renegotiation support; a verifying connector would fail the
-                    // handshake at cert validation on bad-cert hosts and falsely
-                    // report NotSupported.
-                    builder.set_verify(SslVerifyMode::NONE);
+                crate::utils::task::spawn_blocking_with_current_span(
+                    move || -> Result<RenegotiationSupport> {
+                        let mut builder = SslConnector::builder(SslMethod::tls())?;
+                        // Certificate validity is irrelevant to RFC 5746 secure
+                        // renegotiation support; a verifying connector would fail the
+                        // handshake at cert validation on bad-cert hosts and falsely
+                        // report NotSupported.
+                        builder.set_verify(SslVerifyMode::NONE);
 
-                    let connector = builder.build();
+                        let connector = builder.build();
 
-                    match connector
-                        .configure()?
-                        .use_server_name_indication(use_sni)
-                        .connect(&hostname, std_stream)
-                    {
-                        Ok(_ssl_stream) => {
-                            // OpenSSL client with RFC 5746 connected successfully
-                            // Server supports secure renegotiation
-                            Ok(RenegotiationSupport::SecureRenegotiation)
-                        }
-                        Err(err) => {
-                            if crate::utils::network::is_transport_anomaly_error(&err.to_string()) {
-                                Ok(RenegotiationSupport::Inconclusive)
-                            } else {
-                                Ok(RenegotiationSupport::NotSupported)
+                        match connector
+                            .configure()?
+                            .use_server_name_indication(use_sni)
+                            .connect(&hostname, std_stream)
+                        {
+                            Ok(_ssl_stream) => {
+                                // OpenSSL client with RFC 5746 connected successfully
+                                // Server supports secure renegotiation
+                                Ok(RenegotiationSupport::SecureRenegotiation)
+                            }
+                            Err(err) => {
+                                if crate::utils::network::is_transport_anomaly_error(
+                                    &err.to_string(),
+                                ) {
+                                    Ok(RenegotiationSupport::Inconclusive)
+                                } else {
+                                    Ok(RenegotiationSupport::NotSupported)
+                                }
                             }
                         }
-                    }
-                })
+                    },
+                )
                 .await
                 .map_err(|e| crate::TlsError::Other(format!("renegotiation task failed: {}", e)))?
             }

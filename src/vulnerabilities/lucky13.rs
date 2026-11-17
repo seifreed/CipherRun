@@ -129,27 +129,29 @@ impl Lucky13Tester {
 
                 let (hostname, use_sni) =
                     crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-                tokio::task::spawn_blocking(move || -> Result<CbcCipherSupportStatus> {
-                    let mut builder = SslConnector::builder(SslMethod::tls())?;
-                    // The scanner must determine cipher support even on hosts with
-                    // expired/self-signed/untrusted certificates; certificate
-                    // validity is assessed separately.
-                    builder.set_verify(SslVerifyMode::NONE);
-                    builder.set_cipher_list(cbc_ciphers)?;
-                    // CBC ciphers are TLS <= 1.2. TLS 1.3 ignores set_cipher_list,
-                    // so keep this probe on the protocol versions it measures.
-                    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
+                crate::utils::task::spawn_blocking_with_current_span(
+                    move || -> Result<CbcCipherSupportStatus> {
+                        let mut builder = SslConnector::builder(SslMethod::tls())?;
+                        // The scanner must determine cipher support even on hosts with
+                        // expired/self-signed/untrusted certificates; certificate
+                        // validity is assessed separately.
+                        builder.set_verify(SslVerifyMode::NONE);
+                        builder.set_cipher_list(cbc_ciphers)?;
+                        // CBC ciphers are TLS <= 1.2. TLS 1.3 ignores set_cipher_list,
+                        // so keep this probe on the protocol versions it measures.
+                        builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-                    let connector = builder.build();
-                    match connector
-                        .configure()?
-                        .use_server_name_indication(use_sni)
-                        .connect(&hostname, std_stream)
-                    {
-                        Ok(_) => Ok(CbcCipherSupportStatus::Supported),
-                        Err(error) => Ok(classify_cbc_handshake_error(&error.to_string())),
-                    }
-                })
+                        let connector = builder.build();
+                        match connector
+                            .configure()?
+                            .use_server_name_indication(use_sni)
+                            .connect(&hostname, std_stream)
+                        {
+                            Ok(_) => Ok(CbcCipherSupportStatus::Supported),
+                            Err(error) => Ok(classify_cbc_handshake_error(&error.to_string())),
+                        }
+                    },
+                )
                 .await
                 .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
             }
