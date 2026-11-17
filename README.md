@@ -273,6 +273,9 @@ timeout, connection, and request failure counts; they omit the target and raw
 HTTP client errors. Host-bearing `hyper_util::client::legacy` diagnostics stay
 disabled even when `RUST_LOG` enables TRACE; CipherRun emits its own sanitized
 request outcome instead.
+CRL revocation checks emit `certificate.revocation.crl.completed` with `good` or
+`revoked` outcome and duration; CRL failures include a stable error code and
+duration without logging the distribution-point URL.
 OpenSSL certificate-fetch and BEAST probe events retain the active scan-phase
 span while their blocking work runs on Tokio's worker pool.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the

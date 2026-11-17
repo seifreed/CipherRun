@@ -7,6 +7,32 @@ use tokio::time::timeout;
 use x509_parser::prelude::*;
 use x509_parser::revocation_list::CertificateRevocationList;
 
+fn log_crl_completed(status: RevocationStatus, duration_ms: u64) {
+    let outcome = match status {
+        RevocationStatus::Good => "good",
+        RevocationStatus::Revoked => "revoked",
+        RevocationStatus::Unknown => "unknown",
+        RevocationStatus::Error => "error",
+        RevocationStatus::NotChecked => "not_checked",
+    };
+
+    if status == RevocationStatus::Revoked {
+        tracing::warn!(
+            event_name = "certificate.revocation.crl.completed",
+            outcome,
+            duration_ms,
+            "CRL revocation check completed"
+        );
+    } else {
+        tracing::debug!(
+            event_name = "certificate.revocation.crl.completed",
+            outcome,
+            duration_ms,
+            "CRL revocation check completed"
+        );
+    }
+}
+
 fn parse_crl_der_exact(der: &[u8]) -> Result<CertificateRevocationList<'_>> {
     let (rest, crl) = CertificateRevocationList::from_der(der).map_err(|e| {
         crate::error::TlsError::ParseError {
@@ -83,6 +109,7 @@ impl RevocationChecker {
         issuer: Option<&CertificateInfo>,
         crl_url: &str,
     ) -> Result<RevocationStatus> {
+        let started = std::time::Instant::now();
         // Download CRL. The URL comes from the untrusted certificate, so validate
         // and pin resolution before making the request.
         let validated = validate_revocation_http_url(crl_url, self.check_timeout).await?;
@@ -151,13 +178,19 @@ impl RevocationChecker {
         let cert_serial = &parsed_cert.serial;
 
         // Check each revoked certificate
-        for revoked_cert in crl.iter_revoked_certificates() {
-            if &revoked_cert.user_certificate == cert_serial {
-                return Ok(RevocationStatus::Revoked);
-            }
-        }
-
-        Ok(RevocationStatus::Good)
+        let status = if crl
+            .iter_revoked_certificates()
+            .any(|revoked_cert| &revoked_cert.user_certificate == cert_serial)
+        {
+            RevocationStatus::Revoked
+        } else {
+            RevocationStatus::Good
+        };
+        log_crl_completed(
+            status,
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
+        Ok(status)
     }
 }
 
@@ -165,6 +198,65 @@ impl RevocationChecker {
 mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
+
+    #[test]
+    fn crl_completion_events_report_structured_outcomes_and_duration() {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_crl_completed(RevocationStatus::Good, 17);
+            log_crl_completed(RevocationStatus::Revoked, 23);
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["level"], "DEBUG");
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "certificate.revocation.crl.completed"
+        );
+        assert_eq!(events[0]["fields"]["outcome"], "good");
+        assert_eq!(events[0]["fields"]["duration_ms"], 17);
+        assert_eq!(events[1]["level"], "WARN");
+        assert_eq!(events[1]["fields"]["outcome"], "revoked");
+        assert_eq!(events[1]["fields"]["duration_ms"], 23);
+    }
 
     #[test]
     fn test_extract_crl_url_empty_der() {

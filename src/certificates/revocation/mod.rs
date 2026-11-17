@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
+fn log_crl_failed(error: &crate::error::TlsError, duration_ms: u64) {
+    tracing::debug!(
+        event_name = "certificate.revocation.crl.failed",
+        error_type = "revocation_check",
+        error_code = error.observability_code(),
+        duration_ms,
+        "CRL check failed"
+    );
+}
+
 fn parse_x509_der_exact<'a>(der: &'a [u8], context: &str) -> Result<X509Certificate<'a>> {
     let (rest, cert) =
         X509Certificate::from_der(der).map_err(|e| crate::error::TlsError::ParseError {
@@ -173,6 +183,7 @@ impl RevocationChecker {
 
         // Fallback to CRL if OCSP fails
         if let Some(crl_url) = self.extract_crl_url(cert)? {
+            let started = std::time::Instant::now();
             match self.check_crl(cert, issuer, &crl_url).await {
                 Ok(status) => {
                     return Ok(RevocationResult {
@@ -185,10 +196,9 @@ impl RevocationChecker {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        event_name = "certificate.revocation.crl.failed",
-                        error_type = "revocation_check",
-                        "CRL check failed"
+                    log_crl_failed(
+                        &e,
+                        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     );
                     failed_methods.push((RevocationMethod::CRL, e.to_string()));
                 }
@@ -278,6 +288,61 @@ mod tests {
     fn test_revocation_checker_creation() {
         let checker = RevocationChecker::new(true);
         assert!(checker.phone_out_enabled);
+    }
+
+    #[test]
+    fn crl_failure_event_has_safe_error_code_and_duration() {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(output.clone())
+            .finish();
+        let error = crate::error::TlsError::HttpError {
+            status: 0,
+            details: "private.example/api-key-like-value".to_string(),
+        };
+
+        tracing::subscriber::with_default(subscriber, || log_crl_failed(&error, 29));
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "DEBUG");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "certificate.revocation.crl.failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "http_error");
+        assert_eq!(event["fields"]["duration_ms"], 29);
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("api-key-like-value"));
     }
 
     #[tokio::test]
