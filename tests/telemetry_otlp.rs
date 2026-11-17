@@ -1,6 +1,7 @@
 #![cfg(feature = "otel")]
 
 use axum::{Router, body::Bytes, extract::State, http::StatusCode, routing::post};
+use opentelemetry::trace::Tracer;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -209,6 +210,38 @@ async fn otlp_http_export_reaches_a_local_collector() {
             .await
             .unwrap();
     assert!(payload_size > 0);
+    collector.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn constructing_telemetry_layer_does_not_replace_the_global_provider() {
+    let _environment_lock = OTLP_ENV_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _environment = EndpointEnvironment::set(&endpoint);
+    let (sender, receiver) = mpsc::channel();
+    let collector = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/traces", post(receive_spans))
+                .with_state(sender),
+        )
+        .await
+        .unwrap();
+    });
+
+    let (_layer, provider) = cipherrun::telemetry::layer::<tracing_subscriber::Registry>().unwrap();
+    opentelemetry::global::tracer("global-provider.integration")
+        .in_span("unconfigured-global-provider", |_| {});
+    tokio::task::spawn_blocking(move || provider.shutdown().unwrap())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
     collector.abort();
 }
 
