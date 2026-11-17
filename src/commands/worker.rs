@@ -76,7 +76,8 @@ pub async fn run_worker(args: &Args) -> Result<()> {
     );
 
     let runner = Arc::clone(&executor);
-    let mut handle = tokio::spawn(async move { runner.start().await });
+    let mut handle =
+        crate::utils::task::spawn_with_current_span(async move { runner.start().await });
     tokio::select! {
         result = &mut handle => {
             result.map_err(|error| TlsError::Other(format!("worker task failed: {error}")))??;

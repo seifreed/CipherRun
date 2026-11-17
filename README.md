@@ -336,7 +336,8 @@ request bodies and authorization headers are not written to logs. Do not add cre
 webhook URLs, certificate contents, or alert message bodies to tracing fields.
 Production blocking probes and email alert sends use the same current-span
 propagation helper, so their diagnostics remain attached to the active scan or
-monitor operation.
+monitor operation. The standalone worker's executor and monitor's per-domain
+scans and signal handlers also retain the invoking command span.
 
 With the `otel` feature enabled, tracing spans are exported through OTLP over
 HTTP. Export failures produce sanitized SDK error events through `tracing`; the

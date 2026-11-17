@@ -328,7 +328,7 @@ impl MonitorDaemon {
             let detector_clone = Arc::clone(&self.detector);
             let semaphore_clone = Arc::clone(&self.scan_semaphore);
 
-            let task = tokio::spawn(async move {
+            let task = crate::utils::task::spawn_with_current_span(async move {
                 // Acquire semaphore permit - abort scan if semaphore is closed
                 let _permit = match semaphore_clone.acquire().await {
                     Ok(permit) => permit,
@@ -641,7 +641,7 @@ impl MonitorDaemon {
             let mut sigint = signal(SignalKind::interrupt())
                 .map_err(|_| crate::TlsError::Other("Failed to set up SIGINT handler".into()))?;
 
-            tokio::spawn(async move {
+            crate::utils::task::spawn_with_current_span(async move {
                 tokio::select! {
                     _ = sigterm.recv() => {
                         tracing::info!(event_name = "monitor.signal.received", signal = "SIGTERM");
@@ -657,7 +657,7 @@ impl MonitorDaemon {
         }
 
         #[cfg(not(unix))]
-        tokio::spawn(async move {
+        crate::utils::task::spawn_with_current_span(async move {
             if tokio::signal::ctrl_c().await.is_err() {
                 tracing::error!(
                     event_name = "monitor.signal_handler.failed",
