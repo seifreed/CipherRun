@@ -69,7 +69,9 @@ unsound = "workspace"
 yanked = "warn"
 
 # Advisories to ignore with documented reasons
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "No safe upgrade is available; chrono is used directly and through SQLx for persisted/API date types. This is a maintenance-only advisory, not a known vulnerability. Reassess migration to jiff/time by 2027-06-30." },
+]
 
 # =============================================================================
 # [licenses] - License compliance checks

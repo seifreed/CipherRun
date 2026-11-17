@@ -497,6 +497,12 @@ cargo fuzz build parsed_input
 cargo outdated
 ```
 
+`cargo deny` temporarily ignores the maintenance-only `RUSTSEC-2026-0543`
+advisory for `chrono`, which has no safe upgrade and remains required by SQLx
+and the date/time API models. Reassess the exception by 2027-06-30; it does not
+ignore vulnerability advisories, and `cargo audit` still reports the maintenance
+warning.
+
 Criterion benchmarks live in `benches/`, and `cargo-fuzz` targets plus seed corpora live in `fuzz/`.
 
 Run the manual API and logging soak with:
