@@ -688,7 +688,7 @@ impl AppState {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let mut tasks = Vec::with_capacity(3);
         let executor = self.executor.clone();
-        let scan_executor_task = tokio::spawn(async move {
+        let scan_executor_task = crate::utils::task::spawn_with_current_span(async move {
             if let Err(error) = executor.start().await {
                 tracing::error!(
                     event_name = "scan_executor.stopped_unexpectedly",
@@ -702,7 +702,7 @@ impl AppState {
 
         let job_queue = self.job_queue.clone();
         let mut queue_shutdown = shutdown_rx.clone();
-        let job_retention_task = tokio::spawn(async move {
+        let job_retention_task = crate::utils::task::spawn_with_current_span(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 JOB_RETENTION_CLEANUP_INTERVAL_SECS,
             ));
@@ -744,7 +744,7 @@ impl AppState {
         // never freed) — a slow memory leak.
         let rate_limiter = self.rate_limiter.clone();
         let mut rate_limit_shutdown = shutdown_rx;
-        let rate_limit_cleanup_task = tokio::spawn(async move {
+        let rate_limit_cleanup_task = crate::utils::task::spawn_with_current_span(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
                 RATE_LIMITER_CLEANUP_INTERVAL_SECS,
             ));
