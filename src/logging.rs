@@ -377,6 +377,21 @@ fn resolve_log_filter(rust_log: Option<&str>, verbose: u8) -> EnvFilter {
                 _ => "trace",
             })
         })
+        .add_directive(
+            "hyper_util::client::legacy=off"
+                .parse()
+                .expect("static privacy filter directive should parse"),
+        )
+        .add_directive(
+            "hyper_util::client::legacy::pool=off"
+                .parse()
+                .expect("static privacy filter directive should parse"),
+        )
+        .add_directive(
+            "hyper_util::client::legacy::connect::http=off"
+                .parse()
+                .expect("static privacy filter directive should parse"),
+        )
 }
 
 fn json_logs_enabled(format: Option<&str>) -> bool {
@@ -743,6 +758,39 @@ mod tests {
                 .to_string()
                 .contains("debug")
         );
+    }
+
+    #[test]
+    fn filter_suppresses_host_bearing_hyper_diagnostics_even_at_trace() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_env_filter(resolve_log_filter(
+                Some(
+                    "trace,hyper_util::client::legacy=trace,hyper_util::client::legacy::pool=trace,hyper_util::client::legacy::connect::http=trace",
+                ),
+                0,
+            ))
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::trace!(
+                target: "hyper_util::client::legacy::pool",
+                message = "checkout waiting for idle connection: (https, private.example:443)"
+            );
+            tracing::debug!(
+                target: "cipherrun::protocols::alpn",
+                event_name = "http3.request.inconclusive",
+                outcome = "inconclusive",
+                "HTTP/3 probe failed"
+            );
+        });
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("private.example"));
+        assert!(output.contains("http3.request.inconclusive"));
     }
 
     #[test]

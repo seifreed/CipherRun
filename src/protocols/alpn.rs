@@ -26,6 +26,16 @@ enum AlpnProbeOutcome {
     Inconclusive,
 }
 
+fn http3_error_category(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else {
+        "request"
+    }
+}
+
 /// ALPN protocol tester
 pub struct AlpnTester {
     target: Target,
@@ -176,6 +186,9 @@ impl AlpnTester {
         let url = format!("https://{}:{}/", host, self.target.port);
 
         let mut attempts = 0;
+        let mut timeout_failures = 0;
+        let mut connect_failures = 0;
+        let mut request_failures = 0;
         for addr in addrs {
             let client = reqwest::Client::builder()
                 .http3_prior_knowledge()
@@ -190,23 +203,34 @@ impl AlpnTester {
                 })?;
 
             attempts += 1;
-            if client.get(&url).send().await.is_ok() {
-                tracing::debug!(
-                    event_name = "http3.request.completed",
-                    outcome = "negotiated",
-                    protocol = "h3",
-                    address_count,
-                    duration_ms = started.elapsed().as_millis() as u64,
-                    "HTTP/3 request completed"
-                );
-                return Ok(AlpnProbeOutcome::Negotiated("h3".to_string()));
+            match client.get(&url).send().await {
+                Ok(_) => {
+                    tracing::debug!(
+                        event_name = "http3.request.completed",
+                        outcome = "negotiated",
+                        protocol = "h3",
+                        address_count,
+                        duration_ms = started.elapsed().as_millis() as u64,
+                        "HTTP/3 request completed"
+                    );
+                    return Ok(AlpnProbeOutcome::Negotiated("h3".to_string()));
+                }
+                Err(error) => match http3_error_category(&error) {
+                    "timeout" => timeout_failures += 1,
+                    "connect" => connect_failures += 1,
+                    _ => request_failures += 1,
+                },
             }
         }
 
         tracing::debug!(
             event_name = "http3.request.inconclusive",
+            outcome = "inconclusive",
             attempt_count = attempts,
             address_count,
+            timeout_failures,
+            connect_failures,
+            request_failures,
             duration_ms = started.elapsed().as_millis() as u64,
             "HTTP/3 request did not complete"
         );
@@ -620,6 +644,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_alpn_closed_target_is_inconclusive() {
+        use std::{
+            io::Write,
+            sync::{Arc, Mutex},
+        };
+        use tracing::instrument::WithSubscriber;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct Output(Arc<Mutex<Vec<u8>>>);
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Output {
+            type Writer = Writer;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                Writer(self.0.clone())
+            }
+        }
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
@@ -629,15 +683,45 @@ mod tests {
         let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
         let tester = AlpnTester::new(target);
+        let output = Output(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(output.clone())
+            .finish();
 
         let result = tester
             .test_alpn()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
             .await
             .expect("ALPN probe should return a result");
 
         assert!(result.inconclusive);
         assert!(result.supported_protocols.is_empty());
         assert!(!result.details.iter().any(|d| d.contains("not enabled")));
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event = output
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["fields"]["event_name"] == "http3.request.inconclusive")
+            .expect("HTTP/3 failure event should be emitted");
+        assert_eq!(event["fields"]["outcome"], "inconclusive");
+        let attempts = event["fields"]["attempt_count"]
+            .as_u64()
+            .expect("attempt count should be numeric");
+        let failures = ["timeout_failures", "connect_failures", "request_failures"]
+            .iter()
+            .map(|field| {
+                event["fields"][field]
+                    .as_u64()
+                    .expect("failure count should be numeric")
+            })
+            .sum::<u64>();
+        assert_eq!(attempts, 1);
+        assert_eq!(failures, attempts);
+        assert!(!event.to_string().contains("localhost"));
     }
 
     #[tokio::test]

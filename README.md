@@ -268,6 +268,11 @@ connection strings. Successful migration setup emits
 `database.migrations.completed` with backend, duration, and readiness outcome.
 DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
 per-target debug noise during bulk scans.
+HTTP/3 ALPN probes emit one `http3.request.inconclusive` event with aggregate
+timeout, connection, and request failure counts; they omit the target and raw
+HTTP client errors. Host-bearing `hyper_util::client::legacy` diagnostics stay
+disabled even when `RUST_LOG` enables TRACE; CipherRun emits its own sanitized
+request outcome instead.
 OpenSSL certificate-fetch and BEAST probe events retain the active scan-phase
 span while their blocking work runs on Tokio's worker pool.
 Set `CIPHERRUN_LOG_FORMAT=json` to emit newline-delimited JSON; text is the
