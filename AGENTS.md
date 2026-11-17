@@ -49,6 +49,12 @@ For r2morph, integrate work into `main` and push only `main` (`git push origin m
 - Commit messages MUST follow the [Conventional Commits 1.0.0 specification](https://www.conventionalcommits.org/en/v1.0.0/#specification).
 - When the Rust build output directory `target/` exceeds 80 GB, automatically run `cargo clean` to reclaim build artifacts.
 
+## Rust toolchain lifecycle
+
+- Before Rust development or validation, run `eol-cli products get rust` and use the latest Rust release marked active/non-EOL. Confirm the selected compiler with `rustc --version`; install or select it with rustup if needed.
+- Do not use an EOL Rust release as the primary development toolchain.
+- Preserve the repository's declared MSRV. When feasible, validate that MSRV separately as a compatibility check, even if it is EOL; it does not replace development and primary validation on active Rust.
+
 ## Logging & Observability — Mandatory Development Rules
 
 **These rules are mandatory for all new code, bug fixes, refactoring, and architectural changes.**
