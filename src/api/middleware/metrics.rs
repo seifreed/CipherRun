@@ -174,6 +174,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unmatched_request_logs_no_raw_path() {
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route("/known", get(|| async { axum::http::StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(state.clone(), metrics));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/private.example/api-key-like-value")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+        let stats = state.stats.read().await;
+        let event = stats.audit_events.back().unwrap();
+        assert_eq!(event.path, "<unmatched>");
+        assert_eq!(event.status, 404);
+        assert_eq!(stats.total_responses, 1);
+    }
+
+    #[tokio::test]
     async fn counts_authentication_and_authorization_failures_without_labels() {
         let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
         let app = Router::new()

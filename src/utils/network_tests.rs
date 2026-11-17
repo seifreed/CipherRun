@@ -32,7 +32,7 @@ async fn dns_cache_hit_diagnostics_are_trace_only_and_redacted() {
         }
     }
 
-    let hostname = format!("{}.example.com", uuid::Uuid::new_v4());
+    let hostname = format!("dns-cache-test-{}.example.com", std::process::id());
     crate::utils::dns_cache::global_cache()
         .insert(
             hostname.clone(),

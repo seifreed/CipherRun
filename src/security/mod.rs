@@ -21,7 +21,9 @@
 //! sanitization, and protection against common vulnerabilities.
 
 pub mod input_validation;
+#[cfg(any(feature = "api", feature = "ct"))]
 pub(crate) mod url;
+#[cfg(feature = "api")]
 pub mod webhook;
 
 pub use input_validation::{

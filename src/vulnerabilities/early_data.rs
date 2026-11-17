@@ -310,7 +310,7 @@ impl<'a> EarlyDataTester<'a> {
         #[cfg(not(feature = "rustls"))]
         {
             let _ = (addr, config, domain);
-            return EarlyDataSupportStatus::Inconclusive;
+            EarlyDataSupportStatus::Inconclusive
         }
 
         #[cfg(feature = "rustls")]
