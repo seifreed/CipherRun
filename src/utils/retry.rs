@@ -586,11 +586,11 @@ mod tests {
         let attempts = std::sync::atomic::AtomicUsize::new(0);
 
         let dispatch = tracing::Dispatch::new(subscriber);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
         let result = tracing::dispatcher::with_default(&dispatch, || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
             runtime.block_on(async {
                 retry_with_backoff(&config, || async {
                     if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
