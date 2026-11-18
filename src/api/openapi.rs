@@ -184,4 +184,14 @@ mod tests {
         let servers = doc.servers.unwrap();
         assert!(!servers.is_empty());
     }
+
+    #[test]
+    fn security_modifier_handles_missing_components() {
+        let mut doc = ApiDoc::openapi();
+        doc.components = None;
+
+        SecurityAddon.modify(&mut doc);
+
+        assert!(doc.components.is_none());
+    }
 }
