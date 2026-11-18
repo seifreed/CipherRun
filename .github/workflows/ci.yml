@@ -117,7 +117,7 @@ jobs:
 
       - name: Upload Opossum parser transcripts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opossum-parser-fixture
           path: results/opossum-fixture/
@@ -125,7 +125,7 @@ jobs:
 
       - name: Upload scanner transcripts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: differential-tls-transcripts
           path: results/differential/
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload external fixture transcripts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: external-vulnerable-fixture-transcripts
           path: results/external-fixture/
