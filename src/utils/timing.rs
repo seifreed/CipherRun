@@ -178,9 +178,14 @@ mod tests {
 
     #[test]
     fn test_empty_sample_set() {
-        let set = TimingSampleSet::with_capacity(10);
+        let mut set = TimingSampleSet::with_capacity(10);
         assert!(set.compute_statistics().is_none());
         assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+
+        set.push(1.0);
+        assert_eq!(set.len(), 1);
+        assert!(!set.is_empty());
     }
 
     #[test]
