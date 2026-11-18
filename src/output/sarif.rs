@@ -113,4 +113,66 @@ mod tests {
             "CR-TLS-HEARTBLEED-001"
         );
     }
+
+    #[test]
+    fn sarif_levels_reflect_confirmed_severity_and_uncertain_status() {
+        let results = ScanResults {
+            vulnerabilities: vec![
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::BEAST,
+                    vulnerable: true,
+                    inconclusive: false,
+                    details: "medium confirmed".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity: Severity::Medium,
+                },
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::CRIME,
+                    vulnerable: true,
+                    inconclusive: false,
+                    details: "informational confirmed".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity: Severity::Info,
+                },
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::POODLE,
+                    vulnerable: true,
+                    inconclusive: true,
+                    details: "potential exposure".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity: Severity::High,
+                },
+                VulnerabilityResult {
+                    vuln_type: VulnerabilityType::DROWN,
+                    vulnerable: false,
+                    inconclusive: true,
+                    details: "inconclusive".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity: Severity::Critical,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let value: Value = serde_json::from_str(&generate_sarif_report(&results).unwrap()).unwrap();
+        let levels: Vec<_> = value["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding["level"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(levels, ["warning", "note", "note", "note"]);
+        assert_eq!(
+            value["runs"][0]["tool"]["driver"]["rules"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+    }
 }
