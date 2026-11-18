@@ -97,17 +97,11 @@ impl ConservativeAggregator {
             protocol_sets.push(protocols);
         }
 
-        // Find intersection - only protocols supported by ALL IPs
-        // Safety: protocol_sets is guaranteed non-empty by check above
-        let Some(first_set) = protocol_sets.first() else {
-            return Vec::new(); // Unreachable, but explicit for safety
-        };
-        let intersection: HashSet<&str> = protocol_sets
-            .iter()
-            .skip(1)
-            .fold(first_set.clone(), |acc, set| {
-                acc.intersection(set).copied().collect()
-            });
+        // Find intersection - only protocols supported by ALL IPs.
+        let intersection = protocol_sets
+            .into_iter()
+            .reduce(|acc, set| acc.intersection(&set).copied().collect());
+        let intersection = intersection.unwrap_or_default();
 
         // Convert to sorted vector for consistent output (clone only final strings)
         let mut result: Vec<String> = intersection.into_iter().map(|s| s.to_string()).collect();
