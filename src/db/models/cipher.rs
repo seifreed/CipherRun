@@ -121,4 +121,20 @@ mod tests {
         assert!(cipher.forward_secrecy);
         assert_eq!(cipher.strength, "strong");
     }
+
+    #[test]
+    fn test_cipher_record_identity() {
+        let cipher = CipherRecord::new(
+            1,
+            "TLS 1.2".to_string(),
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+            "strong".to_string(),
+            true,
+        );
+
+        assert_eq!(
+            cipher.identity(),
+            ("TLS 1.2", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")
+        );
+    }
 }
