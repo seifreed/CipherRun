@@ -607,6 +607,12 @@ mod tests {
 
         assert!(result.session_id_reuse.connections_tested > 0);
         assert!(!result.details.is_empty());
+        let performance_error = tester.measure_performance_gain().await.unwrap_err();
+        assert!(
+            performance_error
+                .to_string()
+                .contains("no successful resumed handshakes")
+        );
 
         // Cleanup: Remove the temp cert file
         let _ = std::fs::remove_file(&cert_path);
