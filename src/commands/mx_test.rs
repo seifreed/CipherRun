@@ -407,6 +407,51 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_export_skips_reports_without_exportable_results() {
+        let command = MxTestCommand::new(Args::default());
+        let report = ScanExecutionReport::new(ScanResults::default(), None, None, None);
+
+        let outcome = command.export_aggregated_artifacts(&report).unwrap();
+        command.render_post_scan_notices(&report, &outcome);
+
+        assert!(!outcome.exported());
+    }
+
+    #[test]
+    fn aggregate_csv_is_written_when_export_is_requested() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("aggregate.csv");
+        let mut args = Args::default();
+        args.output.csv = Some(path.clone());
+        let command = MxTestCommand::new(args);
+        let report = ScanExecutionReport::new(
+            ScanResults {
+                protocols: vec![crate::protocols::ProtocolTestResult {
+                    protocol: crate::protocols::Protocol::TLS12,
+                    supported: true,
+                    inconclusive: false,
+                    preferred: false,
+                    ciphers_count: 0,
+                    handshake_time_ms: None,
+                    heartbeat_enabled: None,
+                    session_resumption_caching: None,
+                    session_resumption_tickets: None,
+                    secure_renegotiation: None,
+                }],
+                ..Default::default()
+            },
+            None,
+            None,
+            None,
+        );
+
+        let outcome = command.export_aggregated_artifacts(&report).unwrap();
+
+        assert!(outcome.exported());
+        assert!(std::fs::read_to_string(path).unwrap().contains("TLS 1.2"));
+    }
+
+    #[test]
     fn test_mx_test_command_name() {
         let cmd = MxTestCommand::new(Args::default());
         assert_eq!(cmd.name(), "MxTestCommand");
