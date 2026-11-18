@@ -89,7 +89,13 @@ import cipherrun_client
 
 ### Tests
 
-Execute `pytest` to run the tests.
+Run the SDK tests and enforce full line coverage for both `cipherrun` and `cipherrun_client`:
+
+```sh
+python -m pytest --cov=cipherrun --cov=cipherrun_client --cov-fail-under=100 --cov-report=term-missing
+```
+
+GitHub Actions runs this gate on Python 3.11 and the newest active Python release.
 
 ## Getting Started
 

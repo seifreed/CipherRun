@@ -37,7 +37,7 @@ jobs:
 
       - name: Test Python SDK
         working-directory: sdk/python
-        run: python -m pytest --cov=cipherrun --cov=cipherrun_client --cov-report=term-missing
+        run: python -m pytest --cov=cipherrun --cov=cipherrun_client --cov-fail-under=100 --cov-report=term-missing
 
   quality:
     name: Quality gates
