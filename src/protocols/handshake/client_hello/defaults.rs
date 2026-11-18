@@ -88,3 +88,24 @@ impl ClientHelloBuilder {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tls13_defaults_omit_sni_without_hostname() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS13);
+
+        builder
+            .add_tls13_defaults(None)
+            .expect("TLS 1.3 defaults should build without a hostname");
+
+        assert!(
+            builder
+                .extensions
+                .iter()
+                .all(|extension| extension.extension_type != 0x0000)
+        );
+    }
+}
