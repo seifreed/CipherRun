@@ -1030,6 +1030,24 @@ fn test_misc_display_helpers_and_fingerprints() {
 }
 
 #[test]
+fn test_rating_warnings_can_be_disabled() {
+    let mut args = Args::default();
+    args.output.warnings = Some("off".to_string());
+    let formatter = ScannerFormatter::new(&args);
+    let rating = RatingResult {
+        grade: crate::rating::Grade::A,
+        score: 95,
+        certificate_score: 98,
+        protocol_score: 90,
+        key_exchange_score: 92,
+        cipher_strength_score: 94,
+        warnings: vec!["suppressed warning".to_string()],
+    };
+
+    formatter.display_rating_results(&rating);
+}
+
+#[test]
 fn test_pqc_sections_render_without_panic() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
