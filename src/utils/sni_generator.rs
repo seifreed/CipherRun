@@ -229,6 +229,27 @@ mod tests {
     }
 
     #[test]
+    fn test_random_label_supports_minimum_lengths() {
+        for _ in 0..1024 {
+            let label = SniGenerator::generate_random_label(1);
+            assert!((1..8).contains(&label.len()));
+            assert!(label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            assert!(
+                label
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+            );
+            assert!(
+                label
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+            );
+        }
+    }
+
+    #[test]
     fn test_generate_random_unique() {
         let sni1 = SniGenerator::generate_random();
         let sni2 = SniGenerator::generate_random();
