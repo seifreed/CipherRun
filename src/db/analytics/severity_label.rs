@@ -27,11 +27,19 @@ mod tests {
     #[test]
     fn normalizes_known_and_unknown_severities() {
         assert_eq!(normalized_severity_label("CRITICAL"), "critical");
+        assert_eq!(normalized_severity_label("HIGH"), "high");
+        assert_eq!(normalized_severity_label("MEDIUM"), "medium");
+        assert_eq!(normalized_severity_label("LOW"), "low");
+        assert_eq!(normalized_severity_label("INFO"), "info");
         assert_eq!(normalized_severity_label("unexpected"), "unknown");
     }
 
     #[test]
     fn unknown_severities_sort_after_known_severities() {
+        assert_eq!(severity_label_rank("critical"), 0);
+        assert_eq!(severity_label_rank("high"), 1);
+        assert_eq!(severity_label_rank("medium"), 2);
+        assert_eq!(severity_label_rank("low"), 3);
         assert_eq!(severity_label_rank("info"), 4);
         assert_eq!(severity_label_rank("unexpected"), 5);
     }
