@@ -66,4 +66,15 @@ mod tests {
         assert!(result.vulnerable);
         assert!(result.details.contains("ROBOT attack"));
     }
+
+    #[test]
+    fn negative_and_inconclusive_statuses_are_not_confirmed_vulnerable() {
+        let not_vulnerable = RobotTestResult::from_status(RobotStatus::NotVulnerable);
+        let inconclusive = RobotTestResult::from_status(RobotStatus::Inconclusive);
+
+        assert!(!not_vulnerable.vulnerable);
+        assert!(not_vulnerable.details.contains("No RSA padding oracle"));
+        assert!(!inconclusive.vulnerable);
+        assert!(inconclusive.details.contains("inconclusive"));
+    }
 }
