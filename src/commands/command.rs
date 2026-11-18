@@ -89,6 +89,14 @@ mod tests {
     }
 
     #[test]
+    fn exit_for_result_list_succeeds_when_all_results_succeed_or_are_empty() {
+        let results = vec![("first", Ok(1)), ("second", Ok(2))];
+
+        assert!(exit_for_result_list(&results).is_success());
+        assert!(exit_for_result_list::<(), ()>(&[]).is_success());
+    }
+
+    #[test]
     fn automation_exit_codes_are_stable() {
         assert_eq!(CommandExit::success().code(), 0);
         assert_eq!(CommandExit::OPERATIONAL_FAILURE, 1);
