@@ -44,6 +44,7 @@ mod tests {
         assert!(validate_cipher("ECDHE-RSA-AES256-GCM-SHA384").is_ok());
         assert!(validate_cipher("HIGH:!aNULL:!MD5").is_ok());
         assert!(validate_cipher("TLS_AES_256_GCM_SHA384").is_ok());
+        assert!(validate_cipher(&"A".repeat(512)).is_ok());
     }
 
     #[test]
@@ -52,5 +53,6 @@ mod tests {
         assert!(validate_cipher("AES256|whoami").is_err());
         assert!(validate_cipher("AES256`id`").is_err());
         assert!(validate_cipher("").is_err());
+        assert!(validate_cipher(&"A".repeat(513)).is_err());
     }
 }
