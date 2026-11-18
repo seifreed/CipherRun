@@ -68,4 +68,18 @@ mod tests {
 
         assert_eq!(classify(&per_vector, 2), CodeSignal::Inconclusive);
     }
+
+    #[test]
+    fn ignores_non_alerts_and_rejects_mixed_alerts() {
+        let non_alert = [0x16, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        assert_eq!(alert_description_code(&non_alert), None);
+        assert_eq!(classify(&[vec![non_alert.to_vec()]], 1), CodeSignal::None);
+
+        let alert_46 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        let alert_47 = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x47];
+        assert_eq!(
+            classify(&[vec![alert_46, alert_47]], 2),
+            CodeSignal::Inconclusive
+        );
+    }
 }
