@@ -350,6 +350,53 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_untrusted_issue_and_trusted_platform_paths() {
+        let issue_validation = ValidationResult {
+            valid: false,
+            issues: vec![ValidationIssue {
+                severity: IssueSeverity::Critical,
+                issue_type: IssueType::UntrustedCA,
+                description: "untrusted issuer".to_string(),
+            }],
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        };
+        assert!(CertificateStatus::detect_untrusted(&issue_validation));
+
+        let trusted_platform_validation = ValidationResult {
+            valid: true,
+            issues: vec![],
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: Some(crate::certificates::trust_stores::TrustValidationResult {
+                platform_status: Default::default(),
+                overall_trusted: true,
+                trusted_count: 5,
+                total_platforms: 5,
+                per_certificate: vec![],
+            }),
+        };
+        assert!(!CertificateStatus::detect_untrusted(
+            &trusted_platform_validation
+        ));
+
+        let validation_without_platform_data = ValidationResult {
+            platform_trust: None,
+            ..trusted_platform_validation
+        };
+        assert!(!CertificateStatus::detect_untrusted(
+            &validation_without_platform_data
+        ));
+    }
+
+    #[test]
     fn test_matches_filter_expired_filter() {
         let status = CertificateStatus {
             is_expired: true,
