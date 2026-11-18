@@ -21,3 +21,47 @@ pub fn history_service_from_state(state: &AppState) -> Result<ScanHistoryService
 
     Ok(ScanHistoryService::new(db_pool))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{history_service_from_state, load_scan_history};
+    use crate::api::{config::ApiConfig, models::error::ApiError, state::AppState};
+    use crate::application::{ScanHistoryPage, ScanHistoryPort, ScanHistoryQuery};
+    use async_trait::async_trait;
+
+    struct FailingHistoryReader;
+
+    #[async_trait]
+    impl ScanHistoryPort for FailingHistoryReader {
+        async fn get_history(&self, _query: &ScanHistoryQuery) -> crate::Result<ScanHistoryPage> {
+            Err(crate::TlsError::Other("history backend failed".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_history_reader_error_to_internal_error() {
+        let query = ScanHistoryQuery {
+            hostname: "example.com".to_string(),
+            port: 443,
+            limit: 10,
+            principal_id: None,
+            tenant_id: None,
+        };
+        let error = load_scan_history(&FailingHistoryReader, &query)
+            .await
+            .expect_err("reader failure should be returned");
+
+        assert!(matches!(error, ApiError::Internal(_)));
+    }
+
+    #[test]
+    fn reports_missing_database_configuration() {
+        let state = AppState::new(ApiConfig::default()).expect("state should initialize");
+
+        let error = history_service_from_state(&state)
+            .err()
+            .expect("history requires a configured database");
+
+        assert!(matches!(error, ApiError::ServiceUnavailable(_)));
+    }
+}
