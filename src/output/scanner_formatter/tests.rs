@@ -609,6 +609,18 @@ fn test_display_sections_smoke() {
             session_resumption_tickets: None,
             secure_renegotiation: None,
         },
+        ProtocolTestResult {
+            protocol: Protocol::TLS11,
+            supported: false,
+            inconclusive: true,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        },
     ];
     formatter.display_protocol_results(&protocol_results);
 
