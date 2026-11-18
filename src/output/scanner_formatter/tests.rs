@@ -1050,6 +1050,14 @@ fn test_pqc_sections_render_without_panic() {
                 "Deploy X25519MLKEM768.".to_string(),
             ],
         },
+        PqcReadinessAssessment {
+            score: 60,
+            level: PqcLevel::Hybrid,
+            pq_safe_groups: vec!["X25519MLKEM768".to_string()],
+            quantum_vulnerable_only: false,
+            hndl_risk: false,
+            recommendations: vec![],
+        },
     ] {
         formatter.display_pqc_readiness_results(&assessment);
     }
