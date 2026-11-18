@@ -117,4 +117,11 @@ mod tests {
         assert!(dump.contains("41 A"));
         assert!(dump.contains("42 B"));
     }
+
+    #[test]
+    fn test_simple_hex_dump_replaces_non_printable_bytes() {
+        let dump = simple_hex_dump(&[0x1f, 0x7f, 0x80], 3);
+
+        assert!(dump.ends_with("...\n"));
+    }
 }
