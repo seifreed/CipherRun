@@ -330,6 +330,26 @@ fn test_certificate_helpers() {
 
     let status = format_revocation_status(&RevocationStatus::Revoked);
     assert!(status.to_string().contains("REVOKED"));
+    assert!(
+        format_revocation_status(&RevocationStatus::Good)
+            .to_string()
+            .contains("Not Revoked")
+    );
+    assert!(
+        format_revocation_status(&RevocationStatus::Unknown)
+            .to_string()
+            .contains("Unknown")
+    );
+    assert!(
+        format_revocation_status(&RevocationStatus::Error)
+            .to_string()
+            .contains("Failed")
+    );
+    assert!(
+        format_revocation_status(&RevocationStatus::NotChecked)
+            .to_string()
+            .contains("Not Checked")
+    );
 }
 
 #[test]
