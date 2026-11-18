@@ -55,6 +55,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cipher_strength_distribution_handles_empty_counts() {
+        display_cipher_strength_distribution(&CipherCounts::default());
+    }
+
+    #[test]
     fn cipher_feature_percentage_handles_extreme_counts() {
         assert_eq!(cipher_feature_percentage(2, 5), 40);
         assert_eq!(cipher_feature_percentage(usize::MAX, usize::MAX), 100);
