@@ -42,21 +42,14 @@ impl PreHandshakeScanner {
         client_hello.extend_from_slice(&extensions);
 
         let handshake_body_len = client_hello.len() - handshake_length_pos - 3;
-        if let Some(len_bytes) =
-            client_hello.get_mut(handshake_length_pos..handshake_length_pos + 3)
-        {
-            len_bytes.copy_from_slice(&crate::protocols::tls_vector::u24_len(
-                handshake_body_len,
-                "handshake",
-            )?);
-        }
+        client_hello[handshake_length_pos..handshake_length_pos + 3].copy_from_slice(
+            &crate::protocols::tls_vector::u24_len(handshake_body_len, "handshake")?,
+        );
 
         let record_body_len = client_hello.len() - record_length_pos - 2;
-        if let Some(len_bytes) = client_hello.get_mut(record_length_pos..record_length_pos + 2) {
-            len_bytes.copy_from_slice(
-                &crate::protocols::tls_vector::u16_len(record_body_len, "record")?.to_be_bytes(),
-            );
-        }
+        client_hello[record_length_pos..record_length_pos + 2].copy_from_slice(
+            &crate::protocols::tls_vector::u16_len(record_body_len, "record")?.to_be_bytes(),
+        );
 
         Ok(client_hello)
     }
