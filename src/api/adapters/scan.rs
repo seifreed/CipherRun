@@ -49,10 +49,12 @@ mod tests {
         let mut original = ScanJob::new("example.com".to_string(), ScanOptions::default(), None);
         original.idempotency_key = Some("request-1".to_string());
         original.request_fingerprint = Some("fingerprint-1".to_string());
-        queue.enqueue(original).await.expect("first enqueue succeeds");
+        queue
+            .enqueue(original)
+            .await
+            .expect("first enqueue succeeds");
 
-        let mut conflicting =
-            ScanJob::new("example.org".to_string(), ScanOptions::default(), None);
+        let mut conflicting = ScanJob::new("example.org".to_string(), ScanOptions::default(), None);
         conflicting.idempotency_key = Some("request-1".to_string());
         conflicting.request_fingerprint = Some("fingerprint-2".to_string());
 
