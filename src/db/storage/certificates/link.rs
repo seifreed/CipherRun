@@ -37,3 +37,26 @@ impl CipherRunDatabase {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn link_certificate_preserves_database_failures() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let config =
+            crate::db::DatabaseConfig::sqlite(PathBuf::from(directory.path().join("test.db")));
+        let database = CipherRunDatabase::new(&config)
+            .await
+            .expect("test database should initialize");
+
+        let error = database
+            .link_certificate(-1, -1, 0)
+            .await
+            .expect_err("missing scan and certificate IDs should violate foreign keys");
+
+        assert!(matches!(error, crate::TlsError::DatabaseError(_)));
+    }
+}
