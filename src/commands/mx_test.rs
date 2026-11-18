@@ -354,6 +354,30 @@ mod tests {
         assert!(!command.export_collection_json("example.com", &[]).unwrap());
     }
 
+    #[test]
+    fn aggregated_post_processing_is_enabled_by_each_supported_option() {
+        let mut args = Args::default();
+        assert!(!MxTestCommand::new(args.clone()).needs_aggregated_post_processing());
+
+        let enable_options: [fn(&mut Args); 9] = [
+            |args| args.compliance.framework = Some("pci-dss-v4".to_string()),
+            |args| args.compliance.policy = Some("policy.yml".into()),
+            |args| args.database.store_results = true,
+            |args| args.output.csv = Some("report.csv".into()),
+            |args| args.output.html = Some("report.html".into()),
+            |args| args.output.xml = Some("report.xml".into()),
+            |args| args.output.sarif = Some("report.sarif".into()),
+            |args| args.output.junit = Some("report.xml".into()),
+            |args| args.output.fail_on = Some(crate::cli::FailOnSeverity::High),
+        ];
+
+        for enable in enable_options {
+            args = Args::default();
+            enable(&mut args);
+            assert!(MxTestCommand::new(args.clone()).needs_aggregated_post_processing());
+        }
+    }
+
     #[tokio::test]
     async fn builds_aggregate_report_from_successful_mx_results() {
         let command = MxTestCommand::new(Args::default());
