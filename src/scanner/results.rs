@@ -381,6 +381,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sorted_map_and_pretty_scan_json_are_serialized() {
+        #[derive(Serialize)]
+        struct SortedMap {
+            #[serde(serialize_with = "serialize_sorted_map")]
+            values: HashMap<String, u8>,
+        }
+
+        let sorted = SortedMap {
+            values: HashMap::from([("z".to_string(), 2), ("a".to_string(), 1)]),
+        };
+        assert_eq!(
+            serde_json::to_string(&sorted).unwrap(),
+            r#"{"values":{"a":1,"z":2}}"#
+        );
+
+        let results = ScanResults::default();
+        assert!(results.to_json(true).unwrap().contains('\n'));
+    }
+
+    #[test]
+    fn empty_cipher_summary_does_not_count_as_connection_evidence() {
+        let mut results = ScanResults::default();
+        results.ciphers.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: Vec::new(),
+                server_ordered: false,
+                server_preference: Vec::new(),
+                preferred_cipher: None,
+                counts: crate::ciphers::tester::CipherCounts::default(),
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        assert!(!results.has_connection_evidence());
+    }
+
+    #[test]
     fn scan_metadata_serializes_flat() {
         let results = ScanResults::default();
         let json = serde_json::to_value(&results).unwrap();
