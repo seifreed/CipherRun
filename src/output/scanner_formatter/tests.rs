@@ -360,9 +360,11 @@ fn test_cipher_and_http_helpers() {
     display_cipher_security_features(&counts);
 
     let ok = format_http_status(200);
+    let informational = format_http_status(199);
     let redirect = format_http_status(302);
     let err = format_http_status(404);
     assert!(ok.to_string().contains("200"));
+    assert!(informational.to_string().contains("199"));
     assert!(redirect.to_string().contains("302"));
     assert!(err.to_string().contains("404"));
 
