@@ -126,6 +126,13 @@ mod tests {
     }
 
     #[test]
+    fn dominant_alert_is_none_when_all_responses_lack_alerts() {
+        let responses = [response(None, 10.0), response(None, 12.0)];
+
+        assert_eq!(dominant_alert_with_fraction(&responses), None);
+    }
+
+    #[test]
     fn test_oracle_detection_requires_min_samples_for_alert_ratio() {
         // Regression test for V4: with one response per set the alert_ratio is
         // either 0.0 or 1.0. Previously the boolean difference alone triggered
