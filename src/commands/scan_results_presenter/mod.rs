@@ -61,3 +61,78 @@ impl<'a> ScanResultsPresenter<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ScanResultsPresenter;
+    use crate::Args;
+    use crate::application::{ScanExecutionReport, ScanResults};
+    use crate::pqc::{PqcLevel, PqcReadinessAssessment};
+    use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::rating::{Grade, RatingResult};
+    use crate::scanner::{AdvancedResults, RatingResults};
+
+    #[test]
+    fn render_routes_summary_only_and_dns_only_modes() {
+        let results = ScanResults::default();
+        let report = ScanExecutionReport::new(results, None, None, None);
+        let cli_view = report.cli_view(false);
+
+        let args = Args::default();
+        assert!(cli_view.should_render_results_summary_only());
+        ScanResultsPresenter::new(&args).render(&cli_view);
+
+        let mut dns_args = Args::default();
+        dns_args.cert_filters.dns_only = true;
+        assert!(dns_args.output_presentation_mode().is_dns_only());
+        ScanResultsPresenter::new(&dns_args).render(&cli_view);
+    }
+
+    #[test]
+    fn render_routes_primary_feature_fingerprint_and_summary_sections() {
+        let results = ScanResults {
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            rating: Some(RatingResults {
+                ssl_rating: Some(RatingResult {
+                    grade: Grade::A,
+                    score: 95,
+                    certificate_score: 95,
+                    protocol_score: 95,
+                    key_exchange_score: 95,
+                    cipher_strength_score: 95,
+                    warnings: Vec::new(),
+                }),
+            }),
+            advanced: Some(AdvancedResults {
+                pqc_readiness: Some(PqcReadinessAssessment {
+                    score: 0,
+                    level: PqcLevel::None,
+                    pq_safe_groups: Vec::new(),
+                    quantum_vulnerable_only: true,
+                    hndl_risk: true,
+                    recommendations: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let report = ScanExecutionReport::new(results, None, None, None);
+        let cli_view = report.cli_view(false);
+        assert!(cli_view.should_render_primary_tls_view());
+        assert!(cli_view.should_render_feature_view());
+        assert!(cli_view.should_render_fingerprint_view());
+
+        ScanResultsPresenter::new(&Args::default()).render(&cli_view);
+    }
+}
