@@ -15,8 +15,8 @@ impl ScanResultsStoreFactory for ConfigFileScanResultsStoreFactory {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::*;
+    use super::ConfigFileScanResultsStoreFactory;
+    use crate::application::ScanResultsStoreFactory;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
@@ -29,11 +29,31 @@ mod tests {
     async fn test_open_does_not_pre_reject_non_utf8_config_path() {
         let invalid = OsString::from_vec(vec![b'c', b'f', b'g', 0xff]);
         let factory = ConfigFileScanResultsStoreFactory;
-        let err = match factory.open(&PathBuf::from(invalid)).await {
-            Ok(_) => panic!("non-UTF-8 config path should fail"),
-            Err(err) => err,
-        };
+        let err = factory
+            .open(&PathBuf::from(invalid))
+            .await
+            .err()
+            .expect("non-UTF-8 config path should fail");
 
         assert!(!err.to_string().contains("Invalid file path"));
+    }
+
+    #[tokio::test]
+    async fn opens_a_store_from_a_valid_sqlite_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("database.toml");
+        let config = crate::db::Config {
+            database: crate::db::DatabaseConfig::sqlite(directory.path().join("scan.db")),
+            retention: None,
+        };
+        std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+
+        let store = ConfigFileScanResultsStoreFactory
+            .open(&config_path)
+            .await
+            .unwrap();
+
+        drop(store);
+        assert!(directory.path().join("scan.db").exists());
     }
 }

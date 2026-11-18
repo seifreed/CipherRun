@@ -203,6 +203,12 @@ mod tests {
             ),
             ("ipv6", "[::1]:443 TLS 1.3\n", "::1", "TLS 1.3"),
             (
+                "bracketed ipv6 hostname",
+                "[2001:db8::1]:443 TLS 1.3\n",
+                "[2001:db8::1]",
+                "TLS 1.3",
+            ),
+            (
                 "hostname prefix substrings",
                 "example.comparison TLS 1.3\nexample.com:443comparison TLS 1.2\n",
                 "example.com",
