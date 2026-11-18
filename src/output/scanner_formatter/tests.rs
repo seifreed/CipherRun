@@ -1048,6 +1048,14 @@ fn test_rating_warnings_can_be_disabled() {
 }
 
 #[test]
+fn test_protocol_features_are_omitted_when_none_are_supported() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+
+    formatter.display_protocol_results(&[]);
+}
+
+#[test]
 fn test_pqc_sections_render_without_panic() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
