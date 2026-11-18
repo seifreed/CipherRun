@@ -137,7 +137,10 @@ mod tests {
 
         let config = CipherTestConfig::from_request(&request);
 
-        assert_eq!(config.max_concurrent, CipherTestConfig::DEFAULT_MAX_CONCURRENT);
+        assert_eq!(
+            config.max_concurrent,
+            CipherTestConfig::DEFAULT_MAX_CONCURRENT
+        );
     }
 
     #[test]

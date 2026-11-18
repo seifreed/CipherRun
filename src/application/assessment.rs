@@ -75,17 +75,28 @@ mod tests {
         let results = ScanResults {
             target: "example.com:443".to_string(),
             scan_metadata: crate::scanner::ScanMetadata {
-                inconsistencies: Some(vec![Inconsistency {
-                    inconsistency_type: InconsistencyType::ProtocolSupport,
-                    severity: Severity::Low,
-                    description: "TLS 1.0 inconsistent".to_string(),
-                    ips_affected: Vec::new(),
-                    details: InconsistencyDetails::Protocols {
-                        protocol: Protocol::TLS10,
-                        ips_with_support: Vec::new(),
-                        ips_without_support: Vec::new(),
+                inconsistencies: Some(vec![
+                    Inconsistency {
+                        inconsistency_type: InconsistencyType::ProtocolSupport,
+                        severity: Severity::Low,
+                        description: "TLS 1.0 inconsistent".to_string(),
+                        ips_affected: Vec::new(),
+                        details: InconsistencyDetails::Protocols {
+                            protocol: Protocol::TLS10,
+                            ips_with_support: Vec::new(),
+                            ips_without_support: Vec::new(),
+                        },
                     },
-                }]),
+                    Inconsistency {
+                        inconsistency_type: InconsistencyType::SecurityGrade,
+                        severity: Severity::Low,
+                        description: "grade differs by backend".to_string(),
+                        ips_affected: Vec::new(),
+                        details: InconsistencyDetails::Grades {
+                            grades: HashMap::new(),
+                        },
+                    },
+                ]),
                 ..Default::default()
             },
             ..Default::default()
