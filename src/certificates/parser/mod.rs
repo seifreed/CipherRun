@@ -138,6 +138,14 @@ mod tests {
         assert_eq!(chain.intermediates().len(), 0);
         assert!(chain.is_complete());
 
+        let leaf_only_chain = CertificateChain {
+            certificates: vec![leaf.clone()],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+        assert!(leaf_only_chain.intermediates().is_empty());
+        assert!(!leaf_only_chain.is_complete());
+
         // Chain ending with intermediate (not self-signed) should be incomplete
         let intermediate = CertificateInfo {
             subject: "CN=intermediate".to_string(),
