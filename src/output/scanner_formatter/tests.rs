@@ -40,6 +40,47 @@ fn test_scanner_formatter_creation() {
 }
 
 #[test]
+fn test_display_dns_only_results_formats_certificate_domains() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let results = crate::scanner::ScanResults {
+        certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+            chain: CertificateChain {
+                certificates: vec![CertificateInfo {
+                    subject: "CN=api.example.com".to_string(),
+                    san: vec!["www.example.com".to_string()],
+                    ..Default::default()
+                }],
+                chain_length: 1,
+                chain_size_bytes: 1,
+            },
+            validation: ValidationResult {
+                valid: true,
+                issues: Vec::new(),
+                trust_chain_valid: true,
+                hostname_match: true,
+                not_expired: true,
+                signature_valid: true,
+                trusted_ca: None,
+                platform_trust: None,
+            },
+            revocation: None,
+        }),
+        ..Default::default()
+    };
+
+    let output = crate::output::dns_only::DnsOnlyMode::format_scan_results(&results);
+    assert!(output.contains("api.example.com"));
+    assert!(output.contains("www.example.com"));
+
+    formatter.display_dns_only_results(&results);
+
+    let empty_results = crate::scanner::ScanResults::default();
+    assert!(crate::output::dns_only::DnsOnlyMode::format_scan_results(&empty_results).is_empty());
+    formatter.display_dns_only_results(&empty_results);
+}
+
+#[test]
 fn test_collect_human_warnings_includes_rating_certificate_and_inconclusive_vulns() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
