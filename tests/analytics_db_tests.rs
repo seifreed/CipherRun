@@ -1173,6 +1173,7 @@ async fn test_change_tracker_detect_changes_and_report() {
 
     insert_protocol(&db, scan1, "TLS 1.2", true, true).await;
     insert_protocol(&db, scan2, "TLS 1.3", true, true).await;
+    insert_protocol(&db, scan2, "SSLv3", true, false).await;
 
     insert_cipher(&db, scan1, "TLS 1.2", "CIPHER_OLD", "strong", true).await;
     insert_cipher(&db, scan2, "TLS 1.2", "CIPHER_NEW", "strong", true).await;
@@ -1216,6 +1217,10 @@ async fn test_change_tracker_detect_changes_and_report() {
         c.change_type,
         cipherrun::db::analytics::ChangeType::Protocol
     )));
+    assert!(changes.iter().any(|change| {
+        change.description == "Protocol added: SSLv3"
+            && change.severity == cipherrun::db::analytics::ChangeSeverity::High
+    }));
     assert!(
         changes
             .iter()
