@@ -95,14 +95,22 @@ fn performance_improvement(avg_full: f64, avg_resumed: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{measure_performance_gain_with, performance_improvement};
-    use crate::TlsError;
+    use crate::{Result, TlsError};
     use std::time::Duration;
+
+    async fn session_not_reused(_: ()) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn session_reused(_: ()) -> Result<bool> {
+        Ok(true)
+    }
 
     #[tokio::test]
     async fn reports_error_when_no_full_handshake_succeeds() {
         let error = measure_performance_gain_with(
             || async { Err::<Option<()>, _>(TlsError::Other("offline".to_string())) },
-            |_| async { Ok(false) },
+            session_not_reused,
         )
         .await
         .unwrap_err();
@@ -116,10 +124,9 @@ mod tests {
 
     #[tokio::test]
     async fn reports_error_when_server_returns_no_resumable_session() {
-        let error =
-            measure_performance_gain_with(|| async { Ok(Some(())) }, |_| async { Ok(false) })
-                .await
-                .unwrap_err();
+        let error = measure_performance_gain_with(|| async { Ok(Some(())) }, session_not_reused)
+            .await
+            .unwrap_err();
 
         assert!(
             error
@@ -149,7 +156,7 @@ mod tests {
                 let session = (handshakes <= 5).then_some(());
                 async move { Ok(session) }
             },
-            |_| async { Ok(true) },
+            session_reused,
         )
         .await
         .unwrap_err();
@@ -162,13 +169,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keeps_successful_measurements_when_some_session_establishments_fail() {
+        let mut attempts = 0;
+        let gain = measure_performance_gain_with(
+            || {
+                attempts += 1;
+                let result = if attempts <= 6 {
+                    Ok(Some(()))
+                } else {
+                    Err(TlsError::Other("intermittent failure".to_string()))
+                };
+                async move { result }
+            },
+            session_reused,
+        )
+        .await
+        .unwrap();
+
+        assert!(gain >= 0.0);
+    }
+
+    #[tokio::test]
     async fn returns_positive_gain_for_faster_resumed_handshakes() {
         let gain = measure_performance_gain_with(
             || async {
                 tokio::time::sleep(Duration::from_millis(2)).await;
                 Ok(Some(()))
             },
-            |_| async { Ok(true) },
+            session_reused,
         )
         .await
         .unwrap();
