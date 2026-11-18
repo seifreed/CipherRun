@@ -91,6 +91,38 @@ mod tests {
         }
     }
 
+    struct FailingFrameworkSource(&'static str);
+
+    impl ComplianceFrameworkSource for FailingFrameworkSource {
+        fn load_framework(&self, _framework_id: &str) -> crate::Result<ComplianceFramework> {
+            Err(crate::TlsError::Other(self.0.to_string()))
+        }
+    }
+
+    struct FailingScanner;
+
+    #[async_trait]
+    impl ScannerPort for FailingScanner {
+        async fn scan(
+            &self,
+            _request: crate::application::ScanRequest,
+        ) -> crate::Result<crate::scanner::ScanResults> {
+            Err(crate::TlsError::Other("scanner failed".to_string()))
+        }
+    }
+
+    struct FailingEvaluator;
+
+    impl ComplianceEvaluatorPort for FailingEvaluator {
+        fn evaluate(
+            &self,
+            _framework: &ComplianceFramework,
+            _assessment: &ScanAssessment,
+        ) -> crate::Result<crate::compliance::ComplianceReport> {
+            Err(crate::TlsError::Other("evaluator failed".to_string()))
+        }
+    }
+
     fn test_framework() -> ComplianceFramework {
         ComplianceFramework {
             id: "test".to_string(),
@@ -144,5 +176,40 @@ mod tests {
 
         assert!(matches!(err, ApiError::BadRequest(_)));
         assert!(captured.lock().is_empty());
+    }
+
+    #[test]
+    fn load_framework_maps_unknown_and_unexpected_errors() {
+        let unknown = load_framework(&FailingFrameworkSource("Unknown framework"), "missing")
+            .expect_err("unknown framework should be reported");
+        assert!(matches!(unknown, ApiError::NotFound(_)));
+
+        let failure = load_framework(&FailingFrameworkSource("storage failed"), "test")
+            .expect_err("unexpected source error should be reported");
+        assert!(matches!(failure, ApiError::Internal(_)));
+    }
+
+    #[tokio::test]
+    async fn maps_scanner_and_evaluator_failures_to_internal_errors() {
+        let scanner_error = run_compliance_check(
+            &FailingScanner,
+            &PassThroughEvaluator,
+            &test_framework(),
+            "example.com:443",
+        )
+        .await
+        .expect_err("scanner failure should be reported");
+        assert!(matches!(scanner_error, ApiError::Internal(_)));
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let evaluator_error = run_compliance_check(
+            &RecordingScanner { captured },
+            &FailingEvaluator,
+            &test_framework(),
+            "example.com:443",
+        )
+        .await
+        .expect_err("evaluator failure should be reported");
+        assert!(matches!(evaluator_error, ApiError::Internal(_)));
     }
 }
