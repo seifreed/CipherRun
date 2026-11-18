@@ -73,3 +73,38 @@ pub trait PolicyEvaluatorPort: Send + Sync {
         assessment: &ScanAssessment,
     ) -> crate::Result<crate::policy::PolicyResult>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CertificateInventoryPage, CertificateInventoryPort, CertificateInventoryQuery};
+    use async_trait::async_trait;
+
+    struct EmptyCertificateInventory;
+
+    #[async_trait]
+    impl CertificateInventoryPort for EmptyCertificateInventory {
+        async fn list_certificates(
+            &self,
+            _query: &CertificateInventoryQuery,
+        ) -> crate::Result<CertificateInventoryPage> {
+            unreachable!("list_certificates is not used by this test")
+        }
+
+        async fn get_certificate(
+            &self,
+            _fingerprint: &str,
+        ) -> crate::Result<Option<super::CertificateInventoryRecord>> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_lookup_defaults_to_unscoped_certificate_lookup() {
+        let result = EmptyCertificateInventory
+            .get_certificate_for_owner("fingerprint", Some("principal"), Some("tenant"))
+            .await
+            .unwrap();
+
+        assert!(result.is_none());
+    }
+}
