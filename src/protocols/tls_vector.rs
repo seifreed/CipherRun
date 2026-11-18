@@ -64,4 +64,30 @@ mod tests {
         let err = u16_byte_len(usize::MAX, "items").expect_err("length must be rejected");
         assert!(err.to_string().contains("items exceeds maximum length"));
     }
+
+    #[test]
+    fn sni_rejects_lengths_that_overflow_nested_vectors() {
+        let name_list_overflow = vec![b'a'; 65_533];
+        let err = sni_extension_data(&name_list_overflow)
+            .expect_err("SNI name list length must fit in 16 bits");
+        assert!(
+            err.to_string()
+                .contains("SNI server name list exceeds maximum length")
+        );
+
+        let err = sni_extension(&name_list_overflow)
+            .expect_err("extension should propagate SNI name-list errors");
+        assert!(
+            err.to_string()
+                .contains("SNI server name list exceeds maximum length")
+        );
+
+        let extension_overflow = vec![b'a'; 65_532];
+        let err = sni_extension(&extension_overflow)
+            .expect_err("encoded SNI extension length must fit in 16 bits");
+        assert!(
+            err.to_string()
+                .contains("SNI extension exceeds maximum length")
+        );
+    }
 }
