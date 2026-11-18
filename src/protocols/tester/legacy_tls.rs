@@ -8,14 +8,7 @@ pub(super) fn classify_response(response: &[u8], protocol: Protocol) -> Protocol
         if response.len() < 7 {
             return ProtocolProbeOutcome::Inconclusive;
         }
-        let Some(alert_record_len) = response
-            .get(3..5)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u16::from_be_bytes)
-            .map(usize::from)
-        else {
-            return ProtocolProbeOutcome::Inconclusive;
-        };
+        let alert_record_len = usize::from(u16::from_be_bytes([response[3], response[4]]));
         if alert_record_len != 2 || response.len() != 5 + alert_record_len {
             return ProtocolProbeOutcome::Inconclusive;
         }
