@@ -43,8 +43,10 @@ impl CipherTester {
     }
 
     pub(super) fn calculate_cipher_counts(&self, ciphers: &[CipherSuite]) -> CipherCounts {
-        let mut counts = CipherCounts::default();
-        counts.total = ciphers.len();
+        let mut counts = CipherCounts {
+            total: ciphers.len(),
+            ..Default::default()
+        };
 
         for cipher in ciphers {
             match cipher.strength() {
