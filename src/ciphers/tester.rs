@@ -269,6 +269,27 @@ mod tests {
         addr
     }
 
+    async fn spawn_rejecting_tls_server(accepts: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            for _ in 0..accepts {
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket
+                        .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                        .await;
+                }
+            }
+        });
+
+        addr
+    }
+
     async fn spawn_fragmented_fake_tls_server(cipher: u16) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -771,6 +792,25 @@ mod tests {
         } else {
             panic!("test assertion should succeed: {:?}", last_err);
         }
+    }
+
+    #[tokio::test]
+    async fn test_quick_test_returns_empty_when_no_recommended_cipher_is_supported() {
+        let accepts = crate::data::cipher_db()
+            .expect("embedded cipher database should load")
+            .get_recommended_ciphers()
+            .len();
+        let addr = spawn_rejecting_tls_server(accepts).await;
+        let tester = CipherTester::new(localhost_target(addr.port()))
+            .with_connect_timeout(Duration::from_millis(400))
+            .with_read_timeout(Duration::from_millis(400));
+
+        let ciphers = tester
+            .quick_test(Protocol::TLS12)
+            .await
+            .expect("unsupported ciphers should produce an empty result");
+
+        assert!(ciphers.is_empty());
     }
 
     #[tokio::test]
