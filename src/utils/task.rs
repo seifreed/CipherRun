@@ -109,10 +109,14 @@ mod tests {
             });
         });
 
-        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let logged_output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let event: serde_json::Value =
-            serde_json::from_str(output.lines().next().unwrap()).unwrap();
+            serde_json::from_str(logged_output.lines().next().unwrap()).unwrap();
         assert_eq!(event["fields"]["event_name"], "blocking_task.context.test");
         assert_eq!(event["spans"][0]["phase"], "blocking_probe");
+
+        BufferWriter(output.clone())
+            .flush()
+            .expect("test writer should flush successfully");
     }
 }
