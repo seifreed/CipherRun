@@ -64,6 +64,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn status_merge_preserves_the_highest_severity() {
+        assert_eq!(
+            OpossumStatus::NotVulnerable.merge(OpossumStatus::NotVulnerable),
+            OpossumStatus::NotVulnerable
+        );
+        assert_eq!(
+            OpossumStatus::Inconclusive.merge(OpossumStatus::NotVulnerable),
+            OpossumStatus::Inconclusive
+        );
+        assert_eq!(
+            OpossumStatus::NotVulnerable.merge(OpossumStatus::Vulnerable),
+            OpossumStatus::Vulnerable
+        );
+    }
+
+    #[test]
     fn vulnerable_probe_is_downgraded_to_inconclusive() {
         let result = OpossumTestResult::from_probe_statuses(
             OpossumStatus::Vulnerable,
