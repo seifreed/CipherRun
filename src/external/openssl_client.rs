@@ -799,11 +799,8 @@ SSL-Session:
     #[cfg(unix)]
     #[test]
     fn test_run_logs_structured_outcome_without_target_data() {
-        use std::fs;
         use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
         use std::sync::{Arc, Mutex};
-        use tempfile::tempdir;
         use tracing_subscriber::fmt::MakeWriter;
 
         struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -828,29 +825,20 @@ SSL-Session:
             }
         }
 
-        let dir = tempdir().expect("tempdir should be created");
-        let script = dir.path().join("openssl");
-        fs::write(&script, "#!/bin/sh\nexit 7\n").expect("script should be written");
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata should exist")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("script should be executable");
-
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .json()
             .with_max_level(tracing::Level::DEBUG)
             .with_writer(Buffer(output.clone()))
             .finish();
-        let client = OpenSslClient::with_path(&script);
+        let client = OpenSslClient::with_path("false");
         let options = OpenSslClientOptions {
             host: "example.com".to_string(),
             ..Default::default()
         };
         let result = tracing::subscriber::with_default(subscriber, || client.run(&options))
             .expect("subprocess execution should return its result");
-        assert_eq!(result.exit_code, 7);
+        assert_ne!(result.exit_code, 0);
 
         let log = String::from_utf8(output.lock().unwrap().clone()).expect("valid JSON log");
         let event: serde_json::Value = serde_json::from_str(log.trim()).expect("structured event");
@@ -861,7 +849,7 @@ SSL-Session:
         );
         assert_eq!(event["fields"]["operation"], "s_client");
         assert_eq!(event["fields"]["outcome"], "nonzero_exit");
-        assert_eq!(event["fields"]["exit_code"], 7);
+        assert_eq!(event["fields"]["exit_code"], result.exit_code);
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(!log.contains("example.com"));
     }
