@@ -77,6 +77,7 @@ pub trait PolicyEvaluatorPort: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::{CertificateInventoryPage, CertificateInventoryPort, CertificateInventoryQuery};
+    use crate::application::CertificateInventorySort;
     use async_trait::async_trait;
 
     struct EmptyCertificateInventory;
@@ -87,7 +88,10 @@ mod tests {
             &self,
             _query: &CertificateInventoryQuery,
         ) -> crate::Result<CertificateInventoryPage> {
-            unreachable!("list_certificates is not used by this test")
+            Ok(CertificateInventoryPage {
+                total: 0,
+                certificates: Vec::new(),
+            })
         }
 
         async fn get_certificate(
@@ -106,5 +110,26 @@ mod tests {
             .unwrap();
 
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn inventory_list_returns_an_empty_page() {
+        let query = CertificateInventoryQuery {
+            limit: 10,
+            offset: 0,
+            sort: CertificateInventorySort::ExpiryAsc,
+            hostname: None,
+            expiring_within_days: None,
+            principal_id: None,
+            tenant_id: None,
+        };
+
+        let page = EmptyCertificateInventory
+            .list_certificates(&query)
+            .await
+            .unwrap();
+
+        assert_eq!(page.total, 0);
+        assert!(page.certificates.is_empty());
     }
 }
