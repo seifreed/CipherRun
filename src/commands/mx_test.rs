@@ -406,6 +406,32 @@ mod tests {
         assert!(report.stored_scan_id().is_none());
     }
 
+    #[tokio::test]
+    async fn aggregate_report_evaluates_requested_builtin_compliance() {
+        let mut args = Args::default();
+        args.compliance.framework = Some("pci-dss-v4".to_string());
+        let command = MxTestCommand::new(args);
+        let tester = crate::utils::mx::MxTester::new("example.com".to_string());
+        let results = vec![(
+            MxRecord {
+                priority: 10,
+                hostname: "mx1.example.com".to_string(),
+            },
+            Ok(ScanResults {
+                target: "mx1.example.com:25".to_string(),
+                ..Default::default()
+            }),
+        )];
+
+        let report = command
+            .build_execution_report(&tester, &results)
+            .await
+            .unwrap();
+
+        assert!(report.compliance_report().is_some());
+        assert!(report.policy_result().is_none());
+    }
+
     #[test]
     fn aggregate_export_skips_reports_without_exportable_results() {
         let command = MxTestCommand::new(Args::default());
@@ -463,5 +489,17 @@ mod tests {
         let cmd = MxTestCommand::new(args);
         let err = cmd.execute().await.unwrap_err();
         assert!(format!("{err}").contains("MX domain is required"));
+    }
+
+    #[tokio::test]
+    async fn execute_requires_database_config_before_scanning() {
+        let mut args = Args::default();
+        args.mx_domain = Some("example.com".to_string());
+        args.database.store_results = true;
+        let command = MxTestCommand::new(args);
+
+        let error = command.execute().await.unwrap_err();
+
+        assert!(error.to_string().contains("database_config_path"));
     }
 }
