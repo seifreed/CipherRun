@@ -27,7 +27,7 @@ pub async fn get_scan(queue: &dyn JobQueue, id: &str) -> Result<ScanJob, ApiErro
 mod tests {
     use super::enqueue_scan;
     use crate::api::{
-        jobs::{InMemoryJobQueue, ScanJob},
+        jobs::{InMemoryJobQueue, JobQueue, ScanJob},
         models::{error::ApiError, request::ScanOptions},
     };
 
@@ -41,5 +41,25 @@ mod tests {
             .expect_err("full queue should fail");
 
         assert!(matches!(error, ApiError::ServiceUnavailable(_)));
+    }
+
+    #[tokio::test]
+    async fn enqueue_idempotency_conflict_maps_to_conflict() {
+        let queue = InMemoryJobQueue::new(2);
+        let mut original = ScanJob::new("example.com".to_string(), ScanOptions::default(), None);
+        original.idempotency_key = Some("request-1".to_string());
+        original.request_fingerprint = Some("fingerprint-1".to_string());
+        queue.enqueue(original).await.expect("first enqueue succeeds");
+
+        let mut conflicting =
+            ScanJob::new("example.org".to_string(), ScanOptions::default(), None);
+        conflicting.idempotency_key = Some("request-1".to_string());
+        conflicting.request_fingerprint = Some("fingerprint-2".to_string());
+
+        let error = enqueue_scan(&queue, conflicting)
+            .await
+            .expect_err("reusing the key with another request conflicts");
+
+        assert!(matches!(error, ApiError::Conflict(_)));
     }
 }
