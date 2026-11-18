@@ -37,7 +37,7 @@ pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationEr
 
     // Check for dangerous characters that could enable command injection
     let dangerous_chars = [
-        '|', '&', ';', '$', '`', '\n', '\r', '<', '>', '(', ')', '{', '}', '\\', '\'', '"', ' ',
+        '|', '&', ';', '$', '`', '\n', '\r', '<', '>', '(', ')', '{', '}', '\'', '"', ' ',
     ];
     for ch in dangerous_chars.iter() {
         if hostname.contains(*ch) {
@@ -69,12 +69,6 @@ pub fn validate_hostname(hostname: &str) -> std::result::Result<(), ValidationEr
 
     // Validate DNS hostname format
     let labels: Vec<&str> = hostname.split('.').collect();
-
-    if labels.is_empty() {
-        return Err(ValidationError::InvalidHostname(
-            "Invalid hostname format".to_string(),
-        ));
-    }
 
     for label in labels {
         if label.is_empty() || label.len() > MAX_LABEL_LENGTH {
@@ -124,6 +118,12 @@ mod tests {
     #[test]
     fn test_validate_hostname_invalid() {
         assert!(validate_hostname("example.com; rm -rf /").is_err());
+        assert!(
+            validate_hostname("example\\com")
+                .expect_err("backslash is a path separator")
+                .to_string()
+                .contains("path separators")
+        );
         assert!(validate_hostname("example.com|whoami").is_err());
         assert!(validate_hostname("example.com`id`").is_err());
         assert!(validate_hostname("example.com$(whoami)").is_err());
