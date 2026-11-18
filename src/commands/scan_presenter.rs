@@ -129,3 +129,71 @@ impl<'a> ScanPresenter<'a> {
         exporter.export(plan)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ScanPresenter;
+    use crate::Args;
+    use crate::application::{ScanExecutionReport, ScanResults};
+    use crate::protocols::{Protocol, ProtocolTestResult};
+
+    fn report(results: ScanResults, stored_scan_id: Option<i64>) -> ScanExecutionReport {
+        ScanExecutionReport::new(results, None, None, stored_scan_id)
+    }
+
+    fn protocol_results() -> ScanResults {
+        ScanResults {
+            target: "example.com:443".to_string(),
+            protocols: vec![ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: true,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn present_handles_a_local_scan_report_without_optional_sections() {
+        let args = Args::default();
+        let report = report(ScanResults::default(), None);
+
+        let exit = ScanPresenter::new(&args).present(&report).unwrap();
+
+        assert!(exit.is_success());
+    }
+
+    #[test]
+    fn present_in_quiet_mode_skips_terminal_results_and_notices() {
+        let mut args = Args::default();
+        args.output.quiet = true;
+        let report = report(ScanResults::default(), Some(42));
+
+        let exit = ScanPresenter::new(&args).present(&report).unwrap();
+
+        assert!(exit.is_success());
+    }
+
+    #[test]
+    fn present_exports_results_to_the_requested_json_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let output_path = directory.path().join("scan.json");
+        let mut args = Args::default();
+        args.output.json = Some(output_path.clone());
+        let report = report(protocol_results(), None);
+
+        let exit = ScanPresenter::new(&args).present(&report).unwrap();
+
+        assert!(exit.is_success());
+        let exported: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+        assert_eq!(exported["target"], "example.com:443");
+    }
+}
