@@ -900,9 +900,14 @@ fn test_misc_display_helpers_and_fingerprints() {
     let formatter = ScannerFormatter::new(&args);
 
     formatter.print_scan_header("example.com", 443, Some("SMTP"));
+    formatter.print_scan_header("example.com", 443, None);
     formatter.print_phase_progress("phase");
     formatter.print_phase_progress_nl("phase");
     formatter.print_error("error");
+
+    let mut response_only_args = Args::default();
+    response_only_args.cert_filters.response_only = true;
+    ScannerFormatter::new(&response_only_args).print_scan_header("example.com", 443, None);
 
     let signature_result = SignatureEnumerationResult {
         algorithms: vec![
