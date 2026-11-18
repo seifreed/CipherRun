@@ -141,6 +141,7 @@ mod tests {
     fn test_parse_custom_indices_rejects_invalid_inputs() {
         for (case, args, expected) in [
             ("invalid format", vec!["google:123"], "google:123"),
+            ("empty source", vec!["=123"], "source cannot be empty"),
             ("invalid value", vec!["google=abc"], "Invalid index value"),
             (
                 "duplicate source",
