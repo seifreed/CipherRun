@@ -68,6 +68,18 @@ mod tests {
     }
 
     #[test]
+    fn both_cbc_probes_are_listed_when_supported() {
+        let result = BeastTestResult::from_probe_statuses(
+            BeastProbeStatus::Supported,
+            BeastProbeStatus::Supported,
+        );
+
+        assert!(result.ssl3_cbc_supported);
+        assert!(result.details.contains("TLS 1.0 with CBC ciphers enabled"));
+        assert!(result.details.contains("SSL 3.0 with CBC ciphers enabled"));
+    }
+
+    #[test]
     fn inconclusive_clean_probes_mark_result_inconclusive() {
         let result = BeastTestResult::from_probe_statuses(
             BeastProbeStatus::Inconclusive,
