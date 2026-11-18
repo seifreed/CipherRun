@@ -115,6 +115,7 @@ mod tests {
                 }),
             }),
             advanced: Some(AdvancedResults {
+                intolerance: Some(crate::protocols::intolerance::IntoleranceTestResult::default()),
                 pqc_readiness: Some(PqcReadinessAssessment {
                     score: 0,
                     level: PqcLevel::None,
