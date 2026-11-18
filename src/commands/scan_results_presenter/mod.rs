@@ -32,9 +32,7 @@ impl<'a> ScanResultsPresenter<'a> {
         }
 
         self.render_tls_sections(&formatter, cli_view);
-        if cli_view.should_render_results_summary() {
-            formatter.display_results_summary(results);
-        }
+        formatter.display_results_summary(results);
     }
 
     fn render_dns_only(&self, results: &crate::scanner::ScanResults) {
@@ -134,6 +132,23 @@ mod tests {
         assert!(cli_view.should_render_feature_view());
         assert!(cli_view.should_render_fingerprint_view());
 
+        ScanResultsPresenter::new(&Args::default()).render(&cli_view);
+    }
+
+    #[test]
+    fn render_feature_only_results_without_primary_tls_sections() {
+        let results = ScanResults {
+            advanced: Some(AdvancedResults {
+                intolerance: Some(crate::protocols::intolerance::IntoleranceTestResult::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let report = ScanExecutionReport::new(results, None, None, None);
+        let cli_view = report.cli_view(false);
+
+        assert!(!cli_view.should_render_primary_tls_view());
+        assert!(cli_view.should_render_feature_view());
         ScanResultsPresenter::new(&Args::default()).render(&cli_view);
     }
 }
