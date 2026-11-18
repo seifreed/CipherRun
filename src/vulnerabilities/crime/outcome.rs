@@ -102,6 +102,14 @@ mod tests {
     }
 
     #[test]
+    fn disabled_statuses_merge_to_disabled() {
+        assert_eq!(
+            CompressionProbeStatus::Disabled.merge(CompressionProbeStatus::Disabled),
+            CompressionProbeStatus::Disabled
+        );
+    }
+
+    #[test]
     fn statuses_build_public_result() {
         let result = CrimeTestResult::from_probe_statuses(
             CompressionProbeStatus::Enabled,
@@ -112,5 +120,34 @@ mod tests {
         assert!(!result.inconclusive);
         assert!(result.tls_compression_enabled);
         assert!(result.details.contains("TLS compression enabled"));
+    }
+
+    #[test]
+    fn public_result_covers_spdy_only_inconclusive_and_safe_outcomes() {
+        let spdy_only = CrimeTestResult::from_probe_statuses(
+            CompressionProbeStatus::Disabled,
+            CompressionProbeStatus::Enabled,
+        );
+        assert!(spdy_only.vulnerable);
+        assert!(spdy_only.spdy_compression_enabled);
+        assert!(spdy_only.details.contains("SPDY compression enabled"));
+
+        let inconclusive = CrimeTestResult::from_probe_statuses(
+            CompressionProbeStatus::Inconclusive,
+            CompressionProbeStatus::Inconclusive,
+        );
+        assert!(inconclusive.inconclusive);
+        assert!(inconclusive.details.contains("test inconclusive"));
+
+        let safe = CrimeTestResult::from_probe_statuses(
+            CompressionProbeStatus::Disabled,
+            CompressionProbeStatus::Disabled,
+        );
+        assert!(!safe.vulnerable);
+        assert!(!safe.inconclusive);
+        assert_eq!(
+            safe.details,
+            "Not vulnerable - TLS/SPDY compression disabled"
+        );
     }
 }
