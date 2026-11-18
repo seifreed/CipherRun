@@ -116,6 +116,11 @@ impl CipherRunDatabase {
     }
 
     /// Store complete scan results
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.persist")
+    )]
     pub async fn store_scan(&self, results: &PersistedScan) -> crate::Result<i64> {
         use crate::db::models::*;
 

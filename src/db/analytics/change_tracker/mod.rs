@@ -173,6 +173,11 @@ impl ChangeTracker {
     }
 
     /// Detect changes for a hostname across the last N scans
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "change_tracker.detect")
+    )]
     pub async fn detect_changes(
         &self,
         hostname: &str,
@@ -204,6 +209,14 @@ impl ChangeTracker {
     }
 
     /// Detect changes between two specific scans
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "change_tracker.compare"
+        )
+    )]
     pub async fn detect_changes_between(
         &self,
         scan_id_1: i64,

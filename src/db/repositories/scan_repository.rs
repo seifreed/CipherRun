@@ -22,6 +22,11 @@ impl ScanRepositoryImpl {
     /// vulnerabilities) declare `ON DELETE CASCADE` on `scans(scan_id)`, so this
     /// removes the whole scan atomically. Used to roll back a partially-written
     /// scan when a child insert fails.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.delete")
+    )]
     pub async fn delete_scan(&self, scan_id: i64) -> crate::Result<()> {
         match &self.pool {
             DatabasePool::Postgres(pool) => {
@@ -49,6 +54,11 @@ impl ScanRepositoryImpl {
 
 #[async_trait]
 impl ScanRepository for ScanRepositoryImpl {
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.create")
+    )]
     async fn create_scan(&self, scan: &ScanRecord) -> crate::Result<i64> {
         match &self.pool {
             DatabasePool::Postgres(pool) => {
@@ -103,6 +113,11 @@ impl ScanRepository for ScanRepositoryImpl {
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.get_by_id")
+    )]
     async fn get_scan_by_id(&self, scan_id: i64) -> crate::Result<Option<ScanRecord>> {
         match &self.pool {
             DatabasePool::Postgres(pool) => {
@@ -138,6 +153,11 @@ impl ScanRepository for ScanRepositoryImpl {
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.list_by_hostname")
+    )]
     async fn get_scans_by_hostname(
         &self,
         hostname: &str,
@@ -188,6 +208,14 @@ impl ScanRepository for ScanRepositoryImpl {
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "scan.list_by_hostname_since"
+        )
+    )]
     async fn get_scans_by_hostname_since(
         &self,
         hostname: &str,
@@ -245,6 +273,11 @@ impl ScanRepository for ScanRepositoryImpl {
         Ok(scans.into_iter().next())
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.delete_old")
+    )]
     async fn delete_old_scans(&self, days: i64) -> crate::Result<u64> {
         let cutoff_date = crate::db::history::cleanup_cutoff_days_ago(days)?;
 
@@ -284,6 +317,11 @@ impl ScanRepository for ScanRepositoryImpl {
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "scan.update_rating")
+    )]
     async fn update_scan_rating(&self, scan_id: i64, grade: &str, score: u8) -> crate::Result<()> {
         let score = score as i32;
 

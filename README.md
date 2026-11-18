@@ -269,7 +269,12 @@ Database lifecycle events remain available: successful pool creation emits
 `database.pool.connected` with the backend, connection duration, and outcome;
 the event omits database paths and connection strings. Successful migration
 setup emits `database.migrations.completed` with backend, duration, and
-readiness outcome.
+readiness outcome. Scan persistence, repository reads/writes, scan history,
+certificate inventory, analytics, and database job-queue operations create
+opt-in DEBUG spans with static operation names; they inherit request
+correlation and omit SQL, identifiers, and input records. With the `otel`
+feature enabled, set a matching `RUST_LOG` directive (for example
+`cipherrun=debug`) to export their duration and parent trace context.
 DNS cache hit/miss events are `TRACE`-level and omit the hostname, avoiding
 per-target debug noise during bulk scans.
 HTTP/3 ALPN probes emit one `http3.request.inconclusive` event with aggregate

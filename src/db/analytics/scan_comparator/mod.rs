@@ -159,6 +159,14 @@ impl ScanComparator {
     }
 
     /// Compare two specific scans
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "scan_comparison.compare"
+        )
+    )]
     pub async fn compare_scans(
         &self,
         scan_id_1: i64,
@@ -215,6 +223,14 @@ impl ScanComparator {
     }
 
     /// Compare the two latest scans for a hostname
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "scan_comparison.compare_latest"
+        )
+    )]
     pub async fn compare_latest(&self, hostname: &str, port: u16) -> crate::Result<ScanComparison> {
         // Fetch up to 365 recent scans to find the 2 most recent regardless
         // of when they occurred, then take only the latest 2

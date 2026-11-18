@@ -69,6 +69,11 @@ impl DashboardGenerator {
     }
 
     /// Generate complete dashboard data
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "dashboard.generate")
+    )]
     pub async fn generate_dashboard(
         &self,
         hostname: &str,

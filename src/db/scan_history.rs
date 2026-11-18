@@ -19,6 +19,11 @@ impl<'a> ScanHistoryPort for ScanHistoryService<'a> {
     }
 }
 
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(event_name = "database.operation", operation = "scan_history.list")
+)]
 pub async fn get_scan_history(
     pool: &DatabasePool,
     query: &ScanHistoryQuery,

@@ -83,6 +83,11 @@ impl TrendAnalyzer {
     }
 
     /// Generate comprehensive trend report
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "trend_report.generate")
+    )]
     pub async fn generate_trend_report(
         &self,
         hostname: &str,

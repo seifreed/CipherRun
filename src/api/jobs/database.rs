@@ -34,6 +34,14 @@ impl DatabaseJobQueue {
         })
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.ensure_schema"
+        )
+    )]
     async fn ensure_schema(&self) -> Result<()> {
         let sqlite = format!(
             "CREATE TABLE IF NOT EXISTS {TABLE} (\
@@ -110,6 +118,14 @@ impl DatabaseJobQueue {
         self.recover_expired_leases().await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.recover_expired_leases"
+        )
+    )]
     async fn recover_expired_leases(&self) -> Result<()> {
         let started = Instant::now();
         let now = Utc::now();
@@ -206,6 +222,14 @@ impl DatabaseJobQueue {
         Ok(())
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.active_count"
+        )
+    )]
     async fn active_count(&self) -> Result<i64> {
         let query = format!("SELECT COUNT(*) FROM {TABLE} WHERE status IN ('queued','running')");
         match self.pool.as_ref() {
@@ -215,6 +239,11 @@ impl DatabaseJobQueue {
         .map_err(db_error)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.load")
+    )]
     async fn load(&self, id: &str) -> Result<Option<ScanJob>> {
         let query = format!(
             "SELECT job_json FROM {TABLE} WHERE id = {}",
@@ -243,6 +272,11 @@ impl DatabaseJobQueue {
         .transpose()
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.update_row")
+    )]
     async fn update_row(&self, job: &ScanJob, lease_until: Option<DateTime<Utc>>) -> Result<()> {
         let json = serde_json::to_string(job)?;
         let status = if job.dead_letter {
@@ -284,6 +318,11 @@ impl DatabaseJobQueue {
 
 #[async_trait]
 impl JobQueue for DatabaseJobQueue {
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.enqueue")
+    )]
     async fn enqueue(&self, job: ScanJob) -> Result<String> {
         self.ensure_schema().await?;
         if self.active_count().await? >= i64::try_from(self.max_capacity).unwrap_or(i64::MAX) {
@@ -386,6 +425,11 @@ impl JobQueue for DatabaseJobQueue {
         Ok(job.id)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.dequeue")
+    )]
     async fn dequeue(&self) -> Result<Option<ScanJob>> {
         self.ensure_schema().await?;
         let _guard = self.claim_lock.lock().await;
@@ -440,11 +484,21 @@ impl JobQueue for DatabaseJobQueue {
         Ok(None)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.get")
+    )]
     async fn get_job(&self, id: &str) -> Result<Option<ScanJob>> {
         self.ensure_schema().await?;
         self.load(id).await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.update")
+    )]
     async fn update_job(&self, job: &ScanJob) -> Result<()> {
         self.ensure_schema().await?;
         let lease = if matches!(job.status, ScanStatus::Running) {
@@ -455,6 +509,14 @@ impl JobQueue for DatabaseJobQueue {
         self.update_row(job, lease).await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.update_preserving_cancelled"
+        )
+    )]
     async fn update_job_preserving_cancelled(&self, job: &ScanJob) -> Result<bool> {
         self.ensure_schema().await?;
         let json = serde_json::to_string(job)?;
@@ -496,6 +558,11 @@ impl JobQueue for DatabaseJobQueue {
         Ok(updated == 1)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.renew_lease")
+    )]
     async fn renew_lease(&self, id: &str) -> Result<bool> {
         self.ensure_schema().await?;
         let query = format!(
@@ -522,6 +589,14 @@ impl JobQueue for DatabaseJobQueue {
         Ok(affected == 1)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.retry_or_dead_letter"
+        )
+    )]
     async fn retry_or_dead_letter(
         &self,
         job: &ScanJob,
@@ -561,6 +636,11 @@ impl JobQueue for DatabaseJobQueue {
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.cancel")
+    )]
     async fn cancel_job(&self, id: &str) -> Result<bool> {
         self.ensure_schema().await?;
         let Some(mut job) = self.load(id).await? else {
@@ -595,6 +675,11 @@ impl JobQueue for DatabaseJobQueue {
         Ok(result == 1)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.length")
+    )]
     async fn queue_length(&self) -> Result<usize> {
         self.ensure_schema().await?;
         let query = format!("SELECT COUNT(*) FROM {TABLE} WHERE status = 'queued'");
@@ -607,6 +692,11 @@ impl JobQueue for DatabaseJobQueue {
             .map_err(|_| crate::TlsError::DatabaseError("Invalid queue count".to_string()))
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(event_name = "database.operation", operation = "job_queue.list")
+    )]
     async fn list_jobs(&self) -> Result<Vec<ScanJob>> {
         self.ensure_schema().await?;
         let query = format!("SELECT job_json FROM {TABLE} ORDER BY queued_at ASC");
@@ -632,6 +722,14 @@ impl JobQueue for DatabaseJobQueue {
             .collect()
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.active_jobs_count"
+        )
+    )]
     async fn active_jobs_count(&self) -> Result<usize> {
         self.ensure_schema().await?;
         let count = self.active_count().await?;
@@ -639,6 +737,14 @@ impl JobQueue for DatabaseJobQueue {
             .map_err(|_| crate::TlsError::DatabaseError("Invalid active count".to_string()))
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "job_queue.prune_expired"
+        )
+    )]
     async fn prune_expired(&self) -> Result<usize> {
         let Some(retention) = self.retention else {
             return Ok(0);

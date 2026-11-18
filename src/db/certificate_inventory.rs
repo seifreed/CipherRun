@@ -29,6 +29,14 @@ impl<'a> CertificateInventoryService<'a> {
 
 #[async_trait::async_trait]
 impl<'a> CertificateInventoryPort for CertificateInventoryService<'a> {
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "certificate_inventory.list"
+        )
+    )]
     async fn list_certificates(
         &self,
         query: &CertificateInventoryQuery,
@@ -36,6 +44,14 @@ impl<'a> CertificateInventoryPort for CertificateInventoryService<'a> {
         list_certificates(self.pool, query).await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "certificate_inventory.get"
+        )
+    )]
     async fn get_certificate(
         &self,
         fingerprint: &str,
@@ -43,6 +59,14 @@ impl<'a> CertificateInventoryPort for CertificateInventoryService<'a> {
         get_certificate(self.pool, fingerprint).await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            event_name = "database.operation",
+            operation = "certificate_inventory.get_for_owner"
+        )
+    )]
     async fn get_certificate_for_owner(
         &self,
         fingerprint: &str,
