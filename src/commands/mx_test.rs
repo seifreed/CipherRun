@@ -354,6 +354,34 @@ mod tests {
         assert!(!command.export_collection_json("example.com", &[]).unwrap());
     }
 
+    #[tokio::test]
+    async fn builds_aggregate_report_from_successful_mx_results() {
+        let command = MxTestCommand::new(Args::default());
+        let tester = crate::utils::mx::MxTester::new("example.com".to_string());
+        let results = vec![(
+            MxRecord {
+                priority: 10,
+                hostname: "mx1.example.com".to_string(),
+            },
+            Ok(ScanResults {
+                target: "mx1.example.com:25".to_string(),
+                scan_time_ms: 17,
+                ..Default::default()
+            }),
+        )];
+
+        let report = command
+            .build_execution_report(&tester, &results)
+            .await
+            .unwrap();
+
+        assert_eq!(report.results().target, "example.com:25");
+        assert_eq!(report.results().scan_time_ms, 17);
+        assert!(report.compliance_report().is_none());
+        assert!(report.policy_result().is_none());
+        assert!(report.stored_scan_id().is_none());
+    }
+
     #[test]
     fn test_mx_test_command_name() {
         let cmd = MxTestCommand::new(Args::default());
