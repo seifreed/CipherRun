@@ -359,4 +359,14 @@ mod tests {
         assert!(request.scan.prefs.headers);
         assert!(request.fingerprint.client_simulation);
     }
+
+    #[test]
+    fn maps_non_input_validation_errors_to_bad_request() {
+        let error = map_validation_error(crate::TlsError::ParseError {
+            message: "invalid request settings".to_string(),
+        });
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("invalid request settings"));
+    }
 }
