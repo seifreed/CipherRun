@@ -38,7 +38,14 @@ pub(super) fn with_received_ticket(
 
 #[cfg(test)]
 mod tests {
-    use super::{SESSION_ID_MARKER, with_received_ticket};
+    use super::{SESSION_ID_MARKER, with_empty_session_ticket, with_received_ticket};
+
+    #[test]
+    fn empty_session_ticket_client_hello_contains_ticket_extension() {
+        let hello = with_empty_session_ticket().expect("ClientHello should build");
+
+        assert!(hello.windows(2).any(|window| window == [0x00, 0x23]));
+    }
 
     #[test]
     fn received_ticket_is_reused_with_marker_session_id() {
