@@ -39,3 +39,34 @@ impl CommandExit {
         self.code == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CommandExit;
+
+    #[test]
+    fn command_exit_builders_preserve_codes_and_success_state() {
+        let success = CommandExit::success();
+        assert_eq!(success.code(), 0);
+        assert!(success.is_success());
+
+        let failures = [
+            (
+                CommandExit::failure(CommandExit::OPERATIONAL_FAILURE),
+                CommandExit::OPERATIONAL_FAILURE,
+            ),
+            (
+                CommandExit::findings_failure(),
+                CommandExit::FINDINGS_FAILURE,
+            ),
+            (CommandExit::policy_failure(), CommandExit::POLICY_FAILURE),
+            (CommandExit::drift_failure(), CommandExit::DRIFT_FAILURE),
+            (CommandExit::failure(-1), -1),
+        ];
+
+        for (exit, expected_code) in failures {
+            assert_eq!(exit.code(), expected_code);
+            assert!(!exit.is_success());
+        }
+    }
+}
