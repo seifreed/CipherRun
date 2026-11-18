@@ -74,10 +74,6 @@ impl CipherTester {
     ) -> Result<HashMap<Protocol, super::ProtocolCipherSummary>> {
         let mut results = HashMap::new();
         for protocol in Protocol::all() {
-            if matches!(protocol, Protocol::QUIC) {
-                continue;
-            }
-
             let summary = self.test_protocol_ciphers(protocol).await?;
             if !summary.supported_ciphers.is_empty() {
                 results.insert(protocol, summary);
