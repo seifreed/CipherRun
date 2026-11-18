@@ -32,3 +32,37 @@ impl CertificateFilters {
         names
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CertificateFilters;
+
+    #[test]
+    fn reports_each_active_filter_in_stable_order() {
+        let filters = CertificateFilters {
+            expired: true,
+            self_signed: true,
+            mismatched: true,
+            revoked: true,
+            untrusted: true,
+        };
+
+        assert!(filters.has_filters());
+        assert_eq!(
+            filters.active_filter_names(),
+            [
+                "expired",
+                "self-signed",
+                "mismatched",
+                "revoked",
+                "untrusted"
+            ]
+        );
+        assert!(!CertificateFilters::default().has_filters());
+        assert!(
+            CertificateFilters::default()
+                .active_filter_names()
+                .is_empty()
+        );
+    }
+}
