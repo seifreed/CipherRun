@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_telnet_negotiator_default() {
-        let negotiator = TelnetNegotiator;
+        let negotiator = TelnetNegotiator::default();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::Telnet);
     }
 
