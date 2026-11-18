@@ -22,3 +22,24 @@ pub async fn get_scan(queue: &dyn JobQueue, id: &str) -> Result<ScanJob, ApiErro
         })?
         .ok_or_else(|| ApiError::NotFound(format!("Scan {} not found", id)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::enqueue_scan;
+    use crate::api::{
+        jobs::{InMemoryJobQueue, ScanJob},
+        models::{error::ApiError, request::ScanOptions},
+    };
+
+    #[tokio::test]
+    async fn enqueue_backend_failure_maps_to_service_unavailable() {
+        let queue = InMemoryJobQueue::new(0);
+        let job = ScanJob::new("example.com".to_string(), ScanOptions::default(), None);
+
+        let error = enqueue_scan(&queue, job)
+            .await
+            .expect_err("full queue should fail");
+
+        assert!(matches!(error, ApiError::ServiceUnavailable(_)));
+    }
+}
