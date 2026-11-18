@@ -529,6 +529,16 @@ mod tests {
     }
 
     #[test]
+    fn tls12_only_ciphers_are_excluded_from_other_legacy_protocols() {
+        let tester = CipherTester::new(dummy_target());
+        let cipher = tls12_cipher("002F", "AES128-CBC", 128);
+
+        for protocol in [Protocol::TLS11, Protocol::SSLv3] {
+            assert!(!tester.is_cipher_compatible_with_protocol(&cipher, protocol));
+        }
+    }
+
+    #[test]
     fn sslv2_cipher_compatible_with_sslv2() {
         let tester = CipherTester::new(dummy_target());
         let cipher = make_cipher("0001", "SSLv2", "DES", 56, false, "RSA");
