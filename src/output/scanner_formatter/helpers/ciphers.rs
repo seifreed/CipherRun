@@ -46,11 +46,8 @@ fn cipher_feature_percentage(feature_count: usize, total: usize) -> usize {
         return 0;
     }
 
-    let percentage = (feature_count as u128)
-        .saturating_mul(100)
-        .checked_div(total as u128)
-        .unwrap_or(0);
-    usize::try_from(percentage.min(100)).expect("percentage is capped at 100")
+    let percentage = (feature_count as u128).saturating_mul(100) / total as u128;
+    percentage.min(100) as usize
 }
 
 #[cfg(test)]
