@@ -26,13 +26,16 @@ impl<'a> ScanResultsPresenter<'a> {
             return;
         }
 
-        if cli_view.should_render_results_summary_only() {
+        let summary_only = cli_view.should_render_results_summary_only();
+        if summary_only {
             formatter.display_results_summary(results);
-            return;
+        } else {
+            self.render_tls_sections(&formatter, cli_view);
         }
 
-        self.render_tls_sections(&formatter, cli_view);
-        formatter.display_results_summary(results);
+        if cli_view.should_render_results_summary() && !summary_only {
+            formatter.display_results_summary(results);
+        }
     }
 
     fn render_dns_only(&self, results: &crate::scanner::ScanResults) {
