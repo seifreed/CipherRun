@@ -51,6 +51,12 @@ mod tests {
     fn u24_len_rejects_values_above_24_bits() {
         let err = u24_len(0x0100_0000, "handshake").expect_err("length must be rejected");
         assert!(err.to_string().contains("handshake exceeds maximum length"));
+
+        #[cfg(target_pointer_width = "64")]
+        assert!(
+            crate::utils::invalid_input_length::u24_len(u32::MAX as usize + 1, "handshake")
+                .is_err()
+        );
     }
 
     #[test]

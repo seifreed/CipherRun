@@ -34,5 +34,15 @@ mod tests {
 
         assert_eq!(socket_addrs_for_probe(&target, false).unwrap().len(), 1);
         assert_eq!(socket_addrs_for_probe(&target, true).unwrap().len(), 2);
+
+        let empty = Target {
+            hostname: "example.com".to_string(),
+            port: 443,
+            ip_addresses: Vec::new(),
+        };
+        assert!(matches!(
+            socket_addrs_for_probe(&empty, false),
+            Err(crate::TlsError::NoSocketAddresses)
+        ));
     }
 }
