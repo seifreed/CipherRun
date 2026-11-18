@@ -239,20 +239,37 @@ fn test_more_format_helpers() {
 #[test]
 fn test_grade_and_threat_helpers() {
     let grade_a = format_ssl_grade(&crate::rating::Grade::A);
+    let grade_c = format_ssl_grade(&crate::rating::Grade::C);
     let grade_f = format_ssl_grade(&crate::rating::Grade::F);
+    let grade_unverified = format_ssl_grade(&crate::rating::Grade::Unverified);
     assert!(grade_a.to_string().contains("Grade"));
+    assert!(grade_c.to_string().contains("Grade C"));
     assert!(grade_f.to_string().contains("Grade"));
+    assert!(grade_unverified.to_string().contains("Grade Unverified"));
 
     let http_a = format_http_grade(&SecurityGrade::A);
+    let http_c = format_http_grade(&SecurityGrade::C);
     let http_f = format_http_grade(&SecurityGrade::F);
     assert!(http_a.to_string().contains("Grade"));
+    assert!(http_c.to_string().contains("Grade"));
     assert!(http_f.to_string().contains("Grade"));
 
     let adv_a = format_advanced_grade(&HeaderGrade::A);
+    let adv_b = format_advanced_grade(&HeaderGrade::B);
+    let adv_d = format_advanced_grade(&HeaderGrade::D);
     let adv_f = format_advanced_grade(&HeaderGrade::F);
     assert!(adv_a.to_string().contains("Grade A"));
+    assert!(adv_b.to_string().contains("Grade B"));
+    assert!(adv_d.to_string().contains("Grade D"));
     assert!(adv_f.to_string().contains("Grade F"));
 
+    assert!(
+        format_threat_level("critical")
+            .to_string()
+            .contains("critical")
+    );
+    assert!(format_threat_level("high").to_string().contains("high"));
+    assert!(format_threat_level("medium").to_string().contains("medium"));
     let threat_unknown = format_threat_level("unknown");
     assert!(
         threat_unknown
