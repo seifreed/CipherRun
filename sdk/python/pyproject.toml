@@ -10,7 +10,7 @@ keywords = ["OpenAPI", "OpenAPI-Generator", "CipherRun API"]
 include = ["cipherrun_client/py.typed"]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 
 urllib3 = ">= 2.8.0, < 3.0"
 requests = ">=2.32.5, <3.0"
@@ -22,9 +22,9 @@ typing-extensions = ">=4.7.1"
 
 [tool.poetry.dev-dependencies]
 pytest = ">=9.0.3"
-tox = { version = ">=3.9.0", python = ">=3.11" }
-virtualenv = { version = ">=21.14.9", python = ">=3.11" }
-filelock = { version = ">=4.2.1", python = ">=3.11" }
+tox = { version = ">=3.9.0", python = ">=3.12" }
+virtualenv = { version = ">=21.14.9", python = ">=3.12" }
+filelock = { version = ">=4.2.1", python = ">=3.12" }
 zipp = ">=3.19.1"
 flake8 = ">=4.0.0"
 types-python-dateutil = ">=2.8.19.14"

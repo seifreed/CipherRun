@@ -8,7 +8,7 @@ All notable changes to CipherRun are documented here. The format follows
 
 ### Changed
 
-- Require active Rust 1.100+ and Python 3.11+; CI tests the SDK on Python 3.11 and the newest active release (3.15).
+- Require active Rust 1.100+ and Python 3.12+; CI tests the SDK on Python 3.12 and the newest active release (3.15).
 - Enforce 100% SDK line coverage in the Python CI matrix.
 - Update container builder and runtime bases to Rust 1.100 and Debian 13.
 - Serialize date/time values from Python SDK model `to_json()` methods safely.

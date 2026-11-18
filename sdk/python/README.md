@@ -55,7 +55,7 @@ For more information, please visit [https://github.com/seifreed/cipherrun](https
 
 ## Requirements.
 
-Python 3.11+ (CI tests the minimum supported version and the newest active release; currently 3.11 and 3.15).
+Python 3.12+ (CI tests the minimum supported version and the newest active release; currently 3.12 and 3.15).
 Generated model `to_json()` methods serialize date/time values to JSON-compatible strings.
 
 ## Installation & Usage
@@ -95,7 +95,7 @@ Run the SDK tests and enforce full line coverage for both `cipherrun` and `ciphe
 python -m pytest --cov=cipherrun --cov=cipherrun_client --cov-fail-under=100 --cov-report=term-missing
 ```
 
-GitHub Actions runs this gate on Python 3.11 and the newest active Python release.
+GitHub Actions runs this gate on Python 3.12 and the newest active Python release.
 
 ## Getting Started
 
