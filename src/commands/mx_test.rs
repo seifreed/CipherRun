@@ -292,6 +292,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collection_json_export_includes_success_and_failure_results() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+
+        for pretty in [false, true] {
+            let path = directory.path().join(format!("mx-{pretty}.json"));
+            let mut args = Args::default();
+            args.output.json = Some(path.clone());
+            args.output.json_pretty = pretty;
+            let command = MxTestCommand::new(args);
+            let results = vec![
+                (
+                    MxRecord {
+                        priority: 10,
+                        hostname: "mx1.example.com".to_string(),
+                    },
+                    Ok(ScanResults {
+                        target: "mx1.example.com:25".to_string(),
+                        ..Default::default()
+                    }),
+                ),
+                (
+                    MxRecord {
+                        priority: 20,
+                        hostname: "mx2.example.com".to_string(),
+                    },
+                    Err(TlsError::ParseError {
+                        message: "handshake failed".to_string(),
+                    }),
+                ),
+            ];
+
+            assert!(
+                command
+                    .export_collection_json("example.com", &results)
+                    .unwrap()
+            );
+            let serialized = std::fs::read_to_string(path).unwrap();
+            let report: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(report["scan_type"], "mx_records");
+            assert_eq!(report["domain"], "example.com");
+            assert_eq!(report["total_mx_servers"], 2);
+            assert_eq!(report["results"][0]["success"], true);
+            assert_eq!(
+                report["results"][0]["scan_results"]["target"],
+                "mx1.example.com:25"
+            );
+            assert_eq!(report["results"][1]["success"], false);
+            assert_eq!(
+                report["results"][1]["error"],
+                "Parse error: handshake failed"
+            );
+            assert_eq!(serialized.contains('\n'), pretty);
+        }
+    }
+
+    #[test]
+    fn collection_json_export_is_skipped_without_an_output_path() {
+        let command = MxTestCommand::new(Args::default());
+        assert!(!command.export_collection_json("example.com", &[]).unwrap());
+    }
+
+    #[test]
     fn test_mx_test_command_name() {
         let cmd = MxTestCommand::new(Args::default());
         assert_eq!(cmd.name(), "MxTestCommand");
