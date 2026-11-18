@@ -598,6 +598,18 @@ fn test_display_sections_smoke() {
             secure_renegotiation: Some(true),
         },
         ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 2,
+            handshake_time_ms: Some(9),
+            heartbeat_enabled: Some(false),
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        },
+        ProtocolTestResult {
             protocol: Protocol::SSLv3,
             supported: false,
             inconclusive: false,
