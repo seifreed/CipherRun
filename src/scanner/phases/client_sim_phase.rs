@@ -92,6 +92,10 @@ impl ScanPhase for ClientSimPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::network::Target;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_client_sim_phase_should_run() {
@@ -136,5 +140,37 @@ mod tests {
     fn test_client_sim_phase_default() {
         let phase: ClientSimPhase = Default::default();
         assert_eq!(phase.name(), "Simulating Client Connections");
+    }
+
+    #[tokio::test]
+    async fn execute_stores_results_when_local_target_rejects_simulations() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("localhost target should be valid");
+        let mut context = ScanContext::new(target, Arc::new(ScanRequest::default()), None, None);
+
+        ClientSimPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("connection failures should be recorded per client");
+
+        let results = context
+            .results
+            .client_simulations()
+            .expect("phase should store its simulation results");
+        assert_eq!(results.len(), 5);
+        assert!(results.iter().all(|result| !result.success));
     }
 }
