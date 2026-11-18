@@ -435,6 +435,20 @@ mod tests {
     }
 
     #[test]
+    fn test_http_analysis_covers_cookie_header_and_invalid_header_values() {
+        assert!(http_analysis::detect_sensitive_patterns(
+            "HTTP/1.1 200 OK\r\nSet-Cookie: session=secret\r\n\r\n"
+        ));
+        assert!(!http_analysis::is_compressed_encoding_header(
+            "X-Content-Encoding: gzip"
+        ));
+        assert_eq!(
+            http_analysis::classify_dynamic_content_response("HTTP/1.1 invalid status", "marker"),
+            None
+        );
+    }
+
+    #[test]
     fn test_compression_header_requires_exact_encoding_token() {
         assert!(http_analysis::is_compressed_encoding_header(
             "Content-Encoding: gzip, br"
