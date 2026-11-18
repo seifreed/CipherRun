@@ -40,6 +40,28 @@ fn test_scanner_formatter_creation() {
 }
 
 #[test]
+fn test_client_simulation_results_with_uniform_outcomes() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let result = |success| ClientSimulationResult {
+        client_name: "TestClient".to_string(),
+        client_id: "test".to_string(),
+        success,
+        protocol: None,
+        cipher: None,
+        error: None,
+        handshake_time_ms: None,
+        alpn: None,
+        key_exchange: None,
+        forward_secrecy: false,
+        certificate_type: None,
+    };
+
+    formatter.display_client_simulation_results(&[result(true)]);
+    formatter.display_client_simulation_results(&[result(false)]);
+}
+
+#[test]
 fn test_display_dns_only_results_formats_certificate_domains() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
