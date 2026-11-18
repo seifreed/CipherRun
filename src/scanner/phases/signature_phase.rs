@@ -93,6 +93,10 @@ impl ScanPhase for SignaturePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::network::Target;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_signature_phase_should_run() {
@@ -123,5 +127,52 @@ mod tests {
     fn test_signature_phase_default() {
         let phase: SignaturePhase = Default::default();
         assert_eq!(phase.name(), "Enumerating Signature Algorithms");
+    }
+
+    #[tokio::test]
+    async fn execute_stores_signature_results_from_local_alert_responses() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener address should exist");
+        let server = tokio::spawn(async move {
+            for _ in 0..11 {
+                let (mut stream, _) = listener.accept().await.expect("probe should connect");
+                let mut first_client_hello_byte = [0];
+                stream
+                    .read_exact(&mut first_client_hello_byte)
+                    .await
+                    .expect("probe should send ClientHello");
+                stream
+                    .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                    .await
+                    .expect("alert should be sent");
+            }
+        });
+        let target = Target::with_ips("localhost".to_string(), address.port(), vec![address.ip()])
+            .expect("target should be valid");
+        let args = Arc::new(ScanRequest::default());
+        let mut context = ScanContext::new(target, args, None, None);
+
+        SignaturePhase::new()
+            .execute(&mut context)
+            .await
+            .expect("signature enumeration should complete");
+        server.await.expect("local server should finish");
+
+        let result = context
+            .results
+            .signature_algorithms()
+            .expect("phase should store signature results");
+        assert_eq!(result.algorithms.len(), 11);
+        assert!(
+            result
+                .algorithms
+                .iter()
+                .all(|algorithm| !algorithm.supported)
+        );
+        assert!(!result.inconclusive);
     }
 }
