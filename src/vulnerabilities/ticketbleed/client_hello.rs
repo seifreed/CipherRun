@@ -35,3 +35,47 @@ pub(super) fn with_received_ticket(
 
     builder.build()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SESSION_ID_MARKER, with_received_ticket};
+
+    #[test]
+    fn received_ticket_is_reused_with_marker_session_id() {
+        let ticket = [0x12, 0x34, 0x56];
+        let hello = with_received_ticket(b"server response", |_| Ok(Some(ticket.to_vec())))
+            .expect("ClientHello should build");
+
+        assert!(
+            hello
+                .windows(SESSION_ID_MARKER.len())
+                .any(|w| w == SESSION_ID_MARKER)
+        );
+        assert!(hello.windows(ticket.len()).any(|w| w == ticket));
+    }
+
+    #[test]
+    fn missing_ticket_uses_empty_ticket_extension() {
+        let hello = with_received_ticket(b"server response", |_| Ok(None))
+            .expect("ClientHello should build");
+
+        assert!(
+            !hello
+                .windows(SESSION_ID_MARKER.len())
+                .any(|w| w == SESSION_ID_MARKER)
+        );
+        assert!(hello.windows(2).any(|w| w == [0x00, 0x23]));
+    }
+
+    #[test]
+    fn ticket_extraction_error_is_propagated() {
+        let error = with_received_ticket(b"server response", |_| {
+            Err(crate::TlsError::ParseError {
+                message: "malformed ticket".to_string(),
+            })
+        })
+        .expect_err("ticket extraction errors must be returned");
+
+        assert!(error.to_string().contains("malformed ticket"));
+    }
+}
