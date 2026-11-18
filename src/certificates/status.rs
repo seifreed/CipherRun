@@ -328,6 +328,28 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_untrusted_when_no_platform_trust_store_accepts_the_chain() {
+        let validation = ValidationResult {
+            valid: true,
+            issues: vec![],
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: Some(crate::certificates::trust_stores::TrustValidationResult {
+                platform_status: Default::default(),
+                overall_trusted: false,
+                trusted_count: 0,
+                total_platforms: 5,
+                per_certificate: vec![],
+            }),
+        };
+
+        assert!(CertificateStatus::detect_untrusted(&validation));
+    }
+
+    #[test]
     fn test_matches_filter_expired_filter() {
         let status = CertificateStatus {
             is_expired: true,
