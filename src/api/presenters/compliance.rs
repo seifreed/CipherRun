@@ -156,6 +156,16 @@ mod tests {
             }],
             remediation: "Disable TLS 1.0".to_string(),
         });
+        report.add_requirement_result(ComplianceRequirementResult {
+            requirement_id: "REQ-CRITICAL".to_string(),
+            name: "Critical certificate control".to_string(),
+            description: String::new(),
+            category: "certificates".to_string(),
+            severity: Severity::Critical,
+            status: RequirementStatus::Fail,
+            violations: Vec::new(),
+            remediation: "Replace the certificate".to_string(),
+        });
         report.finalize();
 
         let response = present_compliance_report(&framework, &report, true);
@@ -164,10 +174,11 @@ mod tests {
             .expect("requirements should be present");
 
         assert_eq!(response.status, "fail");
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].status, "fail");
         assert_eq!(requirements[0].severity, "high");
         assert_eq!(requirements[0].violation_count, 1);
+        assert!(requirements.iter().any(|item| item.severity == "critical"));
     }
 
     #[test]
