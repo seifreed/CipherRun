@@ -54,4 +54,24 @@ mod tests {
         assert!(err.to_string().contains("Policy file"));
         assert!(err.to_string().contains("too large"));
     }
+
+    #[test]
+    fn test_read_to_string_reports_metadata_and_utf8_errors() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let missing = temp_dir.path().join("missing-policy.yaml");
+        assert!(FilesystemPolicySource.read_to_string(&missing).is_err());
+
+        let invalid_utf8 = temp_dir.path().join("invalid-utf8.yaml");
+        std::fs::write(&invalid_utf8, [0xff]).expect("test file should be written");
+        assert!(
+            FilesystemPolicySource
+                .read_to_string(&invalid_utf8)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_load_policy_handles_path_without_parent() {
+        assert!(FilesystemPolicySource.load_policy(Path::new("")).is_err());
+    }
 }
