@@ -64,4 +64,15 @@ mod tests {
 
         assert!(matches!(error, ApiError::ServiceUnavailable(_)));
     }
+
+    #[tokio::test]
+    async fn creates_history_service_when_database_is_configured() {
+        let mut state = AppState::new(ApiConfig::default()).expect("state should initialize");
+        let pool = sqlx::SqlitePool::connect(":memory:")
+            .await
+            .expect("in-memory database should connect");
+        state.db_pool = Some(std::sync::Arc::new(crate::db::DatabasePool::Sqlite(pool)));
+
+        assert!(history_service_from_state(&state).is_ok());
+    }
 }
