@@ -363,6 +363,14 @@ mod tests {
     }
 
     #[test]
+    fn test_alert_record_rejects_short_or_inconsistent_input() {
+        let alert = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        assert!(!record_analysis::alert_is_complete(&alert, 6));
+        assert!(!record_analysis::alert_is_complete(&alert[..4], 7));
+        assert!(!record_analysis::alert_is_complete(&alert, 8));
+    }
+
+    #[test]
     fn test_handshake_continuation_rejects_empty_record() {
         let record = [CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x00];
         assert!(!record_analysis::handshake_is_normal_continuation(
@@ -385,6 +393,37 @@ mod tests {
         ];
         assert!(record_analysis::handshake_is_normal_continuation(
             &record, 4
+        ));
+    }
+
+    #[test]
+    fn test_handshake_continuation_rejects_wrong_content_and_length() {
+        let record = [
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            0x00,
+            0x04,
+            0x0e,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        let mut wrong_type = record;
+        wrong_type[0] = 0x15;
+        let mut unknown_message = record;
+        unknown_message[5] = 0xff;
+
+        assert!(!record_analysis::handshake_is_normal_continuation(
+            &wrong_type,
+            4
+        ));
+        assert!(!record_analysis::handshake_is_normal_continuation(
+            &record, 3
+        ));
+        assert!(!record_analysis::handshake_is_normal_continuation(
+            &unknown_message,
+            4
         ));
     }
 

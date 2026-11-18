@@ -1,17 +1,10 @@
 use crate::constants::{CONTENT_TYPE_ALERT, CONTENT_TYPE_HANDSHAKE};
 
 pub(super) fn alert_is_complete(buffer: &[u8], n: usize) -> bool {
-    if n < 7 || buffer.first() != Some(&CONTENT_TYPE_ALERT) {
+    if n < 7 || n > buffer.len() || buffer.first() != Some(&CONTENT_TYPE_ALERT) {
         return false;
     }
-    let Some(alert_record_len) = buffer
-        .get(3..5)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map(u16::from_be_bytes)
-        .map(usize::from)
-    else {
-        return false;
-    };
+    let alert_record_len = usize::from(u16::from_be_bytes([buffer[3], buffer[4]]));
     alert_record_len == 2 && n == 5 + alert_record_len
 }
 
