@@ -15,6 +15,9 @@ mod tests {
     #[test]
     fn unknown_categories_sort_after_known_categories() {
         assert_eq!(rating_category_rank("certificate"), 0);
+        assert_eq!(rating_category_rank("protocol"), 1);
+        assert_eq!(rating_category_rank("key_exchange"), 2);
+        assert_eq!(rating_category_rank("cipher"), 3);
         assert_eq!(rating_category_rank("unknown"), 4);
     }
 }
