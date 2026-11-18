@@ -91,4 +91,27 @@ mod tests {
         assert!(xml.contains("bad &amp; &lt;unsafe&gt;"));
         assert!(xml.contains("<skipped message=\"Potential Exposure\" />"));
     }
+
+    #[test]
+    fn junit_leaves_not_vulnerable_findings_as_passed_testcases() {
+        let results = ScanResults {
+            target: "example.com:443".to_string(),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: false,
+                details: "No heartbeat leak".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Low,
+            }],
+            ..Default::default()
+        };
+
+        let xml = generate_junit_report(&results);
+
+        assert!(xml.contains("tests=\"1\" failures=\"0\" skipped=\"0\""));
+        assert!(!xml.contains("<failure"));
+        assert!(!xml.contains("<skipped"));
+    }
 }
