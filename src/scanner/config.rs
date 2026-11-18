@@ -131,6 +131,16 @@ mod tests {
     }
 
     #[test]
+    fn test_cipher_config_uses_default_for_zero_concurrency() {
+        let mut request = ScanRequest::default();
+        request.network.max_concurrent_ciphers = 0;
+
+        let config = CipherTestConfig::from_request(&request);
+
+        assert_eq!(config.max_concurrent, CipherTestConfig::DEFAULT_MAX_CONCURRENT);
+    }
+
+    #[test]
     fn test_certificate_config_defaults() {
         let request = ScanRequest::default();
         let config = CertificateConfig::from_request(&request);
