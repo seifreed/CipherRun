@@ -112,10 +112,6 @@ impl DnsOnlyMode {
             return None;
         }
 
-        if normalized.starts_with("ip:") {
-            return None;
-        }
-
         if normalized.parse::<IpAddr>().is_ok() || looks_like_obfuscated_ip(&normalized) {
             return None;
         }
@@ -210,6 +206,11 @@ mod tests {
         for (case, subject, expected) in [
             ("standard", "CN=example.com,O=Org,C=US", Some("example.com")),
             ("spaces", "C=US, O=Org, CN=example.com", Some("example.com")),
+            (
+                "malformed component",
+                "O=Org, OU, CN=valid.example.com",
+                Some("valid.example.com"),
+            ),
             ("none", "O=Org,C=US", None),
             ("end", "C=US,CN=example.com", Some("example.com")),
             (
