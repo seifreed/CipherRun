@@ -40,3 +40,34 @@ impl TlsConnectionPool {
         .map_err(|e| crate::TlsError::Other(format!("Connection failed: {}", e)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TlsConnectionPool;
+    use std::net::{SocketAddr, TcpListener as StdTcpListener};
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn acquire_connects_to_the_configured_address() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let pool = TlsConnectionPool::new(address, 1, Duration::from_secs(1), None);
+
+        let stream = pool.acquire().await.unwrap();
+
+        assert_eq!(stream.peer_addr().unwrap(), address);
+    }
+
+    #[tokio::test]
+    async fn acquire_maps_connection_errors() {
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let address: SocketAddr = listener.local_addr().unwrap();
+        drop(listener);
+        let pool = TlsConnectionPool::new(address, 1, Duration::from_secs(1), None);
+
+        let error = pool.acquire().await.unwrap_err();
+
+        assert!(error.to_string().contains("Connection failed:"));
+    }
+}
