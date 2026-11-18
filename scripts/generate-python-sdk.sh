@@ -24,11 +24,22 @@ docker run --rm \
 
 # OpenAPI Generator escapes Markdown entities inside setup.py's long string;
 # raw-string syntax keeps generated clients warning-free under modern Python.
-python3 - "$root/$output_dir/setup.py" <<'PY'
+python3 - "$root/$output_dir/setup.py" "$root/$output_dir" <<'PY'
 from pathlib import Path
 import sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
-path.write_text(text.replace('long_description="""\\', 'long_description=r"""\\', 1))
+setup_path, output_dir = map(Path, sys.argv[1:])
+setup_text = setup_path.read_text()
+setup_path.write_text(
+    setup_text.replace('long_description="""\\', 'long_description=r"""\\', 1)
+)
+
+# Generated model dictionaries can contain datetime/date values.
+for model_path in (output_dir / "cipherrun_client" / "models").glob("*.py"):
+    model_text = model_path.read_text()
+    model_path.write_text(
+        model_text.replace(
+            "json.dumps(self.to_dict())", "json.dumps(self.to_dict(), default=str)"
+        )
+    )
 PY

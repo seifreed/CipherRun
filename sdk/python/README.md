@@ -55,7 +55,8 @@ For more information, please visit [https://github.com/seifreed/cipherrun](https
 
 ## Requirements.
 
-Python 3.10+
+Python 3.11+ (CI tests the minimum supported version and the newest active release; currently 3.11 and 3.15).
+Generated model `to_json()` methods serialize date/time values to JSON-compatible strings.
 
 ## Installation & Usage
 ### pip install

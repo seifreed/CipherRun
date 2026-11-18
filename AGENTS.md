@@ -49,11 +49,24 @@ For r2morph, integrate work into `main` and push only `main` (`git push origin m
 - Commit messages MUST follow the [Conventional Commits 1.0.0 specification](https://www.conventionalcommits.org/en/v1.0.0/#specification).
 - When the Rust build output directory `target/` exceeds 80 GB, automatically run `cargo clean` to reclaim build artifacts.
 
-## Rust toolchain lifecycle
+## Stack lifecycle and EOL checks
 
-- Before Rust development or validation, run `eol-cli products get rust` and use the latest Rust release marked active/non-EOL. Confirm the selected compiler with `rustc --version`; install or select it with rustup if needed.
-- Do not use an EOL Rust release as the primary development toolchain.
-- Preserve the repository's declared MSRV. When feasible, validate that MSRV separately as a compatibility check, even if it is EOL; it does not replace development and primary validation on active Rust.
+- Before changing or validating the stack, identify its languages, runtimes, base operating-system images, databases, and other runtime products from manifests, CI, containers, and deployment files.
+- For each product tracked by endoflife.date, run `eol-cli products get <product>` (or comma-separated product names) and inspect every release used by development, CI, packaging, and deployment. Do not infer support status from a version number or an old CI job.
+- Always use the newest available release that is currently active/non-EOL as the primary development and CI version. Prefer the newest active release (the one with the latest version), not an older release merely because its EOL date is farther away. Confirm the exact version with the relevant runtime's version command.
+- Upgrade the declared minimum/runtime constraints and pinned container images when they have reached EOL. Keep compatibility jobs only for versions the project intentionally supports; remove EOL compatibility targets or raise the minimum version instead of treating an EOL release as a supported baseline.
+- Before upgrading a stack component, check dependency and platform compatibility, update manifests, lockfiles, CI, containers, and user-facing support documentation together, then run the relevant tests/builds. Do not blindly change unrelated third-party dependencies.
+- Re-run these checks when adding or changing stack components and during release preparation. Record any unavailable eol-cli product or intentional pinned exception with its owner, reason, and review condition.
+
+### Rust lifecycle
+
+- Run `eol-cli products get rust` before Rust development or validation. Use its newest active/non-EOL release for local work, CI, and builder images; confirm with `rustc --version`.
+- Do not retain an EOL Rust MSRV/CI target as a compatibility promise. Raise `rust-version` and update CI/docs when that target becomes EOL, unless the project explicitly changes its support policy.
+
+### Python lifecycle
+
+- Run `eol-cli products get python` before Python development or validation. Use its newest active/non-EOL release for local work and CI, and test the declared minimum supported Python separately while it remains active.
+- Keep `requires-python`, package metadata, tox, CI, and README support claims aligned. Raise the minimum and remove EOL Python jobs when the minimum release reaches EOL.
 
 ## Logging & Observability — Mandatory Development Rules
 

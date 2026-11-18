@@ -4,7 +4,8 @@ This matrix describes the support boundary for the 0.4 release line.
 
 | Area | Supported | Notes |
 | --- | --- | --- |
-| Rust toolchain | Rust 1.88 and newer | 1.88 is the declared MSRV; stable and beta are exercised in CI. |
+| Rust toolchain | Rust 1.100 and newer | 1.100 is the declared minimum and active development toolchain; beta is exercised experimentally in CI. |
+| Python SDK | Python 3.11 through 3.15 | CI exercises the minimum supported and newest active releases (3.11 and 3.15). |
 | Linux | x86_64, aarch64 | GNU Linux release archives and production container. |
 | macOS | x86_64, aarch64 | Release archives are built on the supported macOS runners. |
 | Windows | x86_64, aarch64 | MSVC release archives. |

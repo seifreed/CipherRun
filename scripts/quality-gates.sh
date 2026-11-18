@@ -36,7 +36,7 @@ cargo package -p cipherrun --locked --allow-dirty
 cargo install --path . --locked --root target/install-smoke --force
 
 # Keep the declared MSRV and the two supported feature surfaces executable.
-cargo +1.89 check --all-targets --locked
+cargo +1.100 check --all-targets --locked
 cargo check --no-default-features --locked
 cargo check --no-default-features --features api --locked
 cargo check --no-default-features --features monitoring --locked

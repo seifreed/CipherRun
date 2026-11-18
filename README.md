@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.89%2B-orange?style=flat-square" alt="Rust Version">
+  <img src="https://img.shields.io/badge/rust-1.100%2B-orange?style=flat-square" alt="Rust Version">
   <a href="https://crates.io/crates/cipherrun"><img src="https://img.shields.io/crates/v/cipherrun?style=flat-square&logo=rust&logoColor=white" alt="Crates.io Version"></a>
   <a href="https://github.com/seifreed/cipherrun/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/cipherrun/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <a href="https://github.com/seifreed/cipherrun"><img src="https://img.shields.io/github/stars/seifreed/cipherrun?style=flat-square" alt="GitHub Stars"></a>
@@ -48,7 +48,7 @@ Compliance reports are TLS posture checks mapped to selected technical controls.
 
 ### From Source
 
-Requires Rust 1.89 or newer.
+Requires Rust 1.100 or newer. The Python SDK requires Python 3.11 or newer; CI tests Python 3.11 and the latest active release, currently 3.15.
 
 ```bash
 git clone https://github.com/seifreed/cipherrun.git
@@ -141,6 +141,8 @@ The OpenAPI contract can be exported and used to regenerate the Python client:
 cargo run --bin cipherrun-openapi > /tmp/cipherrun-openapi.json
 scripts/generate-python-sdk.sh sdk/python
 ```
+
+The generator also reapplies the SDK's JSON date/time serialization fix to its output.
 
 ### Docker
 

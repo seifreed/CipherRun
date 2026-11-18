@@ -23,7 +23,7 @@ from setuptools import setup, find_packages  # noqa: H301
 # http://pypi.python.org/pypi/setuptools
 NAME = "cipherrun-client"
 VERSION = "0.5.0"
-PYTHON_REQUIRES = ">=3.10"
+PYTHON_REQUIRES = ">=3.11,<4"
 REQUIRES = [
     "urllib3 >= 2.8.0, < 3.0",
     "requests >= 2.32.5, < 3.0",

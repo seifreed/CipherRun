@@ -8,7 +8,10 @@ All notable changes to CipherRun are documented here. The format follows
 
 ### Changed
 
-- Raise the Rust MSRV to 1.89 and Python SDK minimum to 3.10.
+- Require active Rust 1.100+ and Python 3.11+; CI tests the SDK on Python 3.11 and the newest active release (3.15).
+- Update container builder and runtime bases to Rust 1.100 and Debian 13.
+- Serialize date/time values from Python SDK model `to_json()` methods safely.
+- Replace the unmaintained `serde_yaml` parser with safe-Rust `serde-saphyr`.
 - Replace the unmaintained `serde_yaml` parser with safe-Rust `serde-saphyr`.
 - Change `Rule.custom_params` from `serde_yaml::Value` to `serde_json::Value`.
 - Upgrade Python SDK packaging to version 0.5.0 and remediate its Dependabot alerts.

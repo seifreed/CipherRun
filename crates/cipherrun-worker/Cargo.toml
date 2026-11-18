@@ -2,7 +2,7 @@
 name = "cipherrun-worker"
 version = "0.5.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.100"
 description = "Standalone database-backed CipherRun scan worker"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/seifreed/cipherrun"
