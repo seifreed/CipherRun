@@ -66,6 +66,10 @@ mod tests {
     fn test_postgres_negotiator_creation() {
         let negotiator = PostgresNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::POSTGRES);
+        assert_eq!(
+            PostgresNegotiator::default().protocol(),
+            StarttlsProtocol::POSTGRES
+        );
     }
 
     #[tokio::test]
