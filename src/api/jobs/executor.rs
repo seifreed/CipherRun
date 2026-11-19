@@ -1199,7 +1199,10 @@ mod tests {
         assert!(messages.iter().any(|message| message.msg_type == "failed"));
     }
 
-    struct CancelOnStartQueue(ScanJob);
+    struct CancelOnStartQueue {
+        job: ScanJob,
+        persist_error: bool,
+    }
 
     #[async_trait::async_trait]
     impl JobQueue for CancelOnStartQueue {
@@ -1212,7 +1215,7 @@ mod tests {
         }
 
         async fn get_job(&self, _id: &str) -> Result<Option<ScanJob>> {
-            Ok(Some(self.0.clone()))
+            Ok(Some(self.job.clone()))
         }
 
         async fn update_job(&self, _job: &ScanJob) -> Result<()> {
@@ -1220,7 +1223,11 @@ mod tests {
         }
 
         async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
-            Ok(false)
+            if self.persist_error {
+                Err(TlsError::Other("private queue detail".to_string()))
+            } else {
+                Ok(false)
+            }
         }
 
         async fn cancel_job(&self, _id: &str) -> Result<bool> {
@@ -1246,7 +1253,10 @@ mod tests {
 
         let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
         job.mark_queued();
-        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue(job.clone()));
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+            job: job.clone(),
+            persist_error: false,
+        });
         let executor = ScanExecutor::new(queue.clone(), 1);
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
@@ -1270,6 +1280,39 @@ mod tests {
                 && event["fields"]["outcome"] == "skipped"
         }));
         assert!(!output.contains("scan_job.progress.persist_failed"));
+    }
+
+    #[tokio::test]
+    async fn start_persistence_failure_stops_before_scanning_and_redacts_error() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+            job: job.clone(),
+            persist_error: true,
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        executor
+            .execute_scan(queue, job)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scan_job.start_persist_failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "other");
+        assert!(!output.contains("private queue detail"));
     }
 
     #[tokio::test]
