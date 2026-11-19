@@ -263,6 +263,33 @@ Host: 192.168.1.1 (example.com)	Ports: 443/open/tcp//https///	Ignored State: clo
     }
 
     #[test]
+    fn test_parse_host_line_requires_marker_and_ip() {
+        assert!(
+            NmapParser::parse_host_line("")
+                .expect_err("missing marker should fail")
+                .to_string()
+                .contains("missing Host marker")
+        );
+        assert!(
+            NmapParser::parse_host_line("Host:")
+                .expect_err("missing IP should fail")
+                .to_string()
+                .contains("missing IP address")
+        );
+    }
+
+    #[test]
+    fn test_parse_content_ignores_unrelated_lines_and_empty_port_entries() {
+        let content = "not an nmap host line\nHost: 10.0.0.5 Ports: 443/open/tcp, , 80/open/tcp";
+        let targets = NmapParser::parse_content(content).expect("content should parse");
+
+        assert_eq!(
+            targets.iter().map(|target| target.port).collect::<Vec<_>>(),
+            [443, 80]
+        );
+    }
+
+    #[test]
     fn test_parse_host_line_invalid_port_entries_fail() {
         for (line, expected) in [
             (
