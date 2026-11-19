@@ -181,4 +181,89 @@ mod tests {
         assert!(result.vulnerable);
         assert_eq!(result.details, "Vulnerable to: Zombie POODLE");
     }
+
+    #[test]
+    fn basic_result_describes_all_conclusive_and_inconclusive_probe_states() {
+        let cases = [
+            (Some(true), Some(true), "AND TLS POODLE detected"),
+            (Some(true), None, "SSL 3.0 is supported"),
+            (Some(false), None, "TLS POODLE test inconclusive"),
+            (Some(false), Some(false), "Not vulnerable"),
+            (None, Some(false), "support inconclusive"),
+        ];
+
+        for (ssl3, tls_poodle, expected_detail) in cases {
+            let result = PoodleTestResult::from_basic_probes(ssl3, tls_poodle);
+            assert!(result.details.contains(expected_detail));
+            assert_eq!(
+                result.vulnerable,
+                ssl3 == Some(true) || tls_poodle == Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn variant_metadata_and_nonvulnerable_summaries_are_complete() {
+        let variants = [
+            (
+                PoodleVariant::SslV3,
+                "POODLE (SSLv3)",
+                "CVE-2014-3566",
+                "SSL 3.0 CBC padding oracle",
+            ),
+            (
+                PoodleVariant::Tls,
+                "POODLE (TLS)",
+                "CVE-2014-8730",
+                "TLS CBC padding oracle",
+            ),
+            (
+                PoodleVariant::ZombiePoodle,
+                "Zombie POODLE",
+                "CVE-2019-5592",
+                "Observable MAC validity oracle",
+            ),
+            (
+                PoodleVariant::GoldenDoodle,
+                "GOLDENDOODLE",
+                "CVE-2019-5592",
+                "error response differentiation",
+            ),
+            (
+                PoodleVariant::SleepingPoodle,
+                "Sleeping POODLE",
+                "CVE-2019-5592",
+                "Timing-based padding oracle",
+            ),
+            (
+                PoodleVariant::OpenSsl0Length,
+                "OpenSSL 0-Length Fragment",
+                "CVE-2011-4576",
+                "Zero-length TLS fragment",
+            ),
+        ];
+
+        for (variant, name, cve, description) in variants {
+            assert_eq!(variant.name(), name);
+            assert_eq!(variant.cve(), cve);
+            assert!(variant.description().contains(description));
+        }
+
+        let inconclusive = PoodleTestResult::from_variant_results(
+            None,
+            None,
+            vec![PoodleVariantResult {
+                variant: PoodleVariant::Tls,
+                vulnerable: false,
+                inconclusive: true,
+                details: "not enough samples".to_string(),
+                timing_data: None,
+            }],
+        );
+        assert!(!inconclusive.vulnerable);
+        assert_eq!(inconclusive.details, "POODLE variant testing inconclusive");
+
+        let safe = PoodleTestResult::from_variant_results(Some(false), Some(false), Vec::new());
+        assert_eq!(safe.details, "Not vulnerable to any POODLE variants");
+    }
 }
