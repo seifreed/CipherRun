@@ -88,6 +88,18 @@ mod tests {
         assert_eq!(negotiator.expected_greeting(), Some("220"));
     }
 
+    #[test]
+    fn default_ftp_negotiator_uses_standard_protocol() {
+        let negotiator = FtpNegotiator;
+        let defaulted = FtpNegotiator::default();
+
+        assert_eq!(defaulted.protocol(), negotiator.protocol());
+        assert_eq!(
+            defaulted.expected_greeting(),
+            negotiator.expected_greeting()
+        );
+    }
+
     #[tokio::test]
     async fn test_read_response_multiline() {
         let (mut client, mut server) = tokio::io::duplex(1024);
