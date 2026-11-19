@@ -536,6 +536,7 @@ cargo outdated
 ```
 
 CI measures line coverage across every Rust workspace crate, feature, and target, and currently requires at least 87.4% line coverage. The floor must rise as uncovered paths receive tests; the target is 100%.
+Scheduled CI runs the Kani formal checks and fuzzes `parsed_input` and `framework_loader` for 120 seconds each.
 
 `cargo deny` temporarily ignores the maintenance-only `RUSTSEC-2026-0543`
 advisory for `chrono`, which has no safe upgrade and remains required by SQLx
