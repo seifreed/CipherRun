@@ -134,7 +134,34 @@ impl Sweet32Tester {
 mod tests {
     use super::*;
     use crate::vulnerabilities::test_support::localhost_target;
-    use std::net::TcpListener;
+    use std::net::{SocketAddr, TcpListener as StdTcpListener};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    async fn spawn_cipher_response_server(response: Vec<u8>, max_accepts: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for _ in 0..max_accepts {
+                let (mut socket, _) = listener.accept().await.expect("listener should accept");
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("cipher response should be sent");
+            }
+        });
+        addr
+    }
+
+    fn server_hello() -> Vec<u8> {
+        let mut response = vec![0u8; 43];
+        response[0..9].copy_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22]);
+        response
+    }
 
     #[test]
     fn test_sweet32_result_not_vulnerable() {
@@ -155,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sweet32_inactive_target_is_inconclusive() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
@@ -170,6 +197,35 @@ mod tests {
             result.details.to_ascii_lowercase().contains("inconclusive"),
             "inactive target must not be reported as a clean SWEET32 pass: {}",
             result.details
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sweet32_classifies_rejected_and_supported_ciphers() {
+        const HANDSHAKE_FAILURE_ALERT: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+        let rejected_addr = spawn_cipher_response_server(
+            HANDSHAKE_FAILURE_ALERT.to_vec(),
+            SWEET32_3DES_CIPHER_SUITES.len() * SWEET32_PROBE_PROTOCOLS.len(),
+        )
+        .await;
+        let rejected = Sweet32Tester::new(localhost_target(rejected_addr.port()))
+            .test()
+            .await
+            .unwrap();
+        assert!(!rejected.vulnerable);
+        assert!(!rejected.inconclusive);
+
+        let supported_addr =
+            spawn_cipher_response_server(server_hello(), SWEET32_3DES_CIPHER_SUITES.len()).await;
+        let supported = Sweet32Tester::new(localhost_target(supported_addr.port()))
+            .test()
+            .await
+            .unwrap();
+        assert!(supported.vulnerable);
+        assert!(!supported.inconclusive);
+        assert_eq!(
+            supported.des3_ciphers.len(),
+            SWEET32_3DES_CIPHER_SUITES.len()
         );
     }
 
