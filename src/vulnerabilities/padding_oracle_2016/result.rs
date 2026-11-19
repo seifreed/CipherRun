@@ -103,4 +103,45 @@ mod tests {
         assert!(result.timing_oracle_detected);
         assert!(result.details.contains("15.50ms"));
     }
+
+    #[test]
+    fn unsupported_cbc_is_a_conclusive_clean_result() {
+        let result = PaddingOracle2016Result::from_cbc_status(CbcSupportStatus::NotSupported);
+
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+        assert!(!result.cbc_supported);
+        assert!(result.details.contains("does not support AES-CBC"));
+    }
+
+    #[test]
+    fn inconclusive_and_clean_timing_results_keep_their_distinct_details() {
+        let inconclusive = PaddingOracle2016Result::from_timing_result(PaddingOracleTimingResult {
+            valid_avg_ms: 10.0,
+            invalid_avg_ms: 9.5,
+            oracle_detected: false,
+            inconclusive: true,
+            details: "insufficient samples".to_string(),
+        });
+        assert!(!inconclusive.vulnerable);
+        assert!(inconclusive.inconclusive);
+        assert!(inconclusive.details.contains("insufficient samples"));
+
+        let clean = PaddingOracle2016Result::from_timing_result(PaddingOracleTimingResult {
+            valid_avg_ms: 10.0,
+            invalid_avg_ms: 9.5,
+            oracle_detected: false,
+            inconclusive: false,
+            details: "no statistically significant difference".to_string(),
+        });
+        assert!(!clean.vulnerable);
+        assert!(!clean.inconclusive);
+        assert!(clean.details.contains("no clear timing oracle"));
+    }
+
+    #[test]
+    #[should_panic(expected = "supported CBC status requires timing data")]
+    fn supported_cbc_requires_a_timing_result() {
+        PaddingOracle2016Result::from_cbc_status(CbcSupportStatus::Supported);
+    }
 }
