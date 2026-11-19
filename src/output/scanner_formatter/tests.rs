@@ -1105,6 +1105,30 @@ fn test_display_results_summary_and_headers() {
 }
 
 #[test]
+fn http_headers_without_response_metadata_render_without_metadata_lines() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+    let result = HeaderAnalysisResult {
+        headers: HashMap::new(),
+        issues: Vec::new(),
+        score: 100,
+        grade: SecurityGrade::A,
+        hsts_analysis: None,
+        hpkp_analysis: None,
+        cookie_analysis: None,
+        datetime_check: None,
+        banner_detection: None,
+        reverse_proxy_detection: None,
+        http_status_code: None,
+        redirect_location: None,
+        redirect_chain: Vec::new(),
+        server_hostname: None,
+    };
+
+    formatter.display_http_headers_results(&result);
+}
+
+#[test]
 fn test_misc_display_helpers_and_fingerprints() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
