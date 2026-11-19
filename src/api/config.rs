@@ -832,6 +832,47 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_zero_operational_limits_and_missing_credentials() {
+        let mut cases = Vec::new();
+        let mut config = ApiConfig::default();
+        config.port = 0;
+        cases.push((config, "port"));
+        let mut config = ApiConfig::default();
+        config.rate_limit_per_minute = 0;
+        cases.push((config, "rate_limit_per_minute"));
+        let mut config = ApiConfig::default();
+        config.max_concurrent_scans = 0;
+        cases.push((config, "max_concurrent_scans"));
+        let mut config = ApiConfig::default();
+        config.job_queue_capacity = 0;
+        cases.push((config, "job_queue_capacity"));
+        let mut config = ApiConfig::default();
+        config.job_retention_seconds = 0;
+        cases.push((config, "job_retention_seconds"));
+        let mut config = ApiConfig::default();
+        config.request_timeout_seconds = 0;
+        cases.push((config, "request_timeout_seconds"));
+        let mut config = ApiConfig::default();
+        config.max_body_size = 0;
+        cases.push((config, "max_body_size"));
+        let mut config = ApiConfig::default();
+        config.ws_ping_interval_seconds = 0;
+        cases.push((config, "ws_ping_interval_seconds"));
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        cases.push((config, "credentials"));
+        let mut config = ApiConfig::default();
+        config.api_keys.clear();
+        config.api_keys.insert(String::new(), Permission::Admin);
+        cases.push((config, "api_keys"));
+
+        for (config, expected) in cases {
+            let error = config.validate().expect_err("invalid config should fail");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
     fn test_tls_certificate_and_key_paths_must_match() {
         let config = ApiConfig {
             tls_cert_file: Some("server.crt".into()),
