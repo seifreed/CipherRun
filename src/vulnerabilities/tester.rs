@@ -709,6 +709,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_and_fast_orchestration_collect_expected_checks_on_refused_target() {
+        let target = inactive_target();
+        let scanner = VulnerabilityScanner::new(target);
+
+        let fast_results = scanner
+            .test_fast()
+            .await
+            .expect("fast orchestration should report probe outcomes");
+        assert_eq!(fast_results.len(), FAST_SCAN_TEST_COUNT);
+
+        let full_results = scanner
+            .test_all()
+            .await
+            .expect("full orchestration should report probe outcomes");
+        assert_eq!(full_results.len(), FULL_SCAN_TEST_COUNT);
+    }
+
+    #[tokio::test]
     async fn test_cache_ciphers_skips_quic_only() {
         let scanner = VulnerabilityScanner::new(example_target());
         let cache = scanner
