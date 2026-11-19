@@ -347,6 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_ticket_query_requires_one_nonempty_valid_value() {
+        assert_eq!(
+            stream_ticket_from_query("other=1&ticket=one%2Btwo")
+                .expect("valid ticket should parse")
+                .as_deref(),
+            Some("one+two")
+        );
+
+        for query in ["ticket", "ticket=", "ticket=one&ticket=two", "ticket=%FF"] {
+            assert!(
+                stream_ticket_from_query(query).is_err(),
+                "malformed ticket query should be rejected: {query}"
+            );
+        }
+    }
+
+    #[test]
     fn test_stream_path_requires_exact_route() {
         assert!(is_stream_path("/api/v1/scan/scan-id/stream"));
         assert!(!is_stream_path("/api/v1/stats"));
@@ -415,5 +432,19 @@ mod tests {
         let err =
             api_key_from_authorization(&headers).expect_err("duplicate bearer headers should fail");
         assert!(err.to_string().contains("Duplicate Authorization"));
+    }
+
+    #[test]
+    fn test_api_key_from_authorization_rejects_invalid_header_encoding() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            HeaderValue::from_bytes(&[0xff]).expect("opaque header bytes should build"),
+        );
+
+        let error = api_key_from_authorization(&headers)
+            .expect_err("invalid authorization header should fail");
+
+        assert!(error.to_string().contains("Invalid Authorization header"));
     }
 }
