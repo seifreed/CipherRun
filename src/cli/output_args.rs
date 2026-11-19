@@ -239,4 +239,34 @@ mod tests {
         ));
         assert!(FailOnSeverity::High.is_met_by(&results));
     }
+
+    #[test]
+    fn every_fail_on_severity_maps_to_its_threshold() {
+        for (threshold, severity) in [
+            (FailOnSeverity::Info, crate::vulnerabilities::Severity::Info),
+            (FailOnSeverity::Low, crate::vulnerabilities::Severity::Low),
+            (
+                FailOnSeverity::Medium,
+                crate::vulnerabilities::Severity::Medium,
+            ),
+            (
+                FailOnSeverity::Critical,
+                crate::vulnerabilities::Severity::Critical,
+            ),
+        ] {
+            let results = crate::scanner::ScanResults {
+                vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
+                    vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                    vulnerable: true,
+                    inconclusive: false,
+                    details: "confirmed test finding".to_string(),
+                    cve: None,
+                    cwe: None,
+                    severity,
+                }],
+                ..Default::default()
+            };
+            assert!(threshold.is_met_by(&results));
+        }
+    }
 }
