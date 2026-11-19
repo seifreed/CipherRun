@@ -98,6 +98,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scan_query_failure_is_propagated() {
+        let db = setup_db("cipher-trend-scan-query-error").await;
+        db.pool()
+            .execute("DROP TABLE scans", Vec::new())
+            .await
+            .expect("test should remove the scans table");
+
+        let error = TrendAnalyzer::new(db)
+            .analyze_cipher_strength_trend("example.com", 443, 30)
+            .await
+            .expect_err("database query should fail when scans table is missing");
+
+        assert!(error.to_string().contains("scan"));
+    }
+
+    #[tokio::test]
+    async fn cipher_query_failure_is_propagated() {
+        let db = setup_db("cipher-trend-cipher-query-error").await;
+        insert_scan(
+            &db,
+            "example.com",
+            443,
+            Utc::now() - Duration::days(1),
+            Some("A"),
+            Some(95),
+        )
+        .await;
+        db.pool()
+            .execute("DROP TABLE cipher_suites", Vec::new())
+            .await
+            .expect("test should remove the cipher_suites table");
+
+        let error = TrendAnalyzer::new(db)
+            .analyze_cipher_strength_trend("example.com", 443, 30)
+            .await
+            .expect_err("database query should fail when cipher table is missing");
+
+        assert!(error.to_string().contains("Failed to fetch ciphers"));
+    }
+
+    #[tokio::test]
     async fn test_cipher_strength_trend_analysis() {
         let db = setup_db("cipher-trend").await;
         let hostname = "example.com";
