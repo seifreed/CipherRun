@@ -166,3 +166,36 @@ fn mark_inconclusive(result: &mut IntoleranceTestResult, key: &str) {
         ),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{IntoleranceProbe, compare_baseline_probe, mark_inconclusive};
+    use crate::protocols::intolerance::IntoleranceTestResult;
+
+    #[test]
+    fn compares_baseline_and_variant_outcomes() {
+        let failed_probe = || Err(crate::TlsError::Other("probe failed".into()));
+        assert_eq!(
+            compare_baseline_probe(Ok(vec![1]), failed_probe()),
+            IntoleranceProbe::Detected
+        );
+        assert_eq!(
+            compare_baseline_probe(Ok(vec![1]), Ok(vec![2])),
+            IntoleranceProbe::NotDetected
+        );
+        assert_eq!(
+            compare_baseline_probe(failed_probe(), Ok(vec![2])),
+            IntoleranceProbe::Inconclusive
+        );
+    }
+
+    #[test]
+    fn marks_the_named_check_inconclusive_with_a_reason() {
+        let mut result = IntoleranceTestResult::default();
+        mark_inconclusive(&mut result, "version_intolerance");
+
+        assert!(result.inconclusive);
+        assert_eq!(result.inconclusive_checks, ["version_intolerance"]);
+        assert!(result.details["version_intolerance"].contains("baseline probe did not complete"));
+    }
+}
