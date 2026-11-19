@@ -174,6 +174,17 @@ mod tests {
         cmd.execute().await.expect("no-op should succeed");
     }
 
+    #[tokio::test]
+    async fn test_alert_mode_succeeds_without_configured_channels() {
+        let mut args = Args::default();
+        args.monitoring.test_alert = true;
+
+        MonitorCommand::new(args)
+            .execute()
+            .await
+            .expect("testing an empty alert configuration should succeed");
+    }
+
     #[test]
     fn test_load_monitor_config_rejects_invalid_file() {
         let dir = tempfile::tempdir().expect("test assertion should succeed");
