@@ -82,4 +82,17 @@ mod tests {
         assert!(result.inconclusive);
         assert_eq!(result.details, "Inconclusive - timeout");
     }
+
+    #[test]
+    fn vulnerable_and_clean_outcomes_convert_to_public_results() {
+        let vulnerable = TicketbleedProbeOutcome::Vulnerable.into_test_result();
+        assert!(vulnerable.vulnerable);
+        assert!(!vulnerable.inconclusive);
+        assert!(vulnerable.details.contains("CVE-2016-9244"));
+
+        let clean = TicketbleedProbeOutcome::NotVulnerable("no leak").into_test_result();
+        assert!(!clean.vulnerable);
+        assert!(!clean.inconclusive);
+        assert_eq!(clean.details, "Not vulnerable - no leak");
+    }
 }
