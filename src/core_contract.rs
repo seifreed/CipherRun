@@ -194,12 +194,11 @@ pub struct FindingEvidence {
 
 #[cfg(test)]
 mod tests {
-    use super::VulnerabilityType;
+    use super::{DetectionMethod, FindingStatus, VulnerabilityType};
     use std::collections::HashSet;
 
-    #[test]
-    fn finding_ids_are_stable_and_unique() {
-        let types = [
+    fn all_vulnerability_types() -> [VulnerabilityType; 28] {
+        [
             VulnerabilityType::Heartbleed,
             VulnerabilityType::CCSInjection,
             VulnerabilityType::Ticketbleed,
@@ -228,12 +227,79 @@ mod tests {
             VulnerabilityType::SleepingPoodle,
             VulnerabilityType::OpenSsl0Length,
             VulnerabilityType::GREASE,
-        ];
+        ]
+    }
+
+    #[test]
+    fn finding_ids_are_stable_and_unique() {
+        let types = all_vulnerability_types();
         let ids: HashSet<_> = types
             .into_iter()
             .map(VulnerabilityType::finding_id)
             .collect();
         assert_eq!(ids.len(), types.len());
         assert!(ids.iter().all(|id| id.starts_with("CR-TLS-")));
+    }
+
+    #[test]
+    fn finding_status_labels_and_serialization_are_stable() {
+        let statuses = [
+            (
+                FindingStatus::ConfirmedVulnerable,
+                "Confirmed Vulnerable",
+                "confirmed_vulnerable",
+            ),
+            (
+                FindingStatus::PotentialExposure,
+                "Potential Exposure",
+                "potential_exposure",
+            ),
+            (
+                FindingStatus::NotVulnerable,
+                "Not Vulnerable",
+                "not_vulnerable",
+            ),
+            (FindingStatus::Inconclusive, "Inconclusive", "inconclusive"),
+            (
+                FindingStatus::NotApplicable,
+                "Not Applicable",
+                "not_applicable",
+            ),
+            (FindingStatus::NotExecuted, "Not Executed", "not_executed"),
+        ];
+
+        for (status, label, value) in statuses {
+            assert_eq!(status.label(), label);
+            assert_eq!(status.as_str(), value);
+        }
+    }
+
+    #[test]
+    fn vulnerability_sort_keys_and_detection_methods_cover_every_variant() {
+        let types = all_vulnerability_types();
+        let sort_keys: HashSet<_> = types.into_iter().map(VulnerabilityType::sort_key).collect();
+        assert_eq!(sort_keys.len(), types.len());
+
+        for ty in types {
+            let expected = match ty {
+                VulnerabilityType::LUCKY13 | VulnerabilityType::SleepingPoodle => {
+                    DetectionMethod::TimingAnalysis
+                }
+                VulnerabilityType::BREACH => DetectionMethod::Heuristic,
+                VulnerabilityType::BEAST
+                | VulnerabilityType::CRIME
+                | VulnerabilityType::SWEET32
+                | VulnerabilityType::FREAK
+                | VulnerabilityType::LOGJAM
+                | VulnerabilityType::Renegotiation
+                | VulnerabilityType::TLSFallback
+                | VulnerabilityType::RC4
+                | VulnerabilityType::NullCipher
+                | VulnerabilityType::GREASE => DetectionMethod::ProtocolNegotiation,
+                VulnerabilityType::EarlyDataReplay => DetectionMethod::ConfigurationInference,
+                _ => DetectionMethod::ActiveProbe,
+            };
+            assert_eq!(ty.detection_method(), expected, "{ty:?}");
+        }
     }
 }

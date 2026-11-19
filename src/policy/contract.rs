@@ -142,3 +142,18 @@ pub struct PolicyException {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ticket: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PolicyAction;
+
+    #[test]
+    fn policy_actions_classify_failure_and_warning_levels() {
+        assert!(PolicyAction::Fail.is_failure());
+        assert!(!PolicyAction::Fail.is_warning());
+        assert!(!PolicyAction::Warn.is_failure());
+        assert!(PolicyAction::Warn.is_warning());
+        assert!(!PolicyAction::Info.is_failure());
+        assert!(!PolicyAction::Info.is_warning());
+    }
+}

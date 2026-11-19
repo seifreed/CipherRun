@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn default_nntp_negotiator_uses_standard_protocol() {
-        assert_eq!(NntpNegotiator::default().protocol(), StarttlsProtocol::NNTP);
+        assert_eq!(NntpNegotiator.protocol(), StarttlsProtocol::NNTP);
     }
 
     #[tokio::test]

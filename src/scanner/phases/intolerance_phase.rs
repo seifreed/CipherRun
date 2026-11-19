@@ -125,10 +125,7 @@ mod tests {
 
     #[test]
     fn test_intolerance_phase_default() {
-        assert_eq!(
-            IntolerancePhase::default().name(),
-            "Testing TLS Intolerance"
-        );
+        assert_eq!(IntolerancePhase.name(), "Testing TLS Intolerance");
     }
 
     #[tokio::test]

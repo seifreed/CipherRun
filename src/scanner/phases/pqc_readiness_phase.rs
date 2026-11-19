@@ -55,10 +55,7 @@ mod tests {
             PqcReadinessPhase::new().name(),
             "Analyzing Post-Quantum Readiness"
         );
-        assert_eq!(
-            PqcReadinessPhase::default().name(),
-            "Analyzing Post-Quantum Readiness"
-        );
+        assert_eq!(PqcReadinessPhase.name(), "Analyzing Post-Quantum Readiness");
     }
 
     #[tokio::test]

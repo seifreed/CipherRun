@@ -94,10 +94,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            # Keep the release glibc baseline compatible with Ubuntu 24.04 users.
+            # Project maintainers own this pin to preserve Ubuntu 24.04 glibc compatibility;
+            # review when the minimum supported Linux baseline changes.
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            # Keep the release glibc baseline compatible with Ubuntu 24.04 users.
             runner: ubuntu-24.04-arm
           - target: x86_64-pc-windows-msvc
             runner: windows-2025

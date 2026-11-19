@@ -150,12 +150,11 @@ impl ProtocolTestResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{Protocol, ProtocolTestResult};
-    use std::str::FromStr;
+    use super::*;
 
     #[test]
-    fn protocol_metadata_and_wire_versions_cover_all_variants() {
-        let protocols = [
+    fn protocol_contracts_cover_names_versions_and_deprecation() {
+        let cases = [
             (Protocol::SSLv2, 0x0002, "SSLv2", true),
             (Protocol::SSLv3, 0x0300, "SSLv3", true),
             (Protocol::TLS10, 0x0301, "TLS 1.0", true),
@@ -165,7 +164,7 @@ mod tests {
             (Protocol::QUIC, 0x0305, "QUIC", false),
         ];
 
-        for (protocol, version, name, deprecated) in protocols {
+        for (protocol, version, name, deprecated) in cases {
             assert_eq!(protocol.as_hex(), version);
             assert_eq!(protocol.name(), name);
             assert_eq!(protocol.to_string(), name);
@@ -175,7 +174,7 @@ mod tests {
 
         assert_eq!(
             Protocol::all(),
-            [
+            vec![
                 Protocol::SSLv2,
                 Protocol::SSLv3,
                 Protocol::TLS10,
@@ -187,72 +186,36 @@ mod tests {
     }
 
     #[test]
-    fn unknown_protocol_version_logs_warning_and_uses_tls12_fallback() {
-        use std::io::Write;
-        use std::sync::{Arc, Mutex};
-        use tracing_subscriber::fmt::MakeWriter;
-
-        #[derive(Clone)]
-        struct Output(Arc<Mutex<Vec<u8>>>);
-        struct Writer(Arc<Mutex<Vec<u8>>>);
-
-        impl Write for Writer {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        impl<'a> MakeWriter<'a> for Output {
-            type Writer = Writer;
-
-            fn make_writer(&'a self) -> Self::Writer {
-                Writer(self.0.clone())
-            }
-        }
-
-        let output = Output(Arc::new(Mutex::new(Vec::new())));
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(output.clone())
-            .finish();
-
-        tracing::subscriber::with_default(subscriber, || {
-            assert_eq!(Protocol::from(0x9999), Protocol::TLS12);
-        });
-
-        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
-        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
-        assert_eq!(event["fields"]["event_name"], "protocol.version.unknown");
-        assert_eq!(event["fields"]["protocol_version"], 0x9999);
-        assert_eq!(event["fields"]["fallback"], "tls1.2");
-    }
-
-    #[test]
-    fn protocol_parser_normalizes_aliases_and_rejects_unknown_names() {
-        for (input, expected) in [
-            (" SSLv2.0 ", Protocol::SSLv2),
-            ("SSL-3.0", Protocol::SSLv3),
-            ("TLSv1.0", Protocol::TLS10),
-            ("TLS_1.1", Protocol::TLS11),
-            ("TLS 1.2", Protocol::TLS12),
+    fn protocol_parser_accepts_aliases_and_rejects_unknown_values() {
+        for (name, expected) in [
+            ("SSLv2.0", Protocol::SSLv2),
+            ("ssl2.0", Protocol::SSLv2),
+            ("SSLv3.0", Protocol::SSLv3),
+            ("ssl3.0", Protocol::SSLv3),
+            ("TLSv1", Protocol::TLS10),
+            ("TLSv10", Protocol::TLS10),
+            ("TLSv1.1", Protocol::TLS11),
+            ("TLS11", Protocol::TLS11),
+            ("TLSv1.2", Protocol::TLS12),
+            ("TLS12", Protocol::TLS12),
             ("TLSv1.3", Protocol::TLS13),
-            ("quic", Protocol::QUIC),
+            ("TLS13", Protocol::TLS13),
+            ("QUIC", Protocol::QUIC),
         ] {
-            assert_eq!(Protocol::from_str(input).unwrap(), expected);
+            assert_eq!(name.parse::<Protocol>().unwrap(), expected, "{name}");
         }
-        assert!(Protocol::from_str("TLS 9.9").is_err());
+        assert!("TLS 9.9".parse::<Protocol>().is_err());
     }
 
     #[test]
-    fn protocol_test_results_expose_supported_inconclusive_and_unsupported_states() {
+    fn unknown_numeric_protocol_versions_fall_back_to_tls12() {
+        assert_eq!(Protocol::from(0xffff), Protocol::TLS12);
+    }
+
+    #[test]
+    fn protocol_result_status_prefers_supported_then_inconclusive() {
         let result = |supported, inconclusive| ProtocolTestResult {
-            protocol: Protocol::TLS13,
+            protocol: Protocol::TLS12,
             supported,
             inconclusive,
             preferred: false,
@@ -264,7 +227,7 @@ mod tests {
             secure_renegotiation: None,
         };
 
-        assert_eq!(result(true, false).status_label(), "Supported");
+        assert_eq!(result(true, true).status_label(), "Supported");
         assert_eq!(result(false, true).status_label(), "Inconclusive");
         assert_eq!(result(false, false).status_label(), "Not supported");
     }

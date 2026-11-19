@@ -34,6 +34,7 @@ unsafe extern "C" {
 // OpenSSL defines SSL_set_msg_callback_arg as a macro over SSL_ctrl.
 const SSL_CTRL_SET_MSG_CALLBACK_ARG: c_int = 16;
 const TLS_1_3_VERSION: c_int = 0x0304;
+type HandshakeTranscript = Vec<(c_int, Vec<u8>)>;
 
 #[derive(Default)]
 struct HandshakeCapture {
@@ -755,7 +756,7 @@ impl CertificateAdvancedTester {
     async fn get_peer_certificate_with_transcript(
         &self,
         sni_hostname: Option<&str>,
-    ) -> Result<(X509, Vec<(c_int, Vec<u8>)>)> {
+    ) -> Result<(X509, HandshakeTranscript)> {
         let addr = self
             .target
             .socket_addrs()
@@ -772,7 +773,7 @@ impl CertificateAdvancedTester {
         let (hostname_to_use, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
         crate::utils::task::spawn_blocking_with_current_span(
-            move || -> Result<(X509, Vec<(c_int, Vec<u8>)>)> {
+            move || -> Result<(X509, HandshakeTranscript)> {
                 let mut builder = SslConnector::builder(SslMethod::tls())?;
                 // The scanner must retrieve and inspect certificates from hosts whose
                 // certificates are expired/self-signed/untrusted — exactly the cases a

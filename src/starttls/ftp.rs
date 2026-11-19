@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn default_ftp_negotiator_uses_standard_protocol() {
         let negotiator = FtpNegotiator;
-        let defaulted = FtpNegotiator::default();
+        let defaulted = FtpNegotiator;
 
         assert_eq!(defaulted.protocol(), negotiator.protocol());
         assert_eq!(

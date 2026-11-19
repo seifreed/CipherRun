@@ -90,66 +90,48 @@ impl ErrorType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ErrorType, ProbeStatus};
+    use std::time::Duration;
 
     #[test]
-    fn probe_status_constructors_preserve_success_and_failure_context() {
-        let success = ProbeStatus::success(Duration::from_millis(125));
+    fn probe_status_builders_preserve_outcomes_and_durations() {
+        let success = ProbeStatus::success(Duration::from_millis(12));
         assert!(success.success);
-        assert_eq!(success.error, None);
-        assert_eq!(success.error_type, None);
-        assert_eq!(success.connection_time_ms, Some(125));
+        assert_eq!(success.connection_time_ms, Some(12));
         assert_eq!(success.attempts, 1);
+        assert!(success.error.is_none());
+        assert!(success.error_type.is_none());
 
-        let failure = ProbeStatus::failure_string(
-            "connection refused".to_string(),
-            ErrorType::ConnectionRefused,
-        );
+        let overflow = ProbeStatus::success(Duration::from_millis(u64::MAX));
+        assert_eq!(overflow.connection_time_ms, Some(u64::MAX));
+
+        let failure =
+            ProbeStatus::failure_string("refused".to_string(), ErrorType::ConnectionRefused);
         assert!(!failure.success);
-        assert_eq!(failure.error.as_deref(), Some("connection refused"));
+        assert_eq!(failure.error.as_deref(), Some("refused"));
         assert_eq!(failure.error_type, Some(ErrorType::ConnectionRefused));
-        assert_eq!(failure.connection_time_ms, None);
+        assert!(failure.connection_time_ms.is_none());
         assert_eq!(failure.attempts, 1);
 
-        let partial = ProbeStatus::partial_success(
-            Duration::from_millis(250),
-            "certificate chain incomplete".to_string(),
-        );
+        let partial =
+            ProbeStatus::partial_success(Duration::from_millis(25), "retry used".to_string());
         assert!(partial.success);
-        assert_eq!(
-            partial.error.as_deref(),
-            Some("certificate chain incomplete")
-        );
+        assert_eq!(partial.error.as_deref(), Some("retry used"));
         assert_eq!(partial.error_type, Some(ErrorType::Warning));
-        assert_eq!(partial.connection_time_ms, Some(250));
+        assert_eq!(partial.connection_time_ms, Some(25));
         assert_eq!(partial.attempts, 1);
+
+        let not_attempted = ProbeStatus::default();
+        assert!(!not_attempted.success);
+        assert_eq!(not_attempted.error.as_deref(), Some("Not attempted"));
+        assert_eq!(not_attempted.error_type, Some(ErrorType::NotAttempted));
+        assert!(not_attempted.connection_time_ms.is_none());
+        assert_eq!(not_attempted.attempts, 0);
     }
 
     #[test]
-    fn probe_status_elapsed_time_saturates_at_u64_max() {
-        assert_eq!(
-            ProbeStatus::success(Duration::MAX).connection_time_ms,
-            Some(u64::MAX)
-        );
-        assert_eq!(
-            ProbeStatus::partial_success(Duration::MAX, "warning".to_string()).connection_time_ms,
-            Some(u64::MAX)
-        );
-    }
-
-    #[test]
-    fn default_probe_status_means_not_attempted() {
-        let status = ProbeStatus::default();
-        assert!(!status.success);
-        assert_eq!(status.error.as_deref(), Some("Not attempted"));
-        assert_eq!(status.error_type, Some(ErrorType::NotAttempted));
-        assert_eq!(status.connection_time_ms, None);
-        assert_eq!(status.attempts, 0);
-    }
-
-    #[test]
-    fn error_type_descriptions_are_stable() {
-        for (error_type, expected) in [
+    fn error_types_have_stable_diagnostic_descriptions() {
+        let cases = [
             (ErrorType::Timeout, "Connection timeout"),
             (ErrorType::ConnectionRefused, "Connection refused"),
             (ErrorType::DnsFailure, "DNS resolution failed"),
@@ -160,8 +142,10 @@ mod tests {
             (ErrorType::Warning, "Warning"),
             (ErrorType::NotAttempted, "Not attempted"),
             (ErrorType::Unknown, "Unknown error"),
-        ] {
-            assert_eq!(error_type.description(), expected);
+        ];
+
+        for (error_type, description) in cases {
+            assert_eq!(error_type.description(), description);
         }
     }
 }

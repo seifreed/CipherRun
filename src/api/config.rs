@@ -833,38 +833,74 @@ mod tests {
 
     #[test]
     fn validate_rejects_zero_operational_limits_and_missing_credentials() {
-        let mut cases = Vec::new();
-        let mut config = ApiConfig::default();
-        config.port = 0;
-        cases.push((config, "port"));
-        let mut config = ApiConfig::default();
-        config.rate_limit_per_minute = 0;
-        cases.push((config, "rate_limit_per_minute"));
-        let mut config = ApiConfig::default();
-        config.max_concurrent_scans = 0;
-        cases.push((config, "max_concurrent_scans"));
-        let mut config = ApiConfig::default();
-        config.job_queue_capacity = 0;
-        cases.push((config, "job_queue_capacity"));
-        let mut config = ApiConfig::default();
-        config.job_retention_seconds = 0;
-        cases.push((config, "job_retention_seconds"));
-        let mut config = ApiConfig::default();
-        config.request_timeout_seconds = 0;
-        cases.push((config, "request_timeout_seconds"));
-        let mut config = ApiConfig::default();
-        config.max_body_size = 0;
-        cases.push((config, "max_body_size"));
-        let mut config = ApiConfig::default();
-        config.ws_ping_interval_seconds = 0;
-        cases.push((config, "ws_ping_interval_seconds"));
         let mut config = ApiConfig::default();
         config.api_keys.clear();
-        cases.push((config, "credentials"));
+        let missing_credentials = config;
         let mut config = ApiConfig::default();
         config.api_keys.clear();
         config.api_keys.insert(String::new(), Permission::Admin);
-        cases.push((config, "api_keys"));
+        let empty_key = config;
+
+        let cases = [
+            (
+                ApiConfig {
+                    port: 0,
+                    ..Default::default()
+                },
+                "port",
+            ),
+            (
+                ApiConfig {
+                    rate_limit_per_minute: 0,
+                    ..Default::default()
+                },
+                "rate_limit_per_minute",
+            ),
+            (
+                ApiConfig {
+                    max_concurrent_scans: 0,
+                    ..Default::default()
+                },
+                "max_concurrent_scans",
+            ),
+            (
+                ApiConfig {
+                    job_queue_capacity: 0,
+                    ..Default::default()
+                },
+                "job_queue_capacity",
+            ),
+            (
+                ApiConfig {
+                    job_retention_seconds: 0,
+                    ..Default::default()
+                },
+                "job_retention_seconds",
+            ),
+            (
+                ApiConfig {
+                    request_timeout_seconds: 0,
+                    ..Default::default()
+                },
+                "request_timeout_seconds",
+            ),
+            (
+                ApiConfig {
+                    max_body_size: 0,
+                    ..Default::default()
+                },
+                "max_body_size",
+            ),
+            (
+                ApiConfig {
+                    ws_ping_interval_seconds: 0,
+                    ..Default::default()
+                },
+                "ws_ping_interval_seconds",
+            ),
+            (missing_credentials, "credentials"),
+            (empty_key, "api_keys"),
+        ];
 
         for (config, expected) in cases {
             let error = config.validate().expect_err("invalid config should fail");

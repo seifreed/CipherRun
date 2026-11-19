@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn test_sieve_negotiator_constructors() {
-        for negotiator in [SieveNegotiator::new(), SieveNegotiator::default()] {
+        for negotiator in [SieveNegotiator::new(), SieveNegotiator] {
             assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
         }
     }

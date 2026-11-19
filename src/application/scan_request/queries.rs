@@ -4,6 +4,9 @@ use crate::starttls::StarttlsProtocol;
 use crate::utils::retry::RetryConfig;
 use std::time::Duration;
 
+#[cfg(test)]
+type StarttlsOption = (fn(&mut ScanRequest), StarttlsProtocol, u16);
+
 impl ScanRequest {
     pub fn protocols_to_test(&self) -> Option<Vec<Protocol>> {
         let flags = [
@@ -304,7 +307,7 @@ mod extra_tests {
 
     #[test]
     fn starttls_boolean_options_map_to_protocol_and_default_port() {
-        let options: [(fn(&mut ScanRequest), StarttlsProtocol, u16); 13] = [
+        let options: [StarttlsOption; 13] = [
             (|r| r.starttls.smtp = true, StarttlsProtocol::SMTP, 25),
             (|r| r.starttls.imap = true, StarttlsProtocol::IMAP, 143),
             (|r| r.starttls.pop3 = true, StarttlsProtocol::POP3, 110),

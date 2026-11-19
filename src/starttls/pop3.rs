@@ -100,7 +100,7 @@ mod tests {
         let negotiator = Pop3Negotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::POP3);
         assert_eq!(negotiator.expected_greeting(), Some("+OK"));
-        assert_eq!(Pop3Negotiator::default().protocol(), StarttlsProtocol::POP3);
+        assert_eq!(Pop3Negotiator.protocol(), StarttlsProtocol::POP3);
     }
 
     #[tokio::test]

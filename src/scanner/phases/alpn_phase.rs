@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_alpn_phase_default() {
-        let phase = AlpnPhase::default();
+        let phase = AlpnPhase;
         assert_eq!(phase.name(), "Testing ALPN Protocol Negotiation");
     }
 

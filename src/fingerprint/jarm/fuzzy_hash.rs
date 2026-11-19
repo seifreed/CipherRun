@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn hashes_ten_well_formed_probe_responses() {
-        let raw = vec!["c02f|0303|h2|ext"; JARM_PROBE_COUNT].join(",");
+        let raw = ["c02f|0303|h2|ext"; JARM_PROBE_COUNT].join(",");
         let hash = raw_hash_to_fuzzy_hash(&raw);
 
         assert_eq!(&hash[..30], "29d".repeat(JARM_PROBE_COUNT));
@@ -184,7 +184,7 @@ mod tests {
             assert_eq!(raw_hash_to_fuzzy_hash("not-ten-probes"), ZERO_HASH);
         });
 
-        let mut probes = vec!["c02f|0303|h2|ext"; JARM_PROBE_COUNT];
+        let mut probes = ["c02f|0303|h2|ext"; JARM_PROBE_COUNT];
         probes[4] = "c02f|0303|h2|ext|extra";
         assert_eq!(raw_hash_to_fuzzy_hash(&probes.join(",")), ZERO_HASH);
 

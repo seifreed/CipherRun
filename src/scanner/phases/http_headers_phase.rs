@@ -249,10 +249,7 @@ mod tests {
 
     #[test]
     fn test_http_headers_phase_default() {
-        assert_eq!(
-            HttpHeadersPhase::default().name(),
-            "Analyzing HTTP Security Headers"
-        );
+        assert_eq!(HttpHeadersPhase.name(), "Analyzing HTTP Security Headers");
     }
 
     #[tokio::test]

@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_imap_negotiator_default() {
-        assert_eq!(ImapNegotiator::default().protocol(), StarttlsProtocol::IMAP);
+        assert_eq!(ImapNegotiator.protocol(), StarttlsProtocol::IMAP);
     }
 
     #[tokio::test]

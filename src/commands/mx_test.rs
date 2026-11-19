@@ -493,9 +493,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_requires_database_config_before_scanning() {
-        let mut args = Args::default();
-        args.mx_domain = Some("example.com".to_string());
-        args.database.store_results = true;
+        let args = Args {
+            mx_domain: Some("example.com".to_string()),
+            database: crate::cli::DatabaseArgs {
+                store_results: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let command = MxTestCommand::new(args);
 
         let error = command.execute().await.unwrap_err();

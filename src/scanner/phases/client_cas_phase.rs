@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_client_cas_phase_default() {
-        let phase = ClientCasPhase::default();
+        let phase = ClientCasPhase;
         assert_eq!(phase.name(), "Extracting Client CAs List");
     }
 

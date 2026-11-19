@@ -108,8 +108,7 @@ mod tests {
 
         for result in results {
             let message = result
-                .err()
-                .expect("inventory failures should become API errors")
+                .expect_err("inventory failures should become API errors")
                 .to_string();
             assert_eq!(message, "Internal server error: internal operation failed");
             assert!(!message.contains("private detail"));

@@ -156,10 +156,7 @@ mod tests {
 
     #[test]
     fn test_groups_phase_default() {
-        assert_eq!(
-            GroupsPhase::default().name(),
-            "Enumerating Key Exchange Groups"
-        );
+        assert_eq!(GroupsPhase.name(), "Enumerating Key Exchange Groups");
     }
 
     #[tokio::test]

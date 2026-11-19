@@ -400,7 +400,7 @@ impl<'a> PoodleTester<'a> {
             significance_base_ms: 10.0,
         };
 
-        let analysis = match detect_timing_oracle(&valid_timings, &invalid_timings, &config) {
+        let analysis = match detect_timing_oracle(valid_timings, invalid_timings, &config) {
             Some(result) => result,
             None => {
                 return PoodleVariantResult {
