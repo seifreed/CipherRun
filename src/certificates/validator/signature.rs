@@ -163,4 +163,32 @@ mod tests {
                 && matches!(i.severity, IssueSeverity::High)
         }));
     }
+
+    #[test]
+    fn test_signature_algorithm_rejects_md2_and_md4_but_accepts_modern_hashes() {
+        let validator = CertificateValidator::new("example.com".to_string());
+
+        for algorithm in ["md2WithRSAEncryption", "md4WithRSAEncryption"] {
+            let mut cert = base_cert(
+                "2024-01-01 00:00:00 +0000".to_string(),
+                "2025-01-01 00:00:00 +0000".to_string(),
+            );
+            cert.signature_algorithm = algorithm.to_string();
+            let mut issues = Vec::new();
+
+            validator.check_signature_algorithm(&cert, &mut issues);
+
+            assert_eq!(issues.len(), 1, "{algorithm}");
+            assert!(matches!(issues[0].severity, IssueSeverity::Critical));
+            assert!(issues[0].description.contains("MD2/MD4"));
+        }
+
+        let cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        let mut issues = Vec::new();
+        validator.check_signature_algorithm(&cert, &mut issues);
+        assert!(issues.is_empty());
+    }
 }
