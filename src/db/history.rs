@@ -84,10 +84,71 @@ impl CipherRunDatabase {
 mod tests {
     use super::*;
 
+    async fn test_database() -> (CipherRunDatabase, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("temporary database directory should exist");
+        let config = crate::db::DatabaseConfig::sqlite(directory.path().join("history.db"));
+        let database = CipherRunDatabase::new(&config)
+            .await
+            .expect("test database should initialize");
+        (database, directory)
+    }
+
     #[test]
     fn cleanup_cutoff_rejects_invalid_days() {
         assert!(cleanup_cutoff_days_ago(-1).is_err());
         assert!(cleanup_cutoff_days_ago(i64::MAX).is_err());
         assert!(cleanup_cutoff_days_ago(100_000_000_000).is_err());
+    }
+
+    #[tokio::test]
+    async fn history_rejects_nonpositive_limits() {
+        let (database, _directory) = test_database().await;
+
+        assert!(
+            database
+                .get_scan_history("example.com", 443, 0)
+                .await
+                .is_err()
+        );
+        database.close().await;
+    }
+
+    #[tokio::test]
+    async fn history_orders_equal_timestamps_by_scan_id_and_returns_latest() {
+        let (database, _directory) = test_database().await;
+        let timestamp = Utc::now();
+        let mut first = ScanRecord::new("example.com".to_string(), 443);
+        first.scan_timestamp = timestamp;
+        let mut second = ScanRecord::new("example.com".to_string(), 443);
+        second.scan_timestamp = timestamp;
+        let first_id = database
+            .scan_repo
+            .create_scan(&first)
+            .await
+            .expect("first scan should persist");
+        let second_id = database
+            .scan_repo
+            .create_scan(&second)
+            .await
+            .expect("second scan should persist");
+
+        let scans = database
+            .get_scan_history_since("example.com", 443, timestamp)
+            .await
+            .expect("history should load");
+        assert_eq!(
+            scans.iter().map(|scan| scan.scan_id).collect::<Vec<_>>(),
+            [Some(first_id), Some(second_id)]
+        );
+        assert_eq!(
+            database
+                .get_latest_scan("example.com", 443)
+                .await
+                .expect("latest scan should load")
+                .and_then(|scan| scan.scan_id),
+            Some(second_id)
+        );
+
+        database.close().await;
     }
 }
