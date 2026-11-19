@@ -413,37 +413,38 @@ mod tests {
             ("prohibited", prohibited_pattern(sensitive_pattern)),
             ("required", required_pattern(sensitive_pattern)),
         ];
-        for (pattern_kind, policy) in policies {
-            let output = Arc::new(Mutex::new(Vec::new()));
-            let subscriber = tracing_subscriber::fmt()
-                .json()
-                .with_max_level(tracing::Level::WARN)
-                .with_writer(Buffer(output.clone()))
-                .finish();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
 
-            tracing::subscriber::with_default(subscriber, || {
+        tracing::subscriber::with_default(subscriber, || {
+            for (pattern_kind, policy) in &policies {
                 assert_eq!(violations(&policy, &results).len(), 1, "{pattern_kind}");
-            });
+            }
+        });
 
-            let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-            let events = output
-                .lines()
-                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-                .collect::<Vec<_>>();
-            assert_eq!(events.len(), 1, "{pattern_kind}: {output:?}");
-            let event = &events[0];
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2, "captured events: {output:?}");
+        for (event, (pattern_kind, _)) in events.iter().zip(&policies) {
             assert_eq!(event["level"], "WARN");
             assert_eq!(
                 event["fields"]["event_name"],
                 "policy.cipher_pattern.invalid"
             );
-            assert_eq!(event["fields"]["pattern_kind"], pattern_kind);
+            assert_eq!(event["fields"]["pattern_kind"], *pattern_kind);
             assert_eq!(event["fields"]["error_code"], "invalid_pattern");
             assert_eq!(event["fields"]["outcome"], "fail_closed");
-            assert!(!output.contains("private.example"));
-            assert!(!output.contains("do-not-log"));
-            assert!(!output.contains("injected=true"));
         }
+        assert!(!output.contains("private.example"));
+        assert!(!output.contains("do-not-log"));
+        assert!(!output.contains("injected=true"));
     }
 
     #[test]
