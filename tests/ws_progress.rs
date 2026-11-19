@@ -214,6 +214,23 @@ async fn test_ws_scan_closes_after_failure_and_cancellation() {
                 .contains("connected")
         );
 
+        if terminal.msg_type == "failed" {
+            socket
+                .send(ClientMessage::Ping(Vec::new().into()))
+                .await
+                .expect("scan ping should send");
+            loop {
+                let message = timeout(Duration::from_secs(2), socket.next())
+                    .await
+                    .expect("scan ping should receive a pong")
+                    .expect("scan socket should remain open")
+                    .expect("scan pong should be valid");
+                if message.is_pong() {
+                    break;
+                }
+            }
+        }
+
         tx.send(terminal.clone())
             .expect("terminal progress should broadcast");
         let terminal_message = timeout(Duration::from_secs(2), socket.next())
