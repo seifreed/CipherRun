@@ -244,5 +244,15 @@ mod tests {
         assert!(!cli_view.should_render_primary_tls_view());
         assert!(cli_view.should_render_feature_view());
         ScanResultsPresenter::new(&Args::default()).render(&cli_view);
+
+        let results = ScanResults {
+            advanced: Some(AdvancedResults {
+                client_simulations: Some(Vec::new()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let report = ScanExecutionReport::new(results, None, None, None);
+        ScanResultsPresenter::new(&Args::default()).render(&report.cli_view(false));
     }
 }
