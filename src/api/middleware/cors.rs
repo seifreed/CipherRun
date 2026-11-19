@@ -131,22 +131,27 @@ mod tests {
 
     #[test]
     fn test_cors_layer_with_origins_rejects_invalid_origin() {
-        let error = match cors_layer_with_origins(vec!["https://example.com\n".to_string()]) {
-            Ok(_) => panic!("expected invalid CORS origin to fail"),
-            Err(error) => error,
-        };
+        let error = cors_layer_with_origins(vec!["https://example.com\n".to_string()])
+            .err()
+            .expect("invalid CORS origin should fail");
+
+        assert!(error.to_string().contains("Invalid CORS origin"));
+    }
+
+    #[test]
+    fn test_cors_layer_with_origins_rejects_unparseable_origin() {
+        let error = cors_layer_with_origins(vec!["not a URL".to_string()])
+            .err()
+            .expect("unparseable CORS origin should fail");
 
         assert!(error.to_string().contains("Invalid CORS origin"));
     }
 
     #[test]
     fn test_cors_layer_with_origins_rejects_url_instead_of_origin() {
-        let error =
-            match cors_layer_with_origins(vec!["https://example.com/path?query=value".to_string()])
-            {
-                Ok(_) => panic!("expected URL with path to fail"),
-                Err(error) => error,
-            };
+        let error = cors_layer_with_origins(vec!["https://example.com/path?query=value".to_string()])
+            .err()
+            .expect("URL with a path should be rejected as an origin");
 
         assert!(error.to_string().contains("expected an HTTP(S) origin"));
     }
