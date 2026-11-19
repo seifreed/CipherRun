@@ -154,4 +154,17 @@ mod tests {
             assert!(err.to_string().contains(expected), "{case}");
         }
     }
+
+    #[tokio::test]
+    async fn execute_rejects_invalid_index_before_starting_streamer() {
+        let mut args = Args::default();
+        args.ct_logs.index = vec!["invalid".to_string()];
+
+        let error = CtLogsCommand::new(args)
+            .execute()
+            .await
+            .expect_err("invalid indices should fail before network streaming starts");
+
+        assert!(error.to_string().contains("Invalid --ct-index format"));
+    }
 }
