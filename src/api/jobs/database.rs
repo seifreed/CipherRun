@@ -1034,6 +1034,11 @@ mod tests {
             .await
             .expect_err("malformed persisted jobs should be diagnosed");
         assert!(matches!(error, crate::TlsError::ParseError { .. }));
+        let error = queue
+            .list_jobs()
+            .await
+            .expect_err("listing should diagnose malformed persisted jobs");
+        assert!(matches!(error, crate::TlsError::ParseError { .. }));
     }
 
     #[tokio::test]
@@ -1067,5 +1072,26 @@ mod tests {
             .await
             .expect_err("the damaged job should still report its parse error on direct access");
         assert!(matches!(error, crate::TlsError::ParseError { .. }));
+    }
+
+    #[tokio::test]
+    async fn sqlite_prune_expired_removes_only_terminal_jobs_past_retention() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool, 10, Some(Duration::days(1)));
+        let mut expired = ScanJob::new("expired.example:443".to_string(), Default::default(), None);
+        expired.mark_completed(Default::default());
+        expired.completed_at = Some(Utc::now() - Duration::days(2));
+        let expired_id = queue.enqueue(expired).await.unwrap();
+        let current = ScanJob::new("current.example:443".to_string(), Default::default(), None);
+        let current_id = queue.enqueue(current).await.unwrap();
+
+        assert_eq!(queue.prune_expired().await.unwrap(), 1);
+        assert!(queue.get_job(&expired_id).await.unwrap().is_none());
+        assert!(queue.get_job(&current_id).await.unwrap().is_some());
     }
 }
