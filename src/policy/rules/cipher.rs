@@ -422,7 +422,7 @@ mod tests {
 
         tracing::subscriber::with_default(subscriber, || {
             for (pattern_kind, policy) in &policies {
-                assert_eq!(violations(&policy, &results).len(), 1, "{pattern_kind}");
+                assert_eq!(violations(policy, &results).len(), 1, "{pattern_kind}");
             }
         });
 
