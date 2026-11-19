@@ -207,4 +207,13 @@ mod tests {
         assert_eq!(extractor.get("TraceParent"), None);
         assert_eq!(extractor.keys(), ["traceparent"]);
     }
+
+    #[test]
+    fn otlp_layer_builds_without_exporting_spans() {
+        let (_, provider) = super::layer::<tracing_subscriber::Registry>()
+            .expect("OTLP layer should build locally");
+        provider
+            .shutdown()
+            .expect("provider should shut down cleanly");
+    }
 }
