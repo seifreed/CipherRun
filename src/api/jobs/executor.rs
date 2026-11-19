@@ -1199,6 +1199,46 @@ mod tests {
         assert!(messages.iter().any(|message| message.msg_type == "failed"));
     }
 
+    #[tokio::test]
+    async fn executor_dispatches_a_queued_job_and_drains_it_on_shutdown() {
+        let mut job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job.clone())),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        let mut progress = executor.subscribe_progress();
+        let handle = tokio::spawn(Arc::clone(&executor).start());
+
+        let failure = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let message = progress.recv().await.expect("progress channel stays open");
+                if message.msg_type == "failed" {
+                    break message;
+                }
+            }
+        })
+        .await
+        .expect("the dispatched invalid job should fail promptly");
+        assert_eq!(failure.scan_id, queue.cancelled_job.id);
+        assert!(queue.dequeue_calls.load(Ordering::SeqCst) >= 1);
+
+        executor.shutdown().await.unwrap();
+        handle.await.unwrap().unwrap();
+    }
+
     struct CancelOnStartQueue {
         job: ScanJob,
         persist_error: bool,
