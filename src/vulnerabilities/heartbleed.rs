@@ -340,6 +340,10 @@ mod tests {
     }
 
     fn server_hello_with_heartbeat() -> Vec<u8> {
+        server_hello_with_extensions(&[0x00, 0x0f, 0x00, 0x01, 0x01])
+    }
+
+    fn server_hello_with_extensions(extensions: &[u8]) -> Vec<u8> {
         let mut data = vec![
             0x16, 0x03, 0x03, 0x00, 0x00, // TLS record header
             0x02, 0x00, 0x00, 0x00, // ServerHello header
@@ -349,8 +353,8 @@ mod tests {
         data.push(0x00);
         data.extend_from_slice(&[0x13, 0x01]);
         data.push(0x00);
-        data.extend_from_slice(&[0x00, 0x05]);
-        data.extend_from_slice(&[0x00, 0x0f, 0x00, 0x01, 0x01]);
+        data.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        data.extend_from_slice(extensions);
         let record_len = (data.len() - 5) as u16;
         write_u16_at(&mut data, 3, record_len);
         let hs_len = data.len() - 9;
@@ -603,6 +607,37 @@ mod tests {
             err.to_string()
                 .contains("extension block extends beyond declared length")
         );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_skips_unknown_extensions() {
+        let extensions = [
+            0x00, 0x01, 0x00, 0x00, // unknown zero-length extension
+            0x00, 0x0f, 0x00, 0x01, 0x01, // heartbeat extension
+        ];
+        assert!(
+            server_hello::has_heartbeat_extension(&server_hello_with_extensions(&extensions))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_malformed_extension_entries() {
+        let partial_header = server_hello_with_extensions(&[0x00, 0x0f, 0x00]);
+        let error = server_hello::has_heartbeat_extension(&partial_header)
+            .expect_err("partial extension header must fail");
+        assert!(error.to_string().contains("trailing bytes"));
+
+        let oversized_entry = server_hello_with_extensions(&[0x00, 0x0f, 0x00, 0x02, 0x01]);
+        let error = server_hello::has_heartbeat_extension(&oversized_entry)
+            .expect_err("extension data length must fit its block");
+        assert!(error.to_string().contains("extension data extends"));
+
+        let mut oversized_block = server_hello_with_extensions(&[]);
+        write_u16_at(&mut oversized_block, 47, 1);
+        let error = server_hello::has_heartbeat_extension(&oversized_block)
+            .expect_err("extension block must fit the ServerHello");
+        assert!(error.to_string().contains("extension block extends"));
     }
 
     #[tokio::test]
