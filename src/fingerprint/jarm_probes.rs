@@ -767,4 +767,46 @@ mod tests {
         // Should have reasonable length (> 100 bytes)
         assert!(packet.len() > 100);
     }
+
+    #[test]
+    fn test_client_hello_uses_requested_legacy_protocol_versions() {
+        for (version, wire_version) in [
+            (TlsVersion::SSL30, [0x03, 0x00]),
+            (TlsVersion::TLS10, [0x03, 0x01]),
+        ] {
+            let opts = JarmProbeOptions {
+                hostname: "example.com".to_string(),
+                port: 443,
+                version,
+                cipher_list: CipherList::All,
+                cipher_order: CipherOrder::Forward,
+                grease: false,
+                alpn: AlpnMode::NoSupport,
+                v13_mode: V13Mode::NoSupport,
+                extension_order: ExtensionOrder::Forward,
+            };
+
+            let packet = build_client_hello(&opts).expect("legacy ClientHello should build");
+
+            assert_eq!(&packet[1..3], &wire_version);
+            assert_eq!(&packet[9..11], &wire_version);
+        }
+    }
+
+    #[test]
+    fn test_client_hello_rejects_sni_exceeding_tls_length_limit() {
+        let opts = JarmProbeOptions {
+            hostname: "a".repeat(usize::from(u16::MAX) + 1),
+            port: 443,
+            version: TlsVersion::TLS12,
+            cipher_list: CipherList::All,
+            cipher_order: CipherOrder::Forward,
+            grease: false,
+            alpn: AlpnMode::NoSupport,
+            v13_mode: V13Mode::NoSupport,
+            extension_order: ExtensionOrder::Forward,
+        };
+
+        assert!(build_client_hello(&opts).is_err());
+    }
 }
