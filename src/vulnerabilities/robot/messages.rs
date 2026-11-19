@@ -82,3 +82,42 @@ pub(super) fn finished() -> Vec<u8> {
         0x00,
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{finished, invalid_client_key_exchange};
+
+    #[test]
+    fn invalid_client_key_exchange_builds_every_payload_variant() {
+        let cases = [
+            (0, vec![0x00; 4]),
+            (1, vec![0xff; 4]),
+            (2, vec![0, 1, 2, 3]),
+            (3, vec![0xaa, 0x55, 0xaa, 0x55]),
+            (4, vec![148, 71, 250, 173]),
+        ];
+
+        for (variant, expected_payload) in cases {
+            let message = invalid_client_key_exchange(variant, expected_payload.len())
+                .expect("small RSA ciphertext should fit the wire lengths");
+            assert_eq!(&message[3..5], &[0, 10]);
+            assert_eq!(&message[6..9], &[0, 0, 6]);
+            assert_eq!(&message[9..11], &[0, 4]);
+            assert_eq!(&message[11..], expected_payload);
+        }
+    }
+
+    #[test]
+    fn invalid_client_key_exchange_rejects_overflowing_and_unrepresentable_lengths() {
+        assert!(invalid_client_key_exchange(0, usize::MAX).is_err());
+        assert!(invalid_client_key_exchange(0, 65_530).is_err());
+    }
+
+    #[test]
+    fn finished_message_has_the_expected_record_and_handshake_lengths() {
+        let message = finished();
+        assert_eq!(&message[3..5], &[0, 16]);
+        assert_eq!(&message[6..9], &[0, 0, 12]);
+        assert_eq!(message.len(), 21);
+    }
+}
