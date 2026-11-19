@@ -200,6 +200,7 @@ mod tests {
         args.scan.proto.tls12 = true;
         args.network.test_all_ips = true;
         args.connection.max_retries = 2;
+        args.connection.no_retry = false;
 
         let mut context = test_scan_context(args);
         context.mtls_config = Some(crate::utils::mtls::MtlsConfig {
@@ -210,6 +211,41 @@ mod tests {
         });
         let phase = ProtocolPhase::new();
         let _tester = phase.configure_tester(&context);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_phase_execute_stores_filtered_probe_results() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("probe should connect");
+            drop(socket);
+        });
+
+        let mut args = ScanRequest::default();
+        args.connection.no_retry = true;
+        args.scan.proto.tls12 = true;
+        let mut context = test_scan_context(args);
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        ProtocolPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("probe failure should be represented as a result");
+        server.await.expect("server task should finish");
+
+        assert_eq!(context.results.protocols.len(), 1);
+        assert_eq!(
+            context.results.protocols[0].protocol,
+            crate::protocols::Protocol::TLS12
+        );
     }
 
     #[test]
