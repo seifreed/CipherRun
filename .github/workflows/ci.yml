@@ -17,8 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Test the supported minimum and latest EOL-supported Python (eol-cli: 3.15.2).
-        python-version: ["3.12", "3.15"]
+        # Keep the active minimum covered while following the newest stable Python release.
+        python-version: ["3.12", "3.x"]
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
