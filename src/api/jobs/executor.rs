@@ -1140,6 +1140,31 @@ mod tests {
         assert!(!output.contains("private-target.example"), "{output}");
     }
 
+    #[tokio::test]
+    async fn run_scan_rejects_invalid_target_before_network_access() {
+        let queue: Arc<dyn JobQueue> = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: ScanJob::new("unused.example".to_string(), ScanOptions::full(), None),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        let (progress_tx, _) = broadcast::channel(1);
+
+        let error = ScanExecutor::run_scan(&job, &queue, &progress_tx, &[])
+            .await
+            .expect_err("invalid targets should fail before a network scan");
+
+        assert!(matches!(error, TlsError::Other(_)));
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
