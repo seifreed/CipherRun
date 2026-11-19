@@ -99,4 +99,43 @@ mod tests {
     fn rejects_tls_alerts() {
         assert!(!is_valid(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]));
     }
+
+    #[test]
+    fn rejects_malformed_heartbeat_record_fields() {
+        let mut wrong_major = vec![
+            0x18, 0x03, 0x03, 0x00, 0x06, 0x02, 0x00, 0x03, 0xaa, 0xbb, 0xcc,
+        ];
+        wrong_major[1] = 0x02;
+        let mut wrong_minor = wrong_major.clone();
+        wrong_minor[1] = 0x03;
+        wrong_minor[2] = 0x04;
+
+        let wrong_record_length = vec![
+            0x18, 0x03, 0x03, 0x00, 0x05, 0x02, 0x00, 0x03, 0xaa, 0xbb, 0xcc,
+        ];
+        let wrong_heartbeat_type = vec![
+            0x18, 0x03, 0x03, 0x00, 0x06, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc,
+        ];
+        let wrong_heartbeat_length = vec![
+            0x18, 0x03, 0x03, 0x00, 0x06, 0x02, 0x00, 0x02, 0xaa, 0xbb, 0xcc,
+        ];
+
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for response in [
+                &[][..],
+                &[0x18, 0x03, 0x03, 0x00, 0x06, 0x02, 0x00][..],
+                &wrong_major,
+                &wrong_minor,
+                &wrong_record_length,
+                &wrong_heartbeat_type,
+                &wrong_heartbeat_length,
+            ] {
+                assert!(!is_valid(response), "unexpectedly accepted {response:?}");
+            }
+        });
+    }
 }
