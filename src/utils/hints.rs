@@ -268,6 +268,46 @@ mod tests {
     }
 
     #[test]
+    fn test_all_known_vulnerability_hints_have_actionable_content() {
+        for (name, title) in [
+            ("heartbleed", "Heartbleed"),
+            ("poodle", "POODLE"),
+            ("beast", "BEAST"),
+            ("crime", "CRIME"),
+            ("breach", "BREACH"),
+            ("robot", "ROBOT"),
+            ("drown", "DROWN"),
+            ("freak", "FREAK"),
+            ("logjam", "LOGJAM"),
+            ("sweet32", "Sweet32"),
+            ("rc4", "RC4"),
+            ("insecure_renegotiation", "Renegotiation"),
+        ] {
+            let hint = get_vulnerability_hint(name).expect("known vulnerability should have hint");
+            assert!(hint.title.contains(title), "{name}");
+            assert!(!hint.description.is_empty(), "{name}");
+            assert!(!hint.remediation.is_empty(), "{name}");
+            assert!(!hint.references.is_empty(), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_severity_hints_cover_every_level() {
+        for severity in [
+            Severity::Critical,
+            Severity::High,
+            Severity::Medium,
+            Severity::Low,
+            Severity::Info,
+        ] {
+            let hint = get_severity_hint(severity);
+            assert!(!hint.title.is_empty());
+            assert!(!hint.description.is_empty());
+            assert!(!hint.remediation.is_empty());
+        }
+    }
+
+    #[test]
     fn test_format_hint_multiple_references() {
         let hint = Hint {
             title: "Multi".to_string(),
