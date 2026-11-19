@@ -55,6 +55,60 @@ mod tests {
             PqcReadinessPhase::new().name(),
             "Analyzing Post-Quantum Readiness"
         );
+        assert_eq!(
+            PqcReadinessPhase::default().name(),
+            "Analyzing Post-Quantum Readiness"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_assessment_without_optional_inputs() {
+        let mut context = super::super::test_scan_context(ScanRequest::default());
+
+        PqcReadinessPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("assessment should succeed without optional inputs");
+
+        assert!(context.results.advanced.unwrap().pqc_readiness.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_execute_accepts_available_groups_and_certificate_chain() {
+        let mut context = super::super::test_scan_context(ScanRequest::default());
+        context.results.advanced = Some(crate::scanner::AdvancedResults {
+            key_exchange_groups: Some(crate::protocols::groups::GroupEnumerationResult {
+                groups: Vec::new(),
+                measured: false,
+                details: String::new(),
+            }),
+            ..Default::default()
+        });
+        context.results.certificate_chain = Some(crate::scanner::CertificateAnalysisResult {
+            chain: crate::certificates::parser::CertificateChain {
+                certificates: Vec::new(),
+                chain_length: 0,
+                chain_size_bytes: 0,
+            },
+            validation: crate::certificates::validator::ValidationResult {
+                valid: false,
+                issues: Vec::new(),
+                trust_chain_valid: false,
+                hostname_match: false,
+                not_expired: false,
+                signature_valid: false,
+                trusted_ca: None,
+                platform_trust: None,
+            },
+            revocation: None,
+        });
+
+        PqcReadinessPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("assessment should accept available inputs");
+
+        assert!(context.results.advanced.unwrap().pqc_readiness.is_some());
     }
 
     #[test]
