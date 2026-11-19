@@ -307,6 +307,38 @@ mod tests {
     }
 
     #[test]
+    fn single_ip_context_uses_default_port_and_explicit_sni() {
+        let mut results = ScanResults {
+            target: "127.0.0.1".to_string(),
+            ..Default::default()
+        };
+        results.scan_metadata.sni_used = Some("service.example.com".to_string());
+
+        assert_eq!(
+            single_ip_context(&results),
+            Some((
+                IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                443,
+                "service.example.com".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn finding_context_enrichment_skips_unexpected_json_shapes() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        for mut value in [
+            serde_json::json!({}),
+            serde_json::json!({ "vulnerabilities": {} }),
+            serde_json::json!({ "vulnerabilities": [{ "evidence": [] }] }),
+        ] {
+            let original = value.clone();
+            enrich_finding_endpoints(&mut value, ip, 443, "example.com");
+            assert_eq!(value, original);
+        }
+    }
+
+    #[test]
     fn test_multi_ip_json_is_stable_for_map_insertion_order() {
         let report_a = {
             let target = two_ip_target();
