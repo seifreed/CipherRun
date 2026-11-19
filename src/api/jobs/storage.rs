@@ -249,6 +249,15 @@ mod tests {
     }
 
     #[test]
+    fn test_storage_creation_fails_when_base_path_is_a_file() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let file_path = temp_dir.path().join("not-a-directory");
+        std::fs::write(&file_path, "occupied").expect("test file should be written");
+
+        assert!(FileJobStorage::new(file_path).is_err());
+    }
+
+    #[test]
     fn test_load_all_jobs_loads_valid_jobs_and_ignores_other_files() {
         let (temp_dir, storage) = temp_storage();
         let job = test_job();
@@ -300,6 +309,15 @@ mod tests {
 
         assert!(err.to_string().contains("Job file"));
         assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_read_job_file_rejects_non_utf8_data() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let path = temp_dir.path().join("invalid.json");
+        std::fs::write(&path, [0xff]).expect("invalid UTF-8 test bytes should be written");
+
+        assert!(FileJobStorage::read_job_file(&path).is_err());
     }
 
     #[test]
