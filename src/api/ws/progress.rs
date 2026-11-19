@@ -444,13 +444,22 @@ mod tests {
             .expect("listener should bind");
         let addr = listener.local_addr().expect("address should resolve");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await;
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let server = tracing::dispatcher::with_default(&dispatch, || {
+            async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await;
+            }
+            .instrument(tracing::info_span!("test.websocket.server"))
         });
+        tokio::spawn(server);
         (format!("ws://{addr}"), shutdown_tx)
     }
 
@@ -512,6 +521,28 @@ mod tests {
         assert_eq!(progress["scan_id"], "global-scan");
         assert_eq!(progress["progress"], 40);
 
+        socket
+            .send(ClientMessage::Ping(vec![3].into()))
+            .await
+            .expect("ping frame should send");
+        let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("server should answer the ping")
+            .expect("websocket should remain open")
+            .expect("pong receive should succeed");
+        assert!(matches!(pong, ClientMessage::Pong(_)));
+        socket
+            .send(ClientMessage::Text("client command".into()))
+            .await
+            .expect("text frame should send");
+        socket
+            .send(ClientMessage::Binary(vec![4].into()))
+            .await
+            .expect("binary frame should send");
+        socket
+            .send(ClientMessage::Pong(vec![5].into()))
+            .await
+            .expect("pong frame should send");
         socket
             .send(ClientMessage::Close(None))
             .await
