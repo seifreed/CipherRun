@@ -88,5 +88,6 @@ mod tests {
     fn cleanup_cutoff_rejects_invalid_days() {
         assert!(cleanup_cutoff_days_ago(-1).is_err());
         assert!(cleanup_cutoff_days_ago(i64::MAX).is_err());
+        assert!(cleanup_cutoff_days_ago(100_000_000_000).is_err());
     }
 }
