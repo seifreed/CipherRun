@@ -37,6 +37,42 @@ fn test_scanner_formatter_creation() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
     assert!(!formatter.args.output.show_times);
+    assert_eq!(formatter.warning_mode(), WarningMode::Default);
+    assert!(formatter.show_warnings_inline());
+    assert!(
+        formatter
+            .section_header("Summary")
+            .to_string()
+            .contains("Summary")
+    );
+}
+
+#[test]
+fn test_warning_and_width_display_options() {
+    let mut args = Args::default();
+    args.output.warnings = Some(" batch ".to_string());
+    args.output.colorblind = true;
+    args.output.wide = true;
+    let formatter = ScannerFormatter::new(&args);
+
+    assert_eq!(formatter.warning_mode(), WarningMode::Batch);
+    assert!(!formatter.show_warnings_inline());
+    assert_eq!(formatter.divider(3), "======");
+    assert_eq!(formatter.expand_width(3), 6);
+    assert!(
+        formatter
+            .section_header("Summary")
+            .to_string()
+            .contains("Summary")
+    );
+
+    let mut args = Args::default();
+    args.output.warnings = Some("off".to_string());
+    let formatter = ScannerFormatter::new(&args);
+    assert_eq!(formatter.warning_mode(), WarningMode::Off);
+    assert!(!formatter.show_warnings_inline());
+    assert_eq!(formatter.divider(3), "===");
+    assert_eq!(formatter.expand_width(3), 3);
 }
 
 #[test]
