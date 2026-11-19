@@ -272,6 +272,55 @@ mod tests {
         assert!(!result.vulnerable);
     }
 
+    #[tokio::test]
+    async fn test_build_scsv_result_handles_protocol_and_configuration_outcomes() {
+        let target = example_com_target();
+        let mut tester = FallbackScsvTester::new(&target);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+
+        let missing_max = tester
+            .build_scsv_result(&[Protocol::TLS12])
+            .await
+            .expect_err("missing maximum protocol must be rejected");
+        assert!(missing_max.to_string().contains("max_supported_protocol"));
+
+        tester.max_supported_protocol = Some(Protocol::TLS13);
+        let single_tls13 = tester
+            .build_scsv_result(&[Protocol::TLS13])
+            .await
+            .expect("single protocol result should be inconclusive");
+        assert!(single_tls13.inconclusive);
+        assert!(single_tls13.has_tls13_or_higher);
+
+        for (max_protocol, not_applicable) in [
+            (Protocol::SSLv3, false),
+            (Protocol::SSLv2, true),
+            (Protocol::QUIC, true),
+        ] {
+            tester.max_supported_protocol = Some(max_protocol);
+            let result = tester
+                .build_scsv_result(&[Protocol::TLS12, Protocol::TLS13])
+                .await
+                .expect("protocol-specific early result should succeed");
+
+            assert!(result.has_tls13_or_higher);
+            assert_eq!(result.not_applicable, not_applicable);
+            assert_eq!(result.inconclusive, !not_applicable);
+        }
+
+        tester.max_supported_protocol = None;
+        let error = tester
+            .test_rejects_inappropriate_fallback(&[Protocol::TLS12])
+            .await
+            .expect_err("fallback test requires a maximum protocol");
+        assert!(error.to_string().contains("max_supported_protocol"));
+    }
+
     #[test]
     fn test_select_fallback_protocol() {
         let target = localhost_target(443);
