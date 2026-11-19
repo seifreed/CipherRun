@@ -896,6 +896,54 @@ mod tests {
         assert_eq!(stored.status, ScanStatus::Failed);
     }
 
+    #[test]
+    fn persisted_queue_rejects_duplicate_ids_and_capacity_overflow() {
+        struct FixtureStorage(Vec<ScanJob>);
+
+        impl JobStorage for FixtureStorage {
+            fn save_job(&self, _: &ScanJob) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn load_job(&self, _: &str) -> crate::Result<Option<ScanJob>> {
+                Ok(None)
+            }
+
+            fn load_all_jobs(&self) -> crate::Result<Vec<ScanJob>> {
+                Ok(self.0.clone())
+            }
+
+            fn delete_job(&self, _: &str) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        let first = ScanJob::new(
+            "first.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        let mut duplicate = ScanJob::new(
+            "second.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        duplicate.id = first.id.clone();
+        let storage = Arc::new(FixtureStorage(vec![first.clone(), duplicate]));
+        assert!(InMemoryJobQueue::with_options(2, Some(storage), None).is_err());
+
+        let mut first = first;
+        first.mark_started();
+        let mut second = ScanJob::new(
+            "second.example:443".to_string(),
+            ScanOptions::default(),
+            None,
+        );
+        second.mark_started();
+        let storage = Arc::new(FixtureStorage(vec![first, second]));
+        assert!(InMemoryJobQueue::with_options(1, Some(storage), None).is_err());
+    }
+
     #[tokio::test]
     async fn test_terminal_job_history_is_bounded_and_keeps_active_jobs() {
         let cap = 2;
@@ -990,6 +1038,19 @@ mod tests {
 
         assert_eq!(job.progress, 1);
         assert_eq!(job.current_stage.as_deref(), Some("ancient"));
+        assert!(job.eta_seconds.is_none());
+        assert!(job.estimated_completion.is_none());
+    }
+
+    #[test]
+    fn test_update_progress_skips_eta_when_start_time_is_in_the_future() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::default(), None);
+        job.started_at = Some(Utc::now() + chrono::Duration::minutes(1));
+
+        job.update_progress(50, "clock-skewed".to_string());
+
+        assert_eq!(job.progress, 50);
+        assert_eq!(job.current_stage.as_deref(), Some("clock-skewed"));
         assert!(job.eta_seconds.is_none());
         assert!(job.estimated_completion.is_none());
     }
