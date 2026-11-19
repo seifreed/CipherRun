@@ -548,10 +548,88 @@ mod tests {
     }
 
     #[test]
+    fn test_heartbeat_extension_ignores_other_record_and_handshake_types() {
+        let mut data = vec![0; 44];
+        data[0] = 0x15;
+        data[5] = 0x02;
+        assert!(!server_hello::has_heartbeat_extension(&data).unwrap());
+
+        data[0] = 0x16;
+        data[5] = 0x01;
+        assert!(!server_hello::has_heartbeat_extension(&data).unwrap());
+    }
+
+    #[test]
     fn test_heartbeat_extension_rejects_truncated_serverhello() {
         let err = server_hello::has_heartbeat_extension(&[0x16, 0x03, 0x03, 0x00, 0x01, 0x02])
             .expect_err("truncated ServerHello should fail");
         assert!(err.to_string().contains("session_id_len"));
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_declared_record_beyond_buffer() {
+        let mut data = server_hello_with_extensions(&[]);
+        write_u16_at(&mut data, 3, 100);
+
+        let err = server_hello::has_heartbeat_extension(&data)
+            .expect_err("record length beyond the buffer should fail");
+
+        assert!(
+            err.to_string()
+                .contains("record length extends beyond buffer")
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_handshake_beyond_record() {
+        let mut data = server_hello_with_extensions(&[]);
+        write_u16_at(&mut data, 3, 0);
+
+        let err = server_hello::has_heartbeat_extension(&data)
+            .expect_err("handshake length beyond record should fail");
+
+        assert!(err.to_string().contains("handshake length exceeds record"));
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_handshake_ending_before_extension_length() {
+        let mut data = server_hello_with_extensions(&[]);
+        write_u24_at(&mut data, 6, 37);
+
+        let err = server_hello::has_heartbeat_extension(&data)
+            .expect_err("handshake ending before extensions should fail");
+
+        assert!(
+            err.to_string()
+                .contains("truncated before extensions length")
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_rejects_trailing_handshake_bytes() {
+        let mut data = server_hello_with_extensions(&[]);
+        data.push(0x00);
+        let record_len = (data.len() - 5) as u16;
+        write_u16_at(&mut data, 3, record_len);
+        let handshake_len = data.len() - 9;
+        write_u24_at(&mut data, 6, handshake_len);
+
+        let err = server_hello::has_heartbeat_extension(&data)
+            .expect_err("extension block must consume the ServerHello body");
+
+        assert!(
+            err.to_string()
+                .contains("extension block contains trailing bytes")
+        );
+    }
+
+    #[test]
+    fn test_heartbeat_extension_returns_false_for_unknown_extensions() {
+        let extensions = [0x00, 0x01, 0x00, 0x00];
+        assert!(
+            !server_hello::has_heartbeat_extension(&server_hello_with_extensions(&extensions))
+                .unwrap()
+        );
     }
 
     #[test]
