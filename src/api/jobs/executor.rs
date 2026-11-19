@@ -1058,6 +1058,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: true,
+            cancel_on_get: false,
             dequeue_calls: AtomicUsize::new(0),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1105,6 +1106,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            cancel_on_get: true,
             dequeue_calls: AtomicUsize::new(0),
         });
         let (progress_tx, _) = broadcast::channel(1);
@@ -1149,6 +1151,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            cancel_on_get: false,
             dequeue_calls: AtomicUsize::new(0),
         });
         let job = ScanJob::new(
@@ -1165,6 +1168,33 @@ mod tests {
         assert!(matches!(error, TlsError::Other(_)));
     }
 
+    #[tokio::test]
+    async fn invalid_scan_target_is_dead_lettered_and_broadcast_as_failed() {
+        let mut job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let mut progress = executor.subscribe_progress();
+
+        executor.execute_scan(queue, job).await;
+
+        let messages = std::iter::from_fn(|| progress.try_recv().ok()).collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| message.msg_type == "failed"));
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
@@ -1172,6 +1202,7 @@ mod tests {
         release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
         dequeue_error: bool,
         get_job_error: bool,
+        cancel_on_get: bool,
         dequeue_calls: AtomicUsize,
     }
 
@@ -1200,16 +1231,18 @@ mod tests {
                 let _ = release.await;
             }
             let mut job = self.cancelled_job.clone();
-            job.mark_cancelled();
+            if self.cancel_on_get {
+                job.mark_cancelled();
+            }
             Ok(Some(job))
         }
 
         async fn update_job(&self, _job: &ScanJob) -> Result<()> {
-            unreachable!()
+            Ok(())
         }
 
         async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
-            unreachable!()
+            Ok(true)
         }
 
         async fn cancel_job(&self, _id: &str) -> Result<bool> {
@@ -1233,7 +1266,8 @@ mod tests {
     async fn shutdown_waits_for_active_scan_tasks() {
         let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
         job.mark_queued();
-        let cancelled_job = job.clone();
+        let mut cancelled_job = job.clone();
+        cancelled_job.mark_cancelled();
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let queue = Arc::new(GatedJobQueue {
@@ -1243,6 +1277,7 @@ mod tests {
             release: tokio::sync::Mutex::new(Some(release_rx)),
             dequeue_error: false,
             get_job_error: false,
+            cancel_on_get: false,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue, 1));
@@ -1309,6 +1344,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: true,
             get_job_error: false,
+            cancel_on_get: false,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
