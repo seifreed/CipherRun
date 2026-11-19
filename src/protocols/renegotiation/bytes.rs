@@ -90,4 +90,21 @@ mod tests {
         assert!(read_u16_at(&data, 1, "short read").is_err());
         assert!(write_u24_at(&mut data, 0, 1, "short write").is_err());
     }
+
+    #[test]
+    fn rejects_overflowing_offsets_and_unrepresentable_lengths() {
+        let mut data = [0u8; 3];
+
+        assert!(read_u8_at(&[], 0, "u8").is_err());
+        assert!(read_u16_at(&data, usize::MAX, "u16").is_err());
+        assert!(read_u24_at(&data, 1, "u24").is_err());
+        assert!(read_u24_at(&data, usize::MAX, "u24").is_err());
+
+        assert!(write_u16_at(&mut data, 2, 1, "u16").is_err());
+        assert!(write_u16_at(&mut data, usize::MAX, 1, "u16").is_err());
+        assert!(u16_len(usize::MAX, "length").is_err());
+        assert!(write_u24_at(&mut data, 0, 0x0100_0000, "u24").is_err());
+        assert!(write_u24_at(&mut data, 0, usize::MAX, "u24").is_err());
+        assert!(write_u24_at(&mut data, usize::MAX, 1, "u24").is_err());
+    }
 }
