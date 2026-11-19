@@ -430,8 +430,13 @@ mod tests {
         handle_scan_websocket(ws, scan_id, State(state)).await
     }
 
+    async fn websocket_route(ws: WebSocketUpgrade, State(state): State<Arc<WsState>>) -> Response {
+        handle_websocket(ws, State(state)).await
+    }
+
     async fn start_test_server(state: Arc<WsState>) -> (String, oneshot::Sender<()>) {
         let app = Router::new()
+            .route("/", get(websocket_route))
             .route("/{scan_id}", get(scan_websocket_route))
             .with_state(state);
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -480,6 +485,46 @@ mod tests {
         assert_eq!(received.scan_id, "scan1");
         assert_eq!(received.progress, 5);
         assert_eq!(received.stage, "stage");
+    }
+
+    #[tokio::test]
+    async fn test_websocket_streams_progress_and_stops_on_client_close() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("websocket should connect");
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("websocket should subscribe to progress");
+        tx.send(ProgressMessage::new("global-scan", 40, "running"))
+            .expect("progress should broadcast");
+        let progress = next_text(&mut socket).await;
+        assert_eq!(progress["scan_id"], "global-scan");
+        assert_eq!(progress["progress"], 40);
+
+        socket
+            .send(ClientMessage::Close(None))
+            .await
+            .expect("close frame should send");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("websocket should stop after the client closes");
+
+        let _ = shutdown.send(());
     }
 
     #[tokio::test]
