@@ -190,3 +190,81 @@ pub(super) fn is_present(response: &[u8]) -> Result<bool> {
     }
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(kind: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![kind, 0x03, 0x03];
+        bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn message(kind: u8, body: &[u8]) -> Vec<u8> {
+        let length = body.len();
+        let mut bytes = vec![
+            kind,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    fn ticket(ticket: &[u8]) -> Vec<u8> {
+        let mut body = vec![0, 0, 0, 0];
+        body.extend_from_slice(&(ticket.len() as u16).to_be_bytes());
+        body.extend_from_slice(ticket);
+        record(0x16, &message(0x04, &body))
+    }
+
+    #[test]
+    fn detects_empty_and_nonempty_new_session_tickets() {
+        assert!(is_present(&ticket(&[])).unwrap());
+        assert_eq!(extract(&ticket(&[])).unwrap(), None);
+        assert!(is_present(&ticket(b"ticket-data")).unwrap());
+        assert_eq!(
+            extract(&ticket(b"ticket-data")).unwrap(),
+            Some(b"ticket-data".to_vec())
+        );
+    }
+
+    #[test]
+    fn skips_unrelated_records_and_handshake_messages() {
+        assert_eq!(extract(&record(0x15, &[])).unwrap(), None);
+        assert!(!is_present(&record(0x15, &[])).unwrap());
+
+        let response = record(0x16, &message(0x02, &[0; 3]));
+        assert_eq!(extract(&response).unwrap(), None);
+        assert!(!is_present(&response).unwrap());
+    }
+
+    #[test]
+    fn rejects_truncated_record_and_handshake_lengths() {
+        assert!(extract(&[0x16, 0x03]).is_err());
+        assert!(is_present(&[0x16, 0x03]).is_err());
+
+        let truncated_header = record(0x16, &[0x04, 0]);
+        assert!(extract(&truncated_header).is_err());
+        assert!(is_present(&truncated_header).is_err());
+
+        let invalid_length = record(0x16, &[0x04, 0, 0, 5, 0]);
+        assert!(extract(&invalid_length).is_err());
+        assert!(is_present(&invalid_length).is_err());
+    }
+
+    #[test]
+    fn rejects_truncated_or_oversized_ticket_data() {
+        let short_body = record(0x16, &message(0x04, &[0; 5]));
+        assert!(extract(&short_body).is_err());
+
+        let mut body = vec![0, 0, 0, 0];
+        body.extend_from_slice(&2u16.to_be_bytes());
+        body.push(0xaa);
+        let truncated_ticket = record(0x16, &message(0x04, &body));
+        assert!(extract(&truncated_ticket).is_err());
+    }
+}
