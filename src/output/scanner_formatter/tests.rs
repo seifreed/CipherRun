@@ -480,6 +480,12 @@ fn test_cipher_results_render_each_scan_focus_and_empty_states() {
         formatter.display_cipher_results(&HashMap::from([(Protocol::TLS12, summary)]));
     };
 
+    let empty_summary = make_summary(Vec::new(), false, Vec::new());
+    ScannerFormatter::new(&Args::default()).display_cipher_results(&HashMap::from([
+        (Protocol::TLS12, empty_summary.clone()),
+        (Protocol::TLS13, empty_summary),
+    ]));
+
     display(
         &Args::default(),
         make_summary(Vec::new(), false, Vec::new()),
@@ -776,7 +782,7 @@ fn test_display_sections_smoke() {
         protocol: Protocol::TLS12,
         supported_ciphers: vec![cipher.clone()],
         server_ordered: true,
-        server_preference: vec!["0x1301".to_string()],
+        server_preference: vec!["0x1301".to_string(), "0xdead".to_string()],
         preferred_cipher: Some(cipher),
         counts: CipherCounts {
             total: 1,
