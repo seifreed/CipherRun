@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn test_sieve_negotiator_constructors() {
-        for negotiator in [SieveNegotiator::new(), SieveNegotiator] {
+        for negotiator in [SieveNegotiator::new(), SieveNegotiator::default()] {
             assert_eq!(negotiator.protocol(), StarttlsProtocol::SIEVE);
         }
     }
@@ -76,24 +76,23 @@ mod tests {
         let starttls_response = starttls_response.to_string();
 
         tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                for line in lines {
-                    socket
-                        .write_all(line.as_bytes())
-                        .await
-                        .expect("test assertion should succeed");
-                }
-                socket.flush().await.expect("test assertion should succeed");
-
-                let mut reader = BufReader::new(&mut socket);
-                let mut buf = String::new();
-                let _ = reader.read_line(&mut buf).await;
-                let _ = reader
-                    .get_mut()
-                    .write_all(starttls_response.as_bytes())
-                    .await;
-                let _ = reader.get_mut().flush().await;
+            let (mut socket, _) = listener.accept().await.expect("listener should accept");
+            for line in lines {
+                socket
+                    .write_all(line.as_bytes())
+                    .await
+                    .expect("test assertion should succeed");
             }
+            socket.flush().await.expect("test assertion should succeed");
+
+            let mut reader = BufReader::new(&mut socket);
+            let mut buf = String::new();
+            let _ = reader.read_line(&mut buf).await;
+            let _ = reader
+                .get_mut()
+                .write_all(starttls_response.as_bytes())
+                .await;
+            let _ = reader.get_mut().flush().await;
         });
 
         port
@@ -159,9 +158,8 @@ mod tests {
             .port();
 
         tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.write_all(b"OK Ready\r\n").await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("listener should accept");
+            let _ = socket.write_all(b"OK Ready\r\n").await;
         });
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
