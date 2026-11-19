@@ -123,4 +123,78 @@ mod tests {
         assert!(result.inconclusive);
         assert!(!result.vulnerable);
     }
+
+    #[test]
+    fn failed_extension_probe_without_insecure_result_is_inconclusive() {
+        let result = failed_secure_extension_probe(InsecureRenegotiationResult::NotDetected);
+
+        assert_eq!(result.support, RenegotiationSupport::Inconclusive);
+        assert!(result.inconclusive);
+        assert!(result.needs_verification);
+        assert!(result.details.contains("did not complete"));
+    }
+
+    #[test]
+    fn fallback_merge_preserves_detected_insecurity_and_other_fallbacks() {
+        assert_eq!(
+            support_without_secure_extension(
+                InsecureRenegotiationResult::Detected,
+                RenegotiationSupport::SecureRenegotiation,
+            ),
+            RenegotiationSupport::InsecureRenegotiation
+        );
+
+        for support in [
+            RenegotiationSupport::InsecureRenegotiation,
+            RenegotiationSupport::ClientInitiatedDisabled,
+            RenegotiationSupport::NotSupported,
+            RenegotiationSupport::Inconclusive,
+        ] {
+            assert_eq!(
+                support_without_secure_extension(InsecureRenegotiationResult::NotDetected, support,),
+                support
+            );
+        }
+    }
+
+    #[test]
+    fn final_result_formats_each_support_state() {
+        let cases = [
+            (
+                RenegotiationSupport::SecureRenegotiation,
+                "Secure renegotiation supported",
+                false,
+            ),
+            (
+                RenegotiationSupport::InsecureRenegotiation,
+                "VULNERABLE",
+                false,
+            ),
+            (
+                RenegotiationSupport::ClientInitiatedDisabled,
+                "Client-initiated renegotiation disabled",
+                false,
+            ),
+            (
+                RenegotiationSupport::NotSupported,
+                "Renegotiation not supported",
+                false,
+            ),
+            (
+                RenegotiationSupport::Inconclusive,
+                "transport or handshake failures",
+                true,
+            ),
+        ];
+
+        for (support, expected_detail, expected_inconclusive) in cases {
+            let result = final_result(support, false, InsecureRenegotiationResult::NotDetected);
+            assert!(result.details.contains(expected_detail));
+            assert_eq!(result.inconclusive, expected_inconclusive);
+            assert_eq!(
+                result.vulnerable,
+                support == RenegotiationSupport::InsecureRenegotiation
+            );
+        }
+    }
 }
