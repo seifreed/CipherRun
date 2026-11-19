@@ -164,7 +164,52 @@ impl RoadmapGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::ScanResults;
+    use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::validator::ValidationResult;
+    use crate::protocols::{
+        Protocol, ProtocolTestResult,
+        groups::{GroupEnumerationResult, GroupType, KeyExchangeGroup},
+    };
+    use crate::scanner::{AdvancedResults, CertificateAnalysisResult, ScanResults};
+
+    fn protocol(protocol: Protocol, supported: bool) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
+    fn certificate_results(key_size: Option<usize>) -> CertificateAnalysisResult {
+        CertificateAnalysisResult {
+            chain: CertificateChain {
+                certificates: vec![CertificateInfo {
+                    public_key_size: key_size,
+                    ..CertificateInfo::default()
+                }],
+                chain_length: 1,
+                chain_size_bytes: 0,
+            },
+            validation: ValidationResult {
+                valid: true,
+                issues: Vec::new(),
+                trust_chain_valid: true,
+                hostname_match: true,
+                not_expired: true,
+                signature_valid: true,
+                trusted_ca: None,
+                platform_trust: None,
+            },
+            revocation: None,
+        }
+    }
 
     #[test]
     fn test_roadmap_empty_scan_has_pqc_steps() {
@@ -177,5 +222,107 @@ mod tests {
                 .iter()
                 .any(|s| s.title.contains("X25519MLKEM768"))
         );
+    }
+
+    #[test]
+    fn roadmap_severity_labels_are_stable() {
+        assert_eq!(RoadmapSeverity::Critical.label(), "CRITICAL");
+        assert_eq!(RoadmapSeverity::High.label(), "HIGH");
+        assert_eq!(RoadmapSeverity::Medium.label(), "MEDIUM");
+        assert_eq!(RoadmapSeverity::Low.label(), "LOW");
+    }
+
+    #[test]
+    fn roadmap_recommends_remediation_for_legacy_protocols_and_weak_key() {
+        let mut results = ScanResults {
+            target: "legacy.example.com:443".to_string(),
+            protocols: vec![
+                protocol(Protocol::SSLv2, true),
+                protocol(Protocol::SSLv3, true),
+                protocol(Protocol::TLS10, true),
+                protocol(Protocol::TLS11, true),
+                protocol(Protocol::TLS13, false),
+            ],
+            certificate_chain: Some(certificate_results(Some(2048))),
+            ..ScanResults::default()
+        };
+        results.advanced = Some(AdvancedResults {
+            key_exchange_groups: Some(GroupEnumerationResult {
+                groups: vec![KeyExchangeGroup {
+                    name: "P-256".to_string(),
+                    iana_value: 23,
+                    group_type: GroupType::EllipticCurve,
+                    bits: 256,
+                    supported: true,
+                    quantum_vulnerable: true,
+                }],
+                measured: true,
+                details: String::new(),
+            }),
+            ..AdvancedResults::default()
+        });
+
+        let roadmap = RoadmapGenerator::from_scan(&results);
+        assert_eq!(roadmap.target, "legacy.example.com:443");
+        assert_eq!(roadmap.steps.len(), 7);
+        assert!(matches!(
+            roadmap.steps[0].severity,
+            RoadmapSeverity::Critical
+        ));
+        assert_eq!(roadmap.steps[0].phase, 1);
+        assert_eq!(roadmap.steps[0].timeline, "Immediate");
+        assert_eq!(roadmap.steps[1].title, "Disable TLS 1.0 / TLS 1.1");
+        assert!(
+            roadmap
+                .steps
+                .iter()
+                .any(|step| { step.title.contains("X25519MLKEM768") && step.phase == 2 })
+        );
+        assert!(
+            roadmap
+                .steps
+                .iter()
+                .any(|step| step.title == "Enable TLS 1.3")
+        );
+        assert!(roadmap.steps.iter().any(|step| {
+            step.title.contains("RSA certificate key") && step.severity.label() == "MEDIUM"
+        }));
+        assert_eq!(roadmap.steps[5].phase, 3);
+        assert_eq!(roadmap.steps[6].phase, 4);
+    }
+
+    #[test]
+    fn roadmap_skips_recommendations_for_supported_pqc_and_large_rsa_key() {
+        let results = ScanResults {
+            protocols: vec![
+                protocol(Protocol::SSLv2, false),
+                protocol(Protocol::SSLv3, false),
+                protocol(Protocol::TLS10, false),
+                protocol(Protocol::TLS11, false),
+                protocol(Protocol::TLS13, true),
+            ],
+            certificate_chain: Some(certificate_results(Some(3072))),
+            advanced: Some(AdvancedResults {
+                key_exchange_groups: Some(GroupEnumerationResult {
+                    groups: vec![KeyExchangeGroup {
+                        name: "X25519MLKEM768".to_string(),
+                        iana_value: 0x11ec,
+                        group_type: GroupType::PostQuantum,
+                        bits: 768,
+                        supported: true,
+                        quantum_vulnerable: false,
+                    }],
+                    measured: true,
+                    details: String::new(),
+                }),
+                ..AdvancedResults::default()
+            }),
+            ..ScanResults::default()
+        };
+
+        let roadmap = RoadmapGenerator::from_scan(&results);
+        assert_eq!(roadmap.steps.len(), 2);
+        assert_eq!(roadmap.steps[0].phase, 3);
+        assert_eq!(roadmap.steps[1].phase, 4);
     }
 }
