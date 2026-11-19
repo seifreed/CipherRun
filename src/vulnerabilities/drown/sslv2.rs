@@ -163,6 +163,14 @@ fn build_client_hello(cipher_specs: &[[u8; 3]], challenge_multiplier: u8) -> Vec
 mod tests {
     use super::*;
 
+    fn analyze_with_debug_logging(data: &[u8]) -> Result<Sslv2Status> {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || analyze_response(data))
+    }
+
     #[test]
     fn recognizes_three_byte_record_shape() {
         assert_eq!(record_shape(&[0x00, 0x04, 0x00]), Some((3, 4, 7)));
@@ -171,5 +179,54 @@ mod tests {
     #[test]
     fn rejects_tls_record_shape() {
         assert_eq!(record_shape(&[0x16, 0x03, 0x01]), None);
+    }
+
+    #[test]
+    fn record_shape_covers_short_tls_and_two_byte_headers() {
+        assert_eq!(record_shape(&[]), None);
+        assert_eq!(record_shape(&[0x80]), None);
+        for content_type in 0x14..=0x18 {
+            assert_eq!(record_shape(&[content_type, 0x03]), None);
+        }
+        assert_eq!(record_shape(&[0x80, 0x04]), Some((2, 4, 6)));
+        assert_eq!(record_shape(&[0x00, 0x03, 0x04]), Some((3, 3, 6)));
+    }
+
+    #[test]
+    fn response_classification_covers_ssl2_message_types_and_lengths() {
+        for (message_type, expected) in [
+            (0x00, Sslv2Status::Probable),
+            (0x02, Sslv2Status::Suspicious),
+            (0x03, Sslv2Status::Suspicious),
+            (0x04, Sslv2Status::Confirmed),
+            (0x05, Sslv2Status::Probable),
+            (0x06, Sslv2Status::Probable),
+            (0x07, Sslv2Status::Probable),
+            (0x08, Sslv2Status::Suspicious),
+            (0xff, Sslv2Status::Suspicious),
+        ] {
+            assert_eq!(
+                analyze_with_debug_logging(&[0x80, 0x01, message_type]).unwrap(),
+                expected,
+                "message type {message_type:#04x}"
+            );
+        }
+
+        assert_eq!(
+            analyze_with_debug_logging(&[]).unwrap(),
+            Sslv2Status::Inconclusive
+        );
+        assert_eq!(
+            analyze_with_debug_logging(&[0x80]).unwrap(),
+            Sslv2Status::Inconclusive
+        );
+        assert_eq!(
+            analyze_with_debug_logging(&[0x80, 0x00, 0x04]).unwrap(),
+            Sslv2Status::Suspicious
+        );
+        assert_eq!(
+            analyze_with_debug_logging(&[0x16, 0x03, 0x01]).unwrap(),
+            Sslv2Status::NotSupported
+        );
     }
 }
