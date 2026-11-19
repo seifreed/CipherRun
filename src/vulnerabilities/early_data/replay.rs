@@ -93,4 +93,40 @@ mod tests {
         assert!(result.inconclusive);
         assert!(result.details.contains("16384"));
     }
+
+    #[test]
+    fn classifies_unsupported_and_missing_probe_results() {
+        let unsupported = classify_pair(
+            EarlyDataSupportStatus::NotSupported,
+            EarlyDataSupportStatus::Supported,
+        );
+        assert!(unsupported.tested);
+        assert!(!unsupported.vulnerable);
+        assert!(!unsupported.inconclusive);
+        assert!(unsupported.details.contains("did not accept"));
+
+        let missing = classify_pair(
+            EarlyDataSupportStatus::Supported,
+            EarlyDataSupportStatus::Inconclusive,
+        );
+        assert!(!missing.tested);
+        assert!(!missing.vulnerable);
+        assert!(missing.inconclusive);
+        assert!(missing.details.contains("no probe result"));
+    }
+
+    #[test]
+    fn inconclusive_size_context_reports_unknown_when_size_is_missing() {
+        let info = EarlyDataSizeInfo {
+            tls13_supported: true,
+            early_data_supported: true,
+            max_early_data_size: None,
+            is_estimated: false,
+            inconclusive: true,
+        };
+
+        let result = inconclusive_with_size(&info);
+        assert!(result.details.contains("max: unknown"));
+        assert!(result.details.contains("estimated: false"));
+    }
 }
