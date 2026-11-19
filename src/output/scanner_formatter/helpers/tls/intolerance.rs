@@ -136,4 +136,23 @@ mod tests {
             .display(&details);
         }
     }
+
+    #[test]
+    fn display_handles_missing_details_for_failed_and_inconclusive_checks() {
+        colored::control::set_override(false);
+        let details = HashMap::new();
+
+        for (is_intolerant, inconclusive) in [(true, false), (false, true)] {
+            IntoleranceCheck {
+                name: "Test check",
+                is_intolerant,
+                inconclusive,
+                success_message: "passed",
+                failure_message: "failed",
+                detail_key: "check",
+                is_critical: false,
+            }
+            .display(&details);
+        }
+    }
 }
