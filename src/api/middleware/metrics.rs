@@ -131,7 +131,7 @@ impl Extractor for HeaderExtractor<'_> {
 #[cfg(test)]
 mod tests {
     use super::metrics;
-    use crate::api::{ApiConfig, state::AppState};
+    use crate::api::{ApiConfig, contract::Permission, middleware::AuthExtension, state::AppState};
     use axum::{Router, body::Body, middleware, routing::get};
     #[cfg(feature = "otel")]
     use opentelemetry::trace::TraceContextExt;
@@ -195,6 +195,34 @@ mod tests {
         assert_eq!(event.path, "<unmatched>");
         assert_eq!(event.status, 404);
         assert_eq!(stats.total_responses, 1);
+    }
+
+    #[tokio::test]
+    async fn records_request_and_response_metrics_for_authenticated_owner() {
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route("/private", get(|| async { axum::http::StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(state.clone(), metrics));
+        let mut request = axum::http::Request::builder()
+            .uri("/private")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(AuthExtension {
+            permission: Permission::ReadOnly,
+            key_id: "key-id".to_string(),
+            principal_id: "principal-id".to_string(),
+            tenant_id: Some("tenant-id".to_string()),
+        });
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let stats = state.stats.read().await;
+        assert!(
+            stats
+                .principal_stats
+                .values()
+                .any(|owner| { owner.total_requests == 1 && owner.total_responses == 1 })
+        );
     }
 
     #[tokio::test]
