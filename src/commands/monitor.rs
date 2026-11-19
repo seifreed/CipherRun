@@ -197,4 +197,24 @@ max_concurrent_scans = 1
 
         assert!(err.to_string().contains("default_interval_seconds"));
     }
+
+    #[test]
+    fn test_load_monitor_config_reads_valid_file() {
+        let dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = dir.path().join("monitor.toml");
+        std::fs::write(
+            &path,
+            "[monitor]\ndefault_interval_seconds = 600\nmax_concurrent_scans = 2\n",
+        )
+        .expect("test assertion should succeed");
+
+        let mut args = Args::default();
+        args.monitoring.config = Some(path);
+        let config = MonitorCommand::new(args)
+            .load_monitor_config()
+            .expect("valid monitor config should load");
+
+        assert_eq!(config.monitor.default_interval_seconds, 600);
+        assert_eq!(config.monitor.max_concurrent_scans, 2);
+    }
 }
