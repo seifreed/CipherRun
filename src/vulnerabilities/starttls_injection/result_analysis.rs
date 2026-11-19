@@ -144,4 +144,58 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.details[0].contains("not a standard STARTTLS port"));
     }
+
+    #[test]
+    fn every_protocol_records_vulnerable_and_not_vulnerable_outcomes() {
+        let cases = [
+            (StarttlsInjectionProtocol::Smtp, "SMTP"),
+            (StarttlsInjectionProtocol::Imap, "IMAP"),
+            (StarttlsInjectionProtocol::Pop3, "POP3"),
+        ];
+
+        for (protocol, name) in cases {
+            assert_eq!(protocol.name(), name);
+
+            let mut vulnerable = empty_result();
+            record_probe_status(
+                &mut vulnerable,
+                protocol,
+                StarttlsInjectionStatus::Vulnerable,
+            );
+            assert!(vulnerable.vulnerable);
+            assert!(vulnerable.details[0].contains(name));
+            assert_eq!(
+                [
+                    vulnerable.smtp_vulnerable,
+                    vulnerable.imap_vulnerable,
+                    vulnerable.pop3_vulnerable,
+                ],
+                [
+                    protocol == StarttlsInjectionProtocol::Smtp,
+                    protocol == StarttlsInjectionProtocol::Imap,
+                    protocol == StarttlsInjectionProtocol::Pop3,
+                ]
+            );
+
+            let mut safe = empty_result();
+            record_probe_status(&mut safe, protocol, StarttlsInjectionStatus::NotVulnerable);
+            assert!(!safe.vulnerable);
+            assert!(!safe.inconclusive);
+            assert!(safe.details[0].contains(name));
+        }
+    }
+
+    #[test]
+    fn probe_errors_are_reported_as_inconclusive() {
+        let mut result = empty_result();
+
+        record_probe_error(
+            &mut result,
+            StarttlsInjectionProtocol::Pop3,
+            &"connection refused",
+        );
+
+        assert!(result.inconclusive);
+        assert!(result.details[0].contains("POP3 test error: connection refused"));
+    }
 }
