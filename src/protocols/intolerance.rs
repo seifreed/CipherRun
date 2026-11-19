@@ -262,6 +262,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extension_parser_stops_at_truncated_extension_data() {
+        let mut hello = example_tester()
+            .build_extended_client_hello()
+            .expect("ClientHello should build");
+        let mut offset = 5 + 1 + 3 + 2 + 32;
+        offset += 1 + hello[offset] as usize;
+        let cipher_len = u16::from_be_bytes([hello[offset], hello[offset + 1]]) as usize;
+        offset += 2 + cipher_len;
+        offset += 1 + hello[offset] as usize;
+        offset += 2;
+        let first_extension_len = offset + 2;
+        hello[first_extension_len..first_extension_len + 2]
+            .copy_from_slice(&u16::MAX.to_be_bytes());
+
+        assert!(parse_client_hello_extensions(&hello).is_empty());
+    }
+
+    #[test]
     fn test_invalid_sni_client_hello_contains_invalid_hostname() {
         let tester = example_tester();
         let hello = tester
@@ -288,9 +306,13 @@ mod tests {
         let addr = listener
             .local_addr()
             .expect("test assertion should succeed");
-        tokio::spawn(async move {
-            while let Ok((socket, _)) = listener.accept().await {
-                drop(socket);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let accept_task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    Ok((socket, _)) = listener.accept() => drop(socket),
+                }
             }
         });
 
@@ -309,5 +331,11 @@ mod tests {
         assert!(result.inconclusive);
         assert!(!result.inconclusive_checks.is_empty());
         assert!(!result.extension_intolerance);
+        shutdown_tx
+            .send(())
+            .expect("listener task should still be active");
+        accept_task
+            .await
+            .expect("listener task should stop cleanly");
     }
 }
