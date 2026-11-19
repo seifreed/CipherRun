@@ -386,3 +386,31 @@ async fn test_poodle_inactive_target_is_inconclusive() {
     assert_eq!(result.tls_poodle, None);
     assert!(result.details.contains("inconclusive"), "{result:?}");
 }
+
+#[tokio::test]
+async fn test_all_poodle_variants_are_inconclusive_for_inactive_target() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let port = listener
+        .local_addr()
+        .expect("address should resolve")
+        .port();
+    drop(listener);
+    let target = crate::utils::network::Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .unwrap();
+
+    let result = PoodleTester::new(&target)
+        .test_all_variants()
+        .await
+        .expect("variant checks should return diagnostic outcomes");
+
+    assert!(!result.vulnerable);
+    assert_eq!(result.variants.len(), 6);
+    assert!(result.variants.iter().all(|variant| !variant.vulnerable));
+    assert!(result.variants.iter().all(|variant| variant.inconclusive));
+}
