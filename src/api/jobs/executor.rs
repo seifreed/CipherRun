@@ -1534,6 +1534,11 @@ mod tests {
         }
     }
 
+    async fn rejecting_webhook(AxumState(state): AxumState<Arc<WebhookTestState>>) -> StatusCode {
+        state.attempts.fetch_add(1, Ordering::SeqCst);
+        StatusCode::BAD_REQUEST
+    }
+
     #[tokio::test]
     async fn webhook_is_signed_and_retries_transient_failures() {
         use tracing::instrument::WithSubscriber;
@@ -1583,6 +1588,38 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "delivered");
         assert!(event["fields"]["duration_ms"].is_u64());
         assert!(!output.contains("/hook"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn webhook_does_not_retry_permanent_http_failures() {
+        let state = Arc::new(WebhookTestState {
+            attempts: AtomicUsize::new(0),
+            signature_valid: AtomicBool::new(true),
+            secret: vec![b's'; 32],
+        });
+        let app = Router::new()
+            .route("/hook", post(rejecting_webhook))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_completed(ScanResults::default());
+
+        let error = ScanExecutor::send_webhook_attempts(
+            &reqwest::Client::new(),
+            &format!("http://{address}/hook"),
+            &job,
+            &state.secret,
+            3,
+            Duration::from_millis(1),
+        )
+        .await
+        .expect_err("permanent response should fail delivery");
+
+        assert!(matches!(error, TlsError::HttpError { status: 400, .. }));
+        assert_eq!(state.attempts.load(Ordering::SeqCst), 1);
         server.abort();
     }
 
