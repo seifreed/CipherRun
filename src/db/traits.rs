@@ -224,11 +224,33 @@ mod tests {
 
         let id = repo.create_scan(&scan).await.expect("create ok");
         assert_eq!(id, 1);
+        assert!(
+            repo.get_scan_by_id(id)
+                .await
+                .expect("get scan ok")
+                .is_none()
+        );
 
         let scans = repo
             .get_scans_by_hostname("example.com", 443, 10)
             .await
             .expect("get scans ok");
         assert!(scans.is_empty());
+
+        let scans_since = repo
+            .get_scans_by_hostname_since("example.com", 443, chrono::Utc::now())
+            .await
+            .expect("get scans since ok");
+        assert!(scans_since.is_empty());
+        assert!(
+            repo.get_latest_scan("example.com", 443)
+                .await
+                .expect("get latest scan ok")
+                .is_none()
+        );
+        assert_eq!(repo.delete_old_scans(30).await.expect("delete ok"), 0);
+        repo.update_scan_rating(id, "A", 100)
+            .await
+            .expect("update rating ok");
     }
 }
