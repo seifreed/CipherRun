@@ -1267,8 +1267,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl JobQueue for GatedJobQueue {
-        async fn enqueue(&self, _job: ScanJob) -> Result<String> {
-            unreachable!()
+        async fn enqueue(&self, job: ScanJob) -> Result<String> {
+            let id = job.id.clone();
+            *self.job.lock().await = Some(job);
+            Ok(id)
         }
 
         async fn dequeue(&self) -> Result<Option<ScanJob>> {
@@ -1392,6 +1394,46 @@ mod tests {
         executor.clone().start().await.unwrap();
 
         assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn closed_execution_semaphore_requeues_the_dequeued_job() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job.clone())),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        executor.semaphore.close();
+
+        executor
+            .clone()
+            .start()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("closed semaphore should stop the executor cleanly");
+
+        assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 1);
+        assert!(queue.job.lock().await.is_some(), "job should be requeued");
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("scan_job.execution_slot.unavailable"));
+        assert!(output.contains("requeue_attempted"));
     }
 
     struct RecordingResultsStore(AtomicUsize);
