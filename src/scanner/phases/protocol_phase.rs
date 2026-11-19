@@ -199,8 +199,15 @@ mod tests {
         args.tls.sni_name = Some("sni.example".to_string());
         args.scan.proto.tls12 = true;
         args.network.test_all_ips = true;
+        args.connection.max_retries = 2;
 
-        let context = test_scan_context(args);
+        let mut context = test_scan_context(args);
+        context.mtls_config = Some(crate::utils::mtls::MtlsConfig {
+            cert_chain: Vec::new(),
+            private_key: rustls::pki_types::PrivateKeyDer::Pkcs8(
+                rustls::pki_types::PrivatePkcs8KeyDer::from(vec![0]),
+            ),
+        });
         let phase = ProtocolPhase::new();
         let _tester = phase.configure_tester(&context);
     }
