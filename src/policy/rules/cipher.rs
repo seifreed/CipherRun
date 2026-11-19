@@ -378,6 +378,28 @@ mod tests {
 
     #[test]
     fn invalid_cipher_policy_logs_redact_patterns_and_parser_errors() {
+        const CHILD_MODE: &str = "CIPHERRUN_CIPHER_POLICY_LOG_TEST_CHILD";
+
+        if std::env::var_os(CHILD_MODE).is_some() {
+            assert_cipher_policy_log_redaction();
+            return;
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "policy::rules::cipher::tests::invalid_cipher_policy_logs_redact_patterns_and_parser_errors",
+            ])
+            .env(CHILD_MODE, "1")
+            .status()
+            .expect("isolated logging test process should start");
+        assert!(
+            status.success(),
+            "isolated logging test process should pass"
+        );
+    }
+
+    fn assert_cipher_policy_log_redaction() {
         use std::io::Write;
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
