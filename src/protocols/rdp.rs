@@ -36,13 +36,7 @@ impl RdpPreamble {
         if stream.read_exact(&mut header).await.is_err() {
             tls_bail!("RDP response too short");
         }
-        let declared_len = header
-            .get(2..4)
-            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
-            .map(u16::from_be_bytes)
-            .ok_or_else(|| crate::TlsError::ParseError {
-                message: "RDP response length field truncated".to_string(),
-            })? as usize;
+        let declared_len = u16::from_be_bytes([header[2], header[3]]) as usize;
         if declared_len < 11 {
             tls_bail!("RDP response too short");
         }
