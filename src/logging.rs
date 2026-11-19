@@ -675,6 +675,65 @@ mod tests {
         assert!(!fallback_output.contains("private-panic-payload"));
     }
 
+    #[test]
+    fn logging_initialize_child() {
+        let Ok(mode) = std::env::var("CIPHERRUN_INITIALIZE_CHILD") else {
+            return;
+        };
+        let args = crate::Args {
+            output: crate::cli::OutputArgs {
+                logfile: (mode == "fallback").then(|| std::path::PathBuf::from("/")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let guard = super::initialize(&args).expect("logging should initialize in a child process");
+        tracing::info!(
+            event_name = "logging.initialize.child",
+            "Child logger is ready"
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn logger_initializes_in_isolated_process_and_falls_back_on_invalid_file_path() {
+        let run_child = |mode| {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "logging::tests::logging_initialize_child",
+                    "--nocapture",
+                ])
+                .env("CIPHERRUN_INITIALIZE_CHILD", mode)
+                .env("CIPHERRUN_LOG_FORMAT", "json")
+                .env("RUST_LOG", "info")
+                .output()
+                .unwrap()
+        };
+
+        let initialized = run_child("json");
+        assert!(initialized.status.success(), "{:?}", initialized);
+        let initialized_output = format!(
+            "{}{}",
+            String::from_utf8(initialized.stdout).unwrap(),
+            String::from_utf8(initialized.stderr).unwrap()
+        );
+        assert!(initialized_output.contains("logging.subscriber.initialized"));
+        assert!(initialized_output.contains("logging.initialize.child"));
+
+        let fallback = run_child("fallback");
+        assert!(fallback.status.success(), "{:?}", fallback);
+        let fallback_output = format!(
+            "{}{}",
+            String::from_utf8(fallback.stdout).unwrap(),
+            String::from_utf8(fallback.stderr).unwrap()
+        );
+        assert!(fallback_output.contains("logging.file_destination.failed"));
+        assert!(fallback_output.contains("logging.subscriber.initialized"));
+        assert!(fallback_output.contains("logging.initialize.child"));
+    }
+
     #[derive(Clone)]
     struct Buffer(Arc<Mutex<Vec<u8>>>);
 
