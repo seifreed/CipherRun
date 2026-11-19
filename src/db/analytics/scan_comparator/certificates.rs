@@ -240,3 +240,116 @@ impl ScanComparator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::BindValue;
+    use crate::db::analytics::test_support::{insert_scan, setup_db};
+    use chrono::{TimeZone, Utc};
+
+    async fn insert_certificate(
+        db: &crate::db::CipherRunDatabase,
+        scan_id: i64,
+        fingerprint: &str,
+    ) {
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_returning_query(
+            "certificates",
+            &[
+                "fingerprint_sha256",
+                "subject",
+                "issuer",
+                "serial_number",
+                "not_before",
+                "not_after",
+                "signature_algorithm",
+                "public_key_algorithm",
+                "public_key_size",
+                "san_domains",
+                "is_ca",
+                "key_usage",
+                "extended_key_usage",
+                "der_bytes",
+            ],
+            "cert_id",
+        );
+        let now = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
+        let cert_id = db
+            .pool()
+            .execute_insert_returning(
+                &query,
+                vec![
+                    BindValue::String(fingerprint.to_string()),
+                    BindValue::String(format!("CN={fingerprint}")),
+                    BindValue::String(format!("CN={fingerprint}")),
+                    BindValue::OptString(None),
+                    BindValue::DateTime(now),
+                    BindValue::DateTime(now),
+                    BindValue::OptString(None),
+                    BindValue::OptString(None),
+                    BindValue::OptInt32(Some(2048)),
+                    BindValue::OptString(Some("[]".to_string())),
+                    BindValue::Bool(false),
+                    BindValue::OptString(Some("[]".to_string())),
+                    BindValue::OptString(Some("[]".to_string())),
+                    BindValue::OptBytes(None),
+                ],
+            )
+            .await
+            .expect("insert certificate");
+
+        let mut qb = db.pool().query_builder();
+        let query = qb.insert_query(
+            "scan_certificates",
+            &["scan_id", "cert_id", "chain_position"],
+        );
+        db.pool()
+            .execute(
+                &query,
+                vec![
+                    BindValue::Int64(scan_id),
+                    BindValue::Int64(cert_id),
+                    BindValue::Int32(0),
+                ],
+            )
+            .await
+            .expect("link leaf certificate");
+    }
+
+    #[tokio::test]
+    async fn compares_leaf_certificate_fields_and_missing_certificates() {
+        let db = setup_db("scan-comparator-certificates").await;
+        let first = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+        let second = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+        insert_certificate(&db, first, "first").await;
+        insert_certificate(&db, second, "second").await;
+
+        let diff = ScanComparator::new(db.clone())
+            .compare_certificates(first, second)
+            .await
+            .expect("compare certificates");
+        assert!(diff.fingerprint_changed);
+        assert!(diff.subject_changed);
+        assert!(diff.issuer_changed);
+        assert!(!diff.key_size_changed);
+        assert!(!diff.expiry_changed);
+        assert_eq!(diff.scan_1_cert.unwrap().fingerprint, "first");
+        assert_eq!(diff.scan_2_cert.unwrap().fingerprint, "second");
+
+        let without_cert = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+        let missing = ScanComparator::new(db.clone())
+            .compare_certificates(without_cert, first)
+            .await
+            .expect("compare missing certificate");
+        assert!(missing.fingerprint_changed);
+        assert!(missing.scan_1_cert.is_none());
+        assert!(missing.scan_2_cert.is_some());
+
+        let both_missing = ScanComparator::new(db)
+            .compare_certificates(without_cert, without_cert)
+            .await
+            .expect("compare two missing certificates");
+        assert!(!both_missing.fingerprint_changed);
+    }
+}
