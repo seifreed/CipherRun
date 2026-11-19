@@ -260,10 +260,16 @@ pub fn get_auth_extension(req: &Request) -> Option<AuthExtension> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::config::Permission;
+    use crate::api::{ApiConfig, ApiCredentialStore, config::Permission};
     use axum::body::Body;
-    use axum::http::HeaderValue;
     use axum::http::Request as HttpRequest;
+    use axum::http::{HeaderValue, StatusCode};
+    use axum::{Router, middleware as axum_middleware, routing::get};
+    use tower::ServiceExt;
+
+    async fn send_auth_request(app: &Router, request: HttpRequest<Body>) -> StatusCode {
+        app.clone().oneshot(request).await.unwrap().status()
+    }
 
     #[test]
     fn test_get_permission_and_auth_extension() {
@@ -446,5 +452,173 @@ mod tests {
             .expect_err("invalid authorization header should fail");
 
         assert!(error.to_string().contains("Invalid Authorization header"));
+    }
+
+    #[tokio::test]
+    async fn authentication_middleware_enforces_supported_credential_sources() {
+        let mut config = ApiConfig::default();
+        config.add_key("valid-key".to_string(), Permission::User);
+        let credentials = ApiCredentialStore::new(&config);
+        let app = Router::new()
+            .route("/protected", get(|| async { StatusCode::OK }))
+            .route("/swagger", get(|| async { StatusCode::OK }))
+            .route("/api/v1/health", get(|| async { StatusCode::OK }))
+            .route("/api/v1/scan/{id}/stream", get(|| async { StatusCode::OK }))
+            .layer(axum_middleware::from_fn_with_state(
+                credentials.clone(),
+                authenticate,
+            ));
+
+        for uri in ["/swagger", "/api/v1/health"] {
+            assert_eq!(
+                send_auth_request(
+                    &app,
+                    HttpRequest::builder().uri(uri).body(Body::empty()).unwrap(),
+                )
+                .await,
+                StatusCode::OK
+            );
+        }
+
+        let query_api_key = HttpRequest::builder()
+            .uri("/protected?api_key=valid-key")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, query_api_key).await,
+            StatusCode::BAD_REQUEST
+        );
+
+        let ticket_wrong_path = HttpRequest::builder()
+            .uri("/protected?ticket=one-use")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, ticket_wrong_path).await,
+            StatusCode::BAD_REQUEST
+        );
+
+        let ticket_and_key = HttpRequest::builder()
+            .uri("/api/v1/scan/scan-id/stream?ticket=one-use")
+            .header("X-API-Key", "valid-key")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, ticket_and_key).await,
+            StatusCode::BAD_REQUEST
+        );
+
+        let conflicting_headers = HttpRequest::builder()
+            .uri("/protected")
+            .header("X-API-Key", "valid-key")
+            .header("Authorization", "Bearer valid-key")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, conflicting_headers).await,
+            StatusCode::BAD_REQUEST
+        );
+
+        let missing = HttpRequest::builder()
+            .uri("/protected")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, missing).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let bearer = HttpRequest::builder()
+            .uri("/protected")
+            .header("Authorization", "Bearer valid-key")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send_auth_request(&app, bearer).await, StatusCode::OK);
+
+        let invalid_key = HttpRequest::builder()
+            .uri("/protected")
+            .header("X-API-Key", "invalid-key")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, invalid_key).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_middleware_rejects_missing_or_insufficient_authentication() {
+        let app = Router::new()
+            .route(
+                "/user",
+                get(|| async { StatusCode::OK }).layer(axum_middleware::from_fn(require_user)),
+            )
+            .route(
+                "/admin",
+                get(|| async { StatusCode::OK }).layer(axum_middleware::from_fn(require_admin)),
+            );
+
+        let missing = HttpRequest::builder()
+            .uri("/user")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send_auth_request(&app, missing).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let mut read_only = HttpRequest::builder()
+            .uri("/user")
+            .body(Body::empty())
+            .unwrap();
+        read_only.extensions_mut().insert(AuthExtension {
+            permission: Permission::ReadOnly,
+            key_id: "read-only".to_string(),
+            principal_id: "reader".to_string(),
+            tenant_id: None,
+        });
+        assert_eq!(
+            send_auth_request(&app, read_only).await,
+            StatusCode::FORBIDDEN
+        );
+
+        let mut user = HttpRequest::builder()
+            .uri("/user")
+            .body(Body::empty())
+            .unwrap();
+        user.extensions_mut().insert(AuthExtension {
+            permission: Permission::User,
+            key_id: "user-key".to_string(),
+            principal_id: "user".to_string(),
+            tenant_id: None,
+        });
+        assert_eq!(send_auth_request(&app, user).await, StatusCode::OK);
+
+        let mut user_admin = HttpRequest::builder()
+            .uri("/admin")
+            .body(Body::empty())
+            .unwrap();
+        user_admin.extensions_mut().insert(AuthExtension {
+            permission: Permission::User,
+            key_id: "user-key".to_string(),
+            principal_id: "user".to_string(),
+            tenant_id: None,
+        });
+        assert_eq!(
+            send_auth_request(&app, user_admin).await,
+            StatusCode::FORBIDDEN
+        );
+
+        let mut admin = HttpRequest::builder()
+            .uri("/admin")
+            .body(Body::empty())
+            .unwrap();
+        admin.extensions_mut().insert(AuthExtension {
+            permission: Permission::Admin,
+            key_id: "admin-key".to_string(),
+            principal_id: "admin".to_string(),
+            tenant_id: None,
+        });
+        assert_eq!(send_auth_request(&app, admin).await, StatusCode::OK);
     }
 }
