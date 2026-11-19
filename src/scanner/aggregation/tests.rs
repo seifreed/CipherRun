@@ -104,6 +104,58 @@ fn test_aggregate_grade_conservative_prefers_certificate_over_low_numeric_score(
 }
 
 #[test]
+fn test_aggregate_grade_replaces_current_worst_deterministically() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+    let mut rated = HashMap::from([
+        (ip1, successful_scan(ip1, ScanResults::default(), 0)),
+        (ip2, successful_scan(ip2, ScanResults::default(), 0)),
+    ]);
+    let order = rated.keys().copied().collect::<Vec<_>>();
+    rated.get_mut(&order[0]).unwrap().scan_result = make_scan_result(
+        Vec::new(),
+        HashMap::new(),
+        "first",
+        Grade::A,
+        90,
+        Vec::new(),
+    );
+    rated.get_mut(&order[1]).unwrap().scan_result = make_scan_result(
+        Vec::new(),
+        HashMap::new(),
+        "second",
+        Grade::T,
+        1,
+        Vec::new(),
+    );
+
+    assert_eq!(
+        ConservativeAggregator::new(rated, Vec::new()).aggregate_grade_conservative(),
+        ("T".to_string(), 1)
+    );
+
+    let mut missing_rating = HashMap::from([
+        (ip1, successful_scan(ip1, ScanResults::default(), 0)),
+        (ip2, successful_scan(ip2, ScanResults::default(), 0)),
+    ]);
+    let order = missing_rating.keys().copied().collect::<Vec<_>>();
+    missing_rating.get_mut(&order[0]).unwrap().scan_result = make_scan_result(
+        Vec::new(),
+        HashMap::new(),
+        "rated",
+        Grade::A,
+        90,
+        Vec::new(),
+    );
+
+    assert_eq!(
+        ConservativeAggregator::new(missing_rating, Vec::new()).aggregate_grade_conservative(),
+        ("T".to_string(), 0)
+    );
+}
+
+#[test]
 fn test_aggregate_grade_without_a_rating_uses_worst_case() {
     let rated_ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let unrated_ip: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
