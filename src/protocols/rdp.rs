@@ -139,6 +139,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rdp_preamble_rejects_short_declared_packet() {
+        let mut response = vec![0u8; 10];
+        response[0] = 0x03;
+        response[3] = 0x0a;
+        let (mut stream, server) = stream_from_rdp_response(response).await;
+
+        let err = RdpPreamble::send(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("RDP response too short"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_rejects_non_tpkt_packet() {
+        let mut response = vec![0u8; 11];
+        response[0] = 0x02;
+        response[3] = 0x0b;
+        let (mut stream, server) = stream_from_rdp_response(response).await;
+
+        let err = RdpPreamble::send(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("not a TPKT packet"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_rdp_preamble_rejects_unexpected_tpdu() {
+        let mut response = vec![0u8; 11];
+        response[0] = 0x03;
+        response[3] = 0x0b;
+        response[5] = 0xe0;
+        let (mut stream, server) = stream_from_rdp_response(response).await;
+
+        let err = RdpPreamble::send(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("expected CC_TPDU"));
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_rdp_preamble_mismatched_length() {
         let mut response = vec![0u8; 11];
         response[0] = 0x03;
