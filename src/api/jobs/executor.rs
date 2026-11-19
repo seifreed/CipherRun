@@ -1059,6 +1059,7 @@ mod tests {
             dequeue_error: false,
             get_job_error: true,
             cancel_on_get: false,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1107,6 +1108,7 @@ mod tests {
             dequeue_error: false,
             get_job_error: false,
             cancel_on_get: true,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         });
         let (progress_tx, _) = broadcast::channel(1);
@@ -1152,6 +1154,7 @@ mod tests {
             dequeue_error: false,
             get_job_error: false,
             cancel_on_get: false,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         });
         let job = ScanJob::new(
@@ -1184,6 +1187,7 @@ mod tests {
             dequeue_error: false,
             get_job_error: false,
             cancel_on_get: false,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue.clone(), 1);
@@ -1195,6 +1199,36 @@ mod tests {
         assert!(messages.iter().any(|message| message.msg_type == "failed"));
     }
 
+    #[tokio::test]
+    async fn retryable_scan_failure_is_requeued_with_progress_event() {
+        let mut job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: Some(RetryDisposition::Requeued),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let mut progress = executor.subscribe_progress();
+
+        executor.execute_scan(queue, job).await;
+
+        assert!(
+            std::iter::from_fn(|| progress.try_recv().ok())
+                .any(|message| message.stage == "retrying")
+        );
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
@@ -1203,6 +1237,7 @@ mod tests {
         dequeue_error: bool,
         get_job_error: bool,
         cancel_on_get: bool,
+        retry_disposition: Option<RetryDisposition>,
         dequeue_calls: AtomicUsize,
     }
 
@@ -1245,6 +1280,17 @@ mod tests {
             Ok(true)
         }
 
+        async fn retry_or_dead_letter(
+            &self,
+            _job: &ScanJob,
+            _error: &str,
+            _max_attempts: u32,
+        ) -> Result<RetryDisposition> {
+            Ok(self
+                .retry_disposition
+                .unwrap_or(RetryDisposition::DeadLettered))
+        }
+
         async fn cancel_job(&self, _id: &str) -> Result<bool> {
             unreachable!()
         }
@@ -1278,6 +1324,7 @@ mod tests {
             dequeue_error: false,
             get_job_error: false,
             cancel_on_get: false,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue, 1));
@@ -1345,6 +1392,7 @@ mod tests {
             dequeue_error: true,
             get_job_error: false,
             cancel_on_get: false,
+            retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
