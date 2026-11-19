@@ -1050,6 +1050,18 @@ mod tests {
     }
 
     #[test]
+    fn fallback_events_have_stable_text_formatting() {
+        assert_eq!(
+            format_dropped_log_event(3, false, "unused"),
+            "WARN logging.events_dropped dropped_lines=3 Log events were dropped by the bounded logging queue"
+        );
+        assert_eq!(
+            format_log_file_fallback_event(false, "unused"),
+            "WARN logging.file_destination.failed operation=open_log_file error_type=file_destination error_code=filesystem_error outcome=stderr_only Log file unavailable; continuing with stderr"
+        );
+    }
+
+    #[test]
     fn failed_file_destination_uses_safe_json_fallback_event() {
         let serialized = format_log_file_fallback_event(true, "2026-11-15T12:00:00.000000Z");
         let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
