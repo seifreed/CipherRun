@@ -13,6 +13,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::instrument::WithSubscriber;
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Clone)]
@@ -50,7 +51,7 @@ fn run_with_captured_logs<T>(future: impl Future<Output = T>) -> (T, String) {
         .enable_all()
         .build()
         .unwrap();
-    let result = tracing::subscriber::with_default(subscriber, || runtime.block_on(future));
+    let result = runtime.block_on(future.with_subscriber(tracing::Dispatch::new(subscriber)));
     let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     (result, output)
 }
