@@ -8,12 +8,12 @@ use axum::{
 };
 use cipherrun::api::models::response::ProgressMessage;
 use cipherrun::api::ws::progress::{WsState, handle_scan_websocket, handle_websocket};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::{Duration, timeout};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, tungstenite::Message as ClientMessage};
 
 async fn start_ws_server() -> (
     String,
@@ -187,5 +187,114 @@ async fn test_ws_scan_specific_filters_and_closes() {
 
     assert!(saw_close, "expected close after completion");
 
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn test_ws_scan_closes_after_failure_and_cancellation() {
+    let (base_url, tx, shutdown) = start_ws_server().await;
+
+    for terminal in [
+        ProgressMessage::failed("failed-scan", "scan failed"),
+        ProgressMessage::cancelled("cancelled-scan", 40),
+    ] {
+        let scan_id = terminal.scan_id.clone();
+        let (mut socket, _) = connect_async(format!("{base_url}/{scan_id}"))
+            .await
+            .expect("websocket should connect");
+        let connected = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("connected message should arrive")
+            .expect("socket should remain open")
+            .expect("connected frame should be valid");
+        assert!(
+            connected
+                .into_text()
+                .expect("connected frame should be text")
+                .contains("connected")
+        );
+
+        tx.send(terminal.clone())
+            .expect("terminal progress should broadcast");
+        let terminal_message = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("terminal progress should arrive")
+            .expect("socket should remain open for terminal progress")
+            .expect("terminal frame should be valid");
+        let terminal_message: serde_json::Value = serde_json::from_str(
+            &terminal_message
+                .into_text()
+                .expect("terminal frame should be text"),
+        )
+        .expect("terminal progress should be JSON");
+        assert_eq!(terminal_message["msg_type"], terminal.msg_type);
+
+        assert!(matches!(
+            timeout(Duration::from_secs(2), socket.next())
+                .await
+                .expect("terminal stream should close")
+                .expect("close frame should arrive")
+                .expect("close frame should be valid"),
+            ClientMessage::Close(_)
+        ));
+    }
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn test_ws_receive_handles_client_frames_and_close() {
+    let (url, tx, shutdown) = start_ws_server().await;
+    let (mut socket, _) = connect_async(&url).await.expect("websocket should connect");
+
+    socket
+        .send(ClientMessage::Text("diagnostic-free client text".into()))
+        .await
+        .expect("text frame should send");
+    socket
+        .send(ClientMessage::Binary(vec![1, 2, 3].into()))
+        .await
+        .expect("binary frame should send");
+    socket
+        .send(ClientMessage::Pong(Vec::new().into()))
+        .await
+        .expect("pong frame should send");
+    socket
+        .send(ClientMessage::Ping(Vec::new().into()))
+        .await
+        .expect("ping frame should send");
+
+    let mut saw_server_pong = false;
+    loop {
+        let message = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("server should respond to ping")
+            .expect("socket should remain open")
+            .expect("server frame should be valid");
+        if message.is_pong() {
+            saw_server_pong = true;
+            break;
+        }
+    }
+    assert!(saw_server_pong);
+
+    tx.send(ProgressMessage::new("scan-1", 42, "protocols"))
+        .expect("progress should broadcast");
+    let progress = timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("progress should arrive")
+        .expect("socket should remain open")
+        .expect("progress frame should be valid");
+    assert!(
+        progress
+            .into_text()
+            .expect("progress should be text")
+            .contains("scan-1")
+    );
+
+    socket
+        .send(ClientMessage::Close(None))
+        .await
+        .expect("close frame should send");
     let _ = shutdown.send(());
 }

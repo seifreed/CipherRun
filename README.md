@@ -216,6 +216,9 @@ Browser WebSocket clients obtain a 60-second, one-use URL from
 `POST /api/v1/scan/{id}/stream-ticket` using the `X-API-Key` or
 `Authorization: Bearer` header. Raw API credentials in query parameters are
 rejected.
+Per-scan progress streams forward only matching scan IDs and close after
+completion, failure, cancellation, or a lag notice; reconnect or poll scan
+status after a lag notice.
 
 To enable scan-completion webhooks, point `webhook_signing_secret_file` at an
 owner-only file containing at least 32 random bytes. Deliveries include
