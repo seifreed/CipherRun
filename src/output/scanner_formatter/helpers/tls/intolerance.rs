@@ -112,3 +112,28 @@ pub(crate) fn build_intolerance_checks(
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::IntoleranceCheck;
+    use std::collections::HashMap;
+
+    #[test]
+    fn display_includes_available_details_for_failed_and_inconclusive_checks() {
+        colored::control::set_override(false);
+        let details = HashMap::from([("check".to_string(), "diagnostic detail".to_string())]);
+
+        for (is_intolerant, inconclusive) in [(true, false), (false, true)] {
+            IntoleranceCheck {
+                name: "Test check",
+                is_intolerant,
+                inconclusive,
+                success_message: "passed",
+                failure_message: "failed",
+                detail_key: "check",
+                is_critical: false,
+            }
+            .display(&details);
+        }
+    }
+}
