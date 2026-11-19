@@ -623,6 +623,95 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_certificate_reports_ip_sans_and_usage_extensions() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::extension::{
+            BasicConstraints, ExtendedKeyUsage, KeyUsage, SubjectAlternativeName,
+        };
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "extensions.example.com")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_version(2).unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let mut san = SubjectAlternativeName::new();
+        san.dns("extensions.example.com")
+            .ip("127.0.0.1")
+            .ip("2001:db8::1")
+            .uri("https://extensions.example.com");
+        let san = {
+            let context = builder.x509v3_context(None, None);
+            san.build(&context).unwrap()
+        };
+        builder.append_extension(san).unwrap();
+
+        let mut usage = KeyUsage::new();
+        usage.digital_signature().key_encipherment().key_cert_sign();
+        builder.append_extension(usage.build().unwrap()).unwrap();
+
+        let mut extended_usage = ExtendedKeyUsage::new();
+        extended_usage
+            .other("2.5.29.37.0")
+            .server_auth()
+            .client_auth()
+            .code_signing()
+            .email_protection()
+            .time_stamping()
+            .other("1.3.6.1.5.5.7.3.9")
+            .other("1.2.3.4");
+        builder
+            .append_extension(extended_usage.build().unwrap())
+            .unwrap();
+        let mut constraints = BasicConstraints::new();
+        constraints.critical().ca();
+        builder
+            .append_extension(constraints.build().unwrap())
+            .unwrap();
+        builder.sign(&key, MessageDigest::sha256()).unwrap();
+
+        let info =
+            CertificateParser::parse_certificate(&builder.build().to_der().unwrap()).unwrap();
+        assert_eq!(
+            info.san,
+            ["extensions.example.com", "127.0.0.1", "2001:db8::1",]
+        );
+        assert_eq!(
+            info.key_usage,
+            ["Digital Signature", "Key Encipherment", "Certificate Sign"]
+        );
+        assert_eq!(
+            info.extended_key_usage,
+            [
+                "Any",
+                "Server Authentication",
+                "Client Authentication",
+                "Code Signing",
+                "Email Protection",
+                "Time Stamping",
+                "OCSP Signing",
+                "Unknown (1.2.3.4)",
+            ]
+        );
+        assert!(info.is_ca);
+    }
+
+    #[test]
     fn test_parse_certificate_rejects_trailing_der_bytes() {
         use openssl::asn1::Asn1Time;
         use openssl::hash::MessageDigest as OpensslMessageDigest;
