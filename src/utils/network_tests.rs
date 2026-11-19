@@ -196,17 +196,18 @@ async fn test_parse_target_rejects_invalid_hostname_before_dns() {
 #[cfg_attr(windows, ignore = "closed-port error semantics differ on Windows")]
 #[tokio::test]
 async fn test_connect_with_timeout_maps_connection_refused() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener should bind");
-    let addr = listener.local_addr().expect("listener should expose addr");
-    drop(listener);
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 1));
 
-    let err = connect_with_timeout(addr, std::time::Duration::from_millis(100), None)
-        .await
-        .expect_err("closed port should be refused");
+    for _ in 0..16 {
+        let err = connect_with_timeout(addr, std::time::Duration::from_millis(100), None)
+            .await
+            .expect_err("closed loopback port should be refused");
 
-    assert!(matches!(err, crate::TlsError::ConnectionRefused { .. }));
+        assert!(
+            matches!(err, crate::TlsError::ConnectionRefused { .. }),
+            "unexpected error: {err:?}"
+        );
+    }
 }
 
 #[test]

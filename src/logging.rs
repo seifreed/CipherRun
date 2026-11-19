@@ -648,7 +648,11 @@ mod tests {
         );
         let event = structured_output
             .lines()
-            .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find_map(|line| {
+                let start = line.find('{')?;
+                let end = line.rfind('}')?;
+                serde_json::from_str::<serde_json::Value>(&line[start..=end]).ok()
+            })
             .unwrap_or_else(|| panic!("panic hook should emit a JSON event: {structured_output}"));
         assert_eq!(event["fields"]["event_name"], "process.panic");
         assert_eq!(event["fields"]["error_type"], "panic");
