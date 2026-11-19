@@ -69,3 +69,82 @@ pub struct RenegotiationTestResult {
     pub needs_verification: bool,
     pub details: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        InsecureRenegotiationResult as Insecure, RenegotiationSupport as Support,
+        merge_secure_extension_probe,
+    };
+
+    #[test]
+    fn insecure_renegotiation_merge_preserves_the_most_severe_result() {
+        let outcomes = [
+            Insecure::Detected,
+            Insecure::Inconclusive,
+            Insecure::NotDetected,
+        ];
+        for current in outcomes {
+            for next in outcomes {
+                let expected = if current == Insecure::Detected || next == Insecure::Detected {
+                    Insecure::Detected
+                } else if current == Insecure::Inconclusive || next == Insecure::Inconclusive {
+                    Insecure::Inconclusive
+                } else {
+                    Insecure::NotDetected
+                };
+                assert_eq!(current.merge(next), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn support_merge_uses_the_documented_precedence() {
+        let outcomes = [
+            Support::SecureRenegotiation,
+            Support::InsecureRenegotiation,
+            Support::Inconclusive,
+            Support::ClientInitiatedDisabled,
+            Support::NotSupported,
+        ];
+        for current in outcomes {
+            for next in outcomes {
+                let expected = if current == Support::SecureRenegotiation
+                    || next == Support::SecureRenegotiation
+                {
+                    Support::SecureRenegotiation
+                } else if current == Support::InsecureRenegotiation
+                    || next == Support::InsecureRenegotiation
+                {
+                    Support::InsecureRenegotiation
+                } else if current == Support::Inconclusive || next == Support::Inconclusive {
+                    Support::Inconclusive
+                } else if current == Support::ClientInitiatedDisabled
+                    || next == Support::ClientInitiatedDisabled
+                {
+                    Support::ClientInitiatedDisabled
+                } else {
+                    Support::NotSupported
+                };
+                assert_eq!(current.merge(next), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn secure_extension_merge_prioritizes_positive_then_unknown() {
+        let outcomes = [Some(true), Some(false), None];
+        for current in outcomes {
+            for next in outcomes {
+                let expected = if current == Some(true) || next == Some(true) {
+                    Some(true)
+                } else if current.is_none() || next.is_none() {
+                    None
+                } else {
+                    Some(false)
+                };
+                assert_eq!(merge_secure_extension_probe(current, next), expected);
+            }
+        }
+    }
+}
