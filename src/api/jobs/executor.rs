@@ -1356,6 +1356,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn progress_persistence_errors_continue_but_cancellation_stops() {
+        use tracing::instrument::WithSubscriber;
+
+        for (persist_error, expected_continue) in [(false, false), (true, true)] {
+            let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+            job.mark_queued();
+            let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+                job: job.clone(),
+                persist_error,
+            });
+            let executor = ScanExecutor::new(queue.clone(), 1);
+            let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let subscriber = tracing_subscriber::fmt()
+                .json()
+                .with_max_level(tracing::Level::ERROR)
+                .with_writer(CapturedOutput(output.clone()))
+                .finish();
+
+            let should_continue = executor
+                .send_progress(queue, &mut job, 25, "diagnostic test")
+                .with_subscriber(tracing::Dispatch::new(subscriber))
+                .await;
+
+            assert_eq!(should_continue, expected_continue);
+            let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+            if persist_error {
+                let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+                assert_eq!(
+                    event["fields"]["event_name"],
+                    "scan_job.progress.persist_failed"
+                );
+                assert_eq!(event["fields"]["error_code"], "other");
+                assert!(!output.contains("private queue detail"));
+            } else {
+                assert!(output.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn retryable_scan_failure_is_requeued_with_progress_event() {
         let mut job = ScanJob::new(
             "invalid target with spaces".to_string(),
