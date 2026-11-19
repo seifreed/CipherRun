@@ -475,6 +475,72 @@ mod tests {
         assert!(OcspRequest::from_der(&request).is_ok());
     }
 
+    fn response_der(status: OcspResponseStatus) -> Vec<u8> {
+        OcspResponse::create(status, None)
+            .expect("OCSP response status should be constructible")
+            .to_der()
+            .expect("OCSP response should serialize")
+    }
+
+    #[test]
+    fn test_parse_ocsp_response_rejects_responder_error_statuses() {
+        let checker = RevocationChecker::new(false);
+        let cert = CertificateInfo::default();
+        let cases = [
+            (OcspResponseStatus::MALFORMED_REQUEST, "malformed request"),
+            (OcspResponseStatus::INTERNAL_ERROR, "internal error"),
+            (OcspResponseStatus::TRY_LATER, "temporarily unavailable"),
+            (OcspResponseStatus::SIG_REQUIRED, "requires signed request"),
+            (OcspResponseStatus::UNAUTHORIZED, "unauthorized request"),
+        ];
+
+        for (status, expected) in cases {
+            let response = response_der(status);
+            let err = checker
+                .parse_ocsp_response(&response, &cert, None)
+                .expect_err("responder error status should not produce a verdict");
+            assert!(
+                format!("{err}").contains(expected),
+                "status {status:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_ocsp_response_rejects_unknown_status() {
+        let checker = RevocationChecker::new(false);
+        let response = response_der(OcspResponseStatus::from_raw(7));
+
+        let err = checker
+            .parse_ocsp_response(&response, &CertificateInfo::default(), None)
+            .expect_err("unknown responder status should fail");
+
+        assert!(format!("{err}").contains("OCSP responder returned unknown status"));
+    }
+
+    #[test]
+    fn test_parse_ocsp_response_rejects_invalid_der() {
+        let checker = RevocationChecker::new(false);
+
+        let err = checker
+            .parse_ocsp_response(&[0xff], &CertificateInfo::default(), None)
+            .expect_err("invalid OCSP DER should fail");
+
+        assert!(format!("{err}").contains("Failed to parse OCSP response"));
+    }
+
+    #[test]
+    fn test_parse_successful_response_without_body_fails() {
+        let checker = RevocationChecker::new(false);
+        let response = response_der(OcspResponseStatus::SUCCESSFUL);
+
+        let err = checker
+            .parse_ocsp_response(&response, &CertificateInfo::default(), None)
+            .expect_err("successful response without body should fail");
+
+        assert!(format!("{err}").contains("Failed to get basic OCSP response"));
+    }
+
     #[test]
     fn test_extract_ocsp_url_malformed_aia_returns_error() {
         let checker = RevocationChecker::new(false);
