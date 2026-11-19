@@ -1105,6 +1105,27 @@ mod tests {
         daemon.run_scan_cycle().await.expect("scan cycle ok");
     }
 
+    #[tokio::test]
+    async fn test_scan_cycle_releases_invalid_domain_for_a_future_scan() {
+        let daemon = MonitorDaemon::new(MonitorConfig::default())
+            .await
+            .expect("daemon should initialize");
+        daemon
+            .add_domain(MonitoredDomain::new("127.0.0.1".to_string(), 1))
+            .await
+            .expect("inventory should accept the configured domain");
+
+        daemon
+            .run_scan_cycle()
+            .await
+            .expect("a domain validation failure should not abort the scan cycle");
+
+        let stats = daemon.stats().await;
+        assert_eq!(stats.total_domains, 1);
+        assert_eq!(stats.scheduled_scans, 1);
+        assert!(!stats.running);
+    }
+
     #[test]
     fn monitor_failure_events_log_safe_codes_duration_and_redact_details() {
         struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
