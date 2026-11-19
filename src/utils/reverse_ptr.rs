@@ -6,6 +6,7 @@ use crate::error::TlsError;
 use crate::utils::network::build_system_resolver;
 use crate::utils::sni_generator::SniGenerator;
 use hickory_resolver::proto::rr::RData;
+use std::future::Future;
 use std::net::IpAddr;
 
 /// Reverse PTR lookup utilities
@@ -55,8 +56,15 @@ impl ReversePtrLookup {
 
     /// Get SNI from IP address with fallback strategies
     pub async fn get_sni_for_ip(ip: &IpAddr) -> String {
+        Self::get_sni_for_ip_with_lookup(ip, Self::lookup_ptr(ip)).await
+    }
+
+    async fn get_sni_for_ip_with_lookup(
+        ip: &IpAddr,
+        lookup: impl Future<Output = Result<String>>,
+    ) -> String {
         // Strategy 1: Try reverse PTR lookup
-        if let Ok(hostname) = Self::lookup_ptr(ip).await {
+        if let Ok(hostname) = lookup.await {
             return hostname;
         }
 
@@ -314,6 +322,43 @@ mod tests {
         let pattern = ReversePtrLookup::try_common_patterns(&ip);
         assert!(pattern.is_some());
         assert!(pattern.unwrap().contains("amazonaws.com"));
+    }
+
+    #[tokio::test]
+    async fn get_sni_for_ip_prefers_ptr_lookup() {
+        let ip: IpAddr = "52.1.2.3".parse().expect("test assertion should succeed");
+        let hostname = ReversePtrLookup::get_sni_for_ip_with_lookup(&ip, async {
+            Ok("ptr.example.com".to_string())
+        })
+        .await;
+
+        assert_eq!(hostname, "ptr.example.com");
+    }
+
+    #[tokio::test]
+    async fn get_sni_for_ip_uses_cloud_pattern_after_ptr_failure() {
+        let ip: IpAddr = "52.1.2.3".parse().expect("test assertion should succeed");
+        let hostname = ReversePtrLookup::get_sni_for_ip_with_lookup(&ip, async {
+            Err(TlsError::InvalidInput {
+                message: "PTR lookup failed".to_string(),
+            })
+        })
+        .await;
+
+        assert_eq!(hostname, "ec2-52-1-2-3.compute-1.amazonaws.com");
+    }
+
+    #[tokio::test]
+    async fn get_sni_for_ip_generates_valid_fallback_after_ptr_failure() {
+        let ip: IpAddr = "192.0.2.1".parse().expect("test assertion should succeed");
+        let hostname = ReversePtrLookup::get_sni_for_ip_with_lookup(&ip, async {
+            Err(TlsError::InvalidInput {
+                message: "PTR lookup failed".to_string(),
+            })
+        })
+        .await;
+
+        assert!(SniGenerator::is_valid_hostname(&hostname));
     }
 
     // Note: Actual PTR lookups require network access and working DNS
