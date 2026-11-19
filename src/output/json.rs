@@ -325,6 +325,34 @@ mod tests {
     }
 
     #[test]
+    fn single_ip_context_prefers_scanned_ip_and_handles_invalid_target() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1));
+        let mut results = ScanResults {
+            target: "example.com:8443".to_string(),
+            ..Default::default()
+        };
+        results
+            .scan_metadata
+            .scanned_ips
+            .push(crate::utils::anycast::IpScanResult {
+                ip,
+                results: ScanResults::default(),
+                error: None,
+            });
+
+        assert_eq!(
+            single_ip_context(&results),
+            Some((ip, 8443, "example.com".to_string()))
+        );
+
+        let invalid_target = ScanResults {
+            target: "not a valid target:port".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(single_ip_context(&invalid_target), None);
+    }
+
+    #[test]
     fn finding_context_enrichment_skips_unexpected_json_shapes() {
         let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         for mut value in [
