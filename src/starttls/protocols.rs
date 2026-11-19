@@ -276,6 +276,42 @@ mod tests {
     }
 
     #[test]
+    fn every_protocol_maps_to_its_port_tls_mode_and_negotiator() {
+        let cases = [
+            (StarttlsProtocol::SMTP, 25, false),
+            (StarttlsProtocol::SMTPS, 465, true),
+            (StarttlsProtocol::POP3, 110, false),
+            (StarttlsProtocol::POP3S, 995, true),
+            (StarttlsProtocol::IMAP, 143, false),
+            (StarttlsProtocol::IMAPS, 993, true),
+            (StarttlsProtocol::FTP, 21, false),
+            (StarttlsProtocol::FTPS, 990, true),
+            (StarttlsProtocol::XMPP, 5222, false),
+            (StarttlsProtocol::XMPPS, 5223, true),
+            (StarttlsProtocol::LDAP, 389, false),
+            (StarttlsProtocol::LDAPS, 636, true),
+            (StarttlsProtocol::IRC, 6667, false),
+            (StarttlsProtocol::IRCS, 6697, true),
+            (StarttlsProtocol::POSTGRES, 5432, false),
+            (StarttlsProtocol::MYSQL, 3306, false),
+            (StarttlsProtocol::NNTP, 119, false),
+            (StarttlsProtocol::NNTPS, 563, true),
+            (StarttlsProtocol::SIEVE, 4190, false),
+            (StarttlsProtocol::LMTP, 24, false),
+            (StarttlsProtocol::Telnet, 23, false),
+        ];
+
+        for (protocol, port, implicit_tls) in cases {
+            assert_eq!(protocol.default_port(), port);
+            assert_eq!(protocol.is_implicit_tls(), implicit_tls);
+            assert_eq!(
+                get_negotiator(protocol, "example.com".to_string(), false).protocol(),
+                protocol
+            );
+        }
+    }
+
+    #[test]
     fn test_starttls_test_result_fields() {
         let result = StarttlsTestResult {
             protocol: StarttlsProtocol::SMTP,
