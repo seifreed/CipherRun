@@ -31,3 +31,41 @@ impl<'a> ScannerFormatter<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Args;
+    use std::collections::HashMap;
+
+    fn result(extension_intolerance: bool, inconclusive: bool) -> IntoleranceTestResult {
+        IntoleranceTestResult {
+            extension_intolerance,
+            version_intolerance: false,
+            long_handshake_intolerance: false,
+            incorrect_sni_alerts: false,
+            uses_common_dh_primes: false,
+            inconclusive,
+            inconclusive_checks: if inconclusive {
+                vec!["extension_intolerance".to_string()]
+            } else {
+                Vec::new()
+            },
+            details: HashMap::from([(
+                "extension_intolerance".to_string(),
+                "synthetic diagnostic detail".to_string(),
+            )]),
+        }
+    }
+
+    #[test]
+    fn display_intolerance_results_handles_clean_inconclusive_and_issue_outcomes() {
+        colored::control::set_override(false);
+        let args = Args::default();
+        let formatter = ScannerFormatter::new(&args);
+
+        formatter.display_intolerance_results(&result(false, false));
+        formatter.display_intolerance_results(&result(false, true));
+        formatter.display_intolerance_results(&result(true, false));
+    }
+}
