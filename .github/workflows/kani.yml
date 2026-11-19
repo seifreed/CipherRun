@@ -21,3 +21,5 @@ jobs:
         with:
           kani-version: "0.68.0"
           command: cargo-kani
+        env:
+          RUSTFLAGS: --cfg reqwest_unstable
