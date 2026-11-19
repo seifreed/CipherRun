@@ -40,6 +40,10 @@ impl<'a> ScanPostPresenter<'a> {
             exit = self.merge_non_zero_exit(exit, CommandExit::policy_failure());
         }
 
+        if post_view.should_return_failure_exit() {
+            exit = self.merge_non_zero_exit(exit, CommandExit::policy_failure());
+        }
+
         exit
     }
 
