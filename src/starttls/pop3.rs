@@ -73,23 +73,22 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let _ = reader.get_mut().write_all(b"+OK POP3 ready\r\n").await;
-                let _ = reader.get_mut().flush().await;
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let mut reader = BufReader::new(&mut socket);
+            let _ = reader.get_mut().write_all(b"+OK POP3 ready\r\n").await;
+            let _ = reader.get_mut().flush().await;
 
-                let mut buf = String::new();
+            let mut buf = String::new();
+            let _ = reader.read_line(&mut buf).await;
+
+            let _ = reader.get_mut().write_all(capability_response).await;
+            let _ = reader.get_mut().flush().await;
+
+            if let Some(response) = starttls_response {
+                buf.clear();
                 let _ = reader.read_line(&mut buf).await;
-
-                let _ = reader.get_mut().write_all(capability_response).await;
+                let _ = reader.get_mut().write_all(response).await;
                 let _ = reader.get_mut().flush().await;
-
-                if let Some(response) = starttls_response {
-                    buf.clear();
-                    let _ = reader.read_line(&mut buf).await;
-                    let _ = reader.get_mut().write_all(response).await;
-                    let _ = reader.get_mut().flush().await;
-                }
             }
         });
 
@@ -101,6 +100,7 @@ mod tests {
         let negotiator = Pop3Negotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::POP3);
         assert_eq!(negotiator.expected_greeting(), Some("+OK"));
+        assert_eq!(Pop3Negotiator::default().protocol(), StarttlsProtocol::POP3);
     }
 
     #[tokio::test]
