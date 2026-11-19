@@ -811,6 +811,14 @@ mod tests {
         let mut pg = QueryBuilder::new(DatabaseType::Postgres);
         let pg_query = pg.insert_query("items", &["a", "b"]);
         assert_eq!(pg_query, "INSERT INTO items (a, b) VALUES ($1, $2)");
+        assert_eq!(
+            pg.insert_returning_query("items", &["a", "b"], "id"),
+            "INSERT INTO items (a, b) VALUES ($1, $2) RETURNING id"
+        );
+        assert_eq!(
+            pg.insert_on_conflict_do_nothing_query("items", &["a"], "a", "id"),
+            "INSERT INTO items (a) VALUES ($1) ON CONFLICT (a) DO NOTHING RETURNING id"
+        );
 
         let mut sqlite = QueryBuilder::new(DatabaseType::Sqlite);
         let sqlite_query = sqlite.insert_query("items", &["a", "b"]);
@@ -866,6 +874,213 @@ mod tests {
             .expect("test assertion should succeed");
 
         assert_eq!(pool.db_type(), DatabaseType::Sqlite);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
+    async fn sqlite_operations_cover_query_and_binding_paths() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config).await.unwrap();
+        pool.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        let id = pool
+            .execute_insert_returning(
+                "INSERT INTO items (name) VALUES (?)",
+                vec![BindValue::String("first".to_string())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(
+            pool.execute_insert_on_conflict_returning(
+                "INSERT OR IGNORE INTO items (name) VALUES (?)",
+                vec![BindValue::String("second".to_string())],
+            )
+            .await
+            .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            pool.execute_insert_on_conflict_returning(
+                "INSERT OR IGNORE INTO items (name) VALUES (?)",
+                vec![BindValue::String("second".to_string())],
+            )
+            .await
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            pool.fetch_optional_id(
+                "SELECT id FROM items WHERE name = ?",
+                vec![BindValue::String("first".to_string())],
+            )
+            .await
+            .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            pool.fetch_optional_id(
+                "SELECT id FROM items WHERE name = ?",
+                vec![BindValue::String("missing".to_string())],
+            )
+            .await
+            .unwrap(),
+            None
+        );
+
+        let now = chrono::Utc::now();
+        pool.execute(
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+            vec![
+                BindValue::Int64(1),
+                BindValue::Int32(2),
+                BindValue::Int16(3),
+                BindValue::String("value".to_string()),
+                BindValue::Bool(true),
+                BindValue::OptInt32(Some(4)),
+                BindValue::OptInt32(None),
+                BindValue::OptString(Some("optional".to_string())),
+                BindValue::OptString(None),
+                BindValue::OptBytes(Some(vec![5, 6])),
+                BindValue::OptBytes(None),
+                BindValue::DateTime(now),
+            ],
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
+    async fn sqlite_top_domain_queries_return_global_and_owner_scoped_rows() {
+        let config = DatabaseConfig::sqlite(PathBuf::from(":memory:"));
+        let pool = DatabasePool::new(&config).await.unwrap();
+        pool.execute(
+            "CREATE TABLE scans (target_hostname TEXT, scan_timestamp TIMESTAMP, principal_id TEXT, tenant_id TEXT)",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        let latest = chrono::Utc::now();
+        for (hostname, principal, tenant, timestamp) in [
+            (
+                "owned.example",
+                "principal-1",
+                Some("tenant-1"),
+                latest - chrono::Duration::minutes(2),
+            ),
+            ("owned.example", "principal-1", Some("tenant-1"), latest),
+            ("public.example", "principal-2", None, latest),
+        ] {
+            pool.execute(
+                "INSERT INTO scans (target_hostname, scan_timestamp, principal_id, tenant_id) VALUES (?, ?, ?, ?)",
+                vec![
+                    BindValue::String(hostname.to_string()),
+                    BindValue::DateTime(timestamp),
+                    BindValue::String(principal.to_string()),
+                    BindValue::OptString(tenant.map(str::to_string)),
+                ],
+            )
+            .await
+            .unwrap();
+        }
+
+        let global = pool.get_top_domains(10).await.unwrap();
+        assert_eq!(global.len(), 2);
+        assert_eq!(global[0].0, "owned.example");
+        assert_eq!(global[0].1, 2);
+        assert_eq!(global[0].2.timestamp(), latest.timestamp());
+        let owned = pool
+            .get_top_domains_for_owner(10, "principal-1", Some("tenant-1"))
+            .await
+            .unwrap();
+        assert_eq!(owned.len(), 1);
+        assert_eq!(owned[0].0, "owned.example");
+        assert_eq!(owned[0].1, 2);
+        let tenantless = pool
+            .get_top_domains_for_owner(10, "principal-2", None)
+            .await
+            .unwrap();
+        assert_eq!(tenantless.len(), 1);
+        assert_eq!(tenantless[0].0, "public.example");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
+    async fn postgres_operations_report_unavailable_backend_errors() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::time::Duration;
+
+        let pg_pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(100))
+            .connect_lazy_with(
+                PgConnectOptions::new()
+                    .host("127.0.0.1")
+                    .port(1)
+                    .username("unavailable")
+                    .password("unavailable")
+                    .database("unavailable"),
+            );
+        let pool = DatabasePool::Postgres(pg_pool);
+
+        assert!(pool.health_check().await.is_err());
+        assert!(pool.get_top_domains(10).await.is_err());
+        assert!(
+            pool.get_top_domains_for_owner(10, "principal", Some("tenant"))
+                .await
+                .is_err()
+        );
+        assert!(
+            pool.execute_insert_returning(
+                "INSERT INTO items (name) VALUES ($1) RETURNING id",
+                vec![BindValue::String("value".to_string())],
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            pool.execute_insert_on_conflict_returning(
+                "INSERT INTO items (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id",
+                vec![BindValue::String("value".to_string())],
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            pool.execute(
+                "SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12",
+                vec![
+                    BindValue::Int64(1),
+                    BindValue::Int32(2),
+                    BindValue::Int16(3),
+                    BindValue::String("value".to_string()),
+                    BindValue::Bool(true),
+                    BindValue::OptInt32(Some(4)),
+                    BindValue::OptInt32(None),
+                    BindValue::OptString(Some("optional".to_string())),
+                    BindValue::OptString(None),
+                    BindValue::OptBytes(Some(vec![5, 6])),
+                    BindValue::OptBytes(None),
+                    BindValue::DateTime(chrono::Utc::now()),
+                ],
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            pool.fetch_optional_id("SELECT $1", vec![BindValue::Int64(1)])
+                .await
+                .is_err()
+        );
         pool.close().await;
     }
 
