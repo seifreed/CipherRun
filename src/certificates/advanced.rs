@@ -1985,6 +1985,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multiple_certificate_probe_deduplicates_successful_handshakes() {
+        use openssl::ssl::{SslAcceptor, SslMethod};
+
+        let rsa = Rsa::generate(2048).expect("test RSA key should generate");
+        let key = PKey::from_rsa(rsa).expect("RSA key should convert");
+        let mut name = X509NameBuilder::new().expect("X509 name builder should initialize");
+        name.append_entry_by_text("CN", "localhost")
+            .expect("common name should be valid");
+        let name = name.build();
+        let mut certificate = X509Builder::new().expect("X509 builder should initialize");
+        certificate
+            .set_version(2)
+            .expect("X509 version should be valid");
+        let serial = openssl::bn::BigNum::from_u32(1)
+            .expect("serial number should fit")
+            .to_asn1_integer()
+            .expect("serial number should convert");
+        certificate
+            .set_serial_number(&serial)
+            .expect("serial number should be set");
+        certificate
+            .set_subject_name(&name)
+            .expect("subject should be set");
+        certificate
+            .set_issuer_name(&name)
+            .expect("issuer should be set");
+        certificate
+            .set_pubkey(&key)
+            .expect("public key should be set");
+        certificate
+            .set_not_before(&Asn1Time::days_from_now(0).expect("start time should be valid"))
+            .expect("start time should be set");
+        certificate
+            .set_not_after(&Asn1Time::days_from_now(1).expect("end time should be valid"))
+            .expect("end time should be set");
+        certificate
+            .sign(&key, MessageDigest::sha256())
+            .expect("certificate should be signed");
+
+        let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+            .expect("TLS acceptor should initialize");
+        acceptor
+            .set_private_key(&key)
+            .expect("server private key should be set");
+        acceptor
+            .set_certificate(&certificate.build())
+            .expect("server certificate should be set");
+        acceptor
+            .check_private_key()
+            .expect("server key should match certificate");
+        let acceptor = std::sync::Arc::new(acceptor.build());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::task::spawn_blocking(move || {
+            for _ in 0..5 {
+                let (stream, _) = listener.accept().expect("client should connect");
+                acceptor
+                    .accept(stream)
+                    .expect("client handshake should succeed");
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = CertificateAdvancedTester::new(target)
+            .test_multiple_certificates()
+            .await
+            .expect("successful handshakes should produce a certificate analysis");
+
+        server.await.expect("test server should finish");
+        assert_eq!(result.certificates_count, 1);
+        assert!(!result.virtual_hosts_detected);
+        assert!(!result.sni_required);
+    }
+
+    #[tokio::test]
     async fn test_cipher_order_no_successful_handshakes_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
