@@ -52,3 +52,66 @@ pub fn inventory_service_from_state(
 
     Ok(CertificateInventoryService::new(db_pool))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::CertificateInventorySort;
+
+    struct FailingInventory;
+
+    #[async_trait::async_trait]
+    impl CertificateInventoryPort for FailingInventory {
+        async fn list_certificates(
+            &self,
+            _query: &CertificateInventoryQuery,
+        ) -> crate::Result<CertificateInventoryPage> {
+            Err(crate::TlsError::DatabaseError("private detail".into()))
+        }
+
+        async fn get_certificate(
+            &self,
+            _fingerprint: &str,
+        ) -> crate::Result<Option<CertificateInventoryRecord>> {
+            Err(crate::TlsError::DatabaseError("private detail".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn inventory_errors_are_mapped_to_safe_api_errors() {
+        let query = CertificateInventoryQuery {
+            limit: 10,
+            offset: 0,
+            sort: CertificateInventorySort::ExpiryAsc,
+            hostname: None,
+            expiring_within_days: None,
+            principal_id: None,
+            tenant_id: None,
+        };
+
+        let results = [
+            load_inventory_page(&FailingInventory, &query)
+                .await
+                .map(|_| ()),
+            load_inventory_record(&FailingInventory, "fingerprint")
+                .await
+                .map(|_| ()),
+            load_inventory_record_for_owner(
+                &FailingInventory,
+                "fingerprint",
+                Some("principal"),
+                Some("tenant"),
+            )
+            .await
+            .map(|_| ()),
+        ];
+
+        for result in results {
+            let Err(ApiError::Internal(message)) = result else {
+                panic!("expected a sanitized internal error");
+            };
+            assert_eq!(message, "internal operation failed");
+            assert!(!message.contains("private detail"));
+        }
+    }
+}
