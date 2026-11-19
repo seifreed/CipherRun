@@ -340,7 +340,17 @@ mod tests {
 
     #[test]
     fn test_parse_delay_invalid() {
-        for input in ["invalid", "abc ms", "", "NaNs", "infs", "-1", "-2s"] {
+        for input in [
+            "invalid",
+            "abc ms",
+            "",
+            "NaNs",
+            "infs",
+            "1.2.3s",
+            "1e100s",
+            "-1",
+            "-2s",
+        ] {
             assert!(parse_delay(input).is_err(), "{input}");
         }
     }
