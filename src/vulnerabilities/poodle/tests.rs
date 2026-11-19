@@ -107,12 +107,58 @@ fn test_ssl3_variant_result_inconclusive() {
 }
 
 #[test]
+fn test_ssl3_and_tls_variant_results_cover_each_outcome() {
+    let supported = PoodleTester::ssl3_variant_result(Some(true));
+    assert!(supported.vulnerable);
+    assert!(!supported.inconclusive);
+
+    let unsupported = PoodleTester::ssl3_variant_result(Some(false));
+    assert!(!unsupported.vulnerable);
+    assert!(!unsupported.inconclusive);
+
+    for (outcome, vulnerable, inconclusive) in [
+        (Some(true), true, false),
+        (Some(false), false, false),
+        (None, false, true),
+    ] {
+        let result = PoodleTester::tls_variant_result(outcome);
+        assert_eq!(result.vulnerable, vulnerable);
+        assert_eq!(result.inconclusive, inconclusive);
+    }
+}
+
+#[test]
 fn test_cbc_probe_inconclusive_result() {
     let result = PoodleTester::cbc_inconclusive_result(PoodleVariant::GoldenDoodle);
 
     assert!(!result.vulnerable);
     assert!(result.inconclusive);
     assert!(result.details.contains("inconclusive"));
+}
+
+#[test]
+fn test_cbc_probe_not_supported_result() {
+    let result = PoodleTester::cbc_not_supported_result(PoodleVariant::GoldenDoodle);
+
+    assert!(!result.vulnerable);
+    assert!(!result.inconclusive);
+    assert_eq!(result.details, "CBC ciphers not supported - not vulnerable");
+}
+
+#[tokio::test]
+async fn test_openssl_zero_length_early_outcomes_do_not_probe_the_network() {
+    let target = example_com_loopback_target(443);
+    let tester = PoodleTester::new(&target);
+
+    let unsupported = tester.test_openssl_0length(Some(false)).await.unwrap();
+    assert_eq!(unsupported.variant, PoodleVariant::OpenSsl0Length);
+    assert!(!unsupported.inconclusive);
+    assert!(!unsupported.vulnerable);
+
+    let unknown = tester.test_openssl_0length(None).await.unwrap();
+    assert_eq!(unknown.variant, PoodleVariant::OpenSsl0Length);
+    assert!(unknown.inconclusive);
+    assert!(!unknown.vulnerable);
 }
 
 #[test]
