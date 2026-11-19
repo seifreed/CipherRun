@@ -165,10 +165,40 @@ mod tests {
     }
 
     #[test]
+    fn hashes_ten_well_formed_probe_responses() {
+        let raw = vec!["c02f|0303|h2|ext"; JARM_PROBE_COUNT].join(",");
+        let hash = raw_hash_to_fuzzy_hash(&raw);
+
+        assert_eq!(&hash[..30], "29d".repeat(JARM_PROBE_COUNT));
+        assert_eq!(hash.len(), 62);
+        assert_eq!(raw_hash_to_fuzzy_hash(&raw), hash);
+    }
+
+    #[test]
+    fn rejects_unexpected_counts_and_malformed_probe_fields() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            assert_eq!(raw_hash_to_fuzzy_hash("not-ten-probes"), ZERO_HASH);
+        });
+
+        let mut probes = vec!["c02f|0303|h2|ext"; JARM_PROBE_COUNT];
+        probes[4] = "c02f|0303|h2|ext|extra";
+        assert_eq!(raw_hash_to_fuzzy_hash(&probes.join(",")), ZERO_HASH);
+
+        probes[4] = "c02f|0303|h2";
+        assert_eq!(raw_hash_to_fuzzy_hash(&probes.join(",")), ZERO_HASH);
+    }
+
+    #[test]
     fn cipher_extraction_uses_jarm_index_encoding() {
         assert_eq!(extract_cipher_bytes("c02f"), "29");
         assert_eq!(extract_cipher_bytes("1301"), "41");
         assert_eq!(extract_cipher_bytes(""), "00");
+        assert_eq!(extract_cipher_bytes("01"), "00");
+        assert_eq!(extract_cipher_bytes("not-hex"), "00");
         assert_eq!(extract_cipher_bytes("ffff"), "46");
     }
 
@@ -178,5 +208,6 @@ mod tests {
         assert_eq!(extract_version_byte("0304"), "e");
         assert_eq!(extract_version_byte("0301"), "b");
         assert_eq!(extract_version_byte(""), "0");
+        assert_eq!(extract_version_byte("03zz"), "0");
     }
 }
