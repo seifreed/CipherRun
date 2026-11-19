@@ -135,10 +135,7 @@ impl<'a> CrimeTester<'a> {
         .await
         {
             Ok(Ok(n)) if n > 11 => {
-                let Some(response) = buffer.get(..n) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                Ok(server_hello::tls_compression_status(response))
+                Ok(server_hello::tls_compression_status(&buffer[..n]))
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
@@ -186,10 +183,7 @@ impl<'a> CrimeTester<'a> {
         .await
         {
             Ok(Ok(n)) if n > 43 => {
-                let Some(data) = buffer.get(..n) else {
-                    return Ok(CompressionProbeStatus::Inconclusive);
-                };
-                Ok(server_hello::spdy_compression_status(data))
+                Ok(server_hello::spdy_compression_status(&buffer[..n]))
             }
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
@@ -240,6 +234,19 @@ mod tests {
             let mut buf = vec![0u8; 4096];
             let _ = socket.read(&mut buf).await.unwrap();
             socket.write_all(&response).await.unwrap();
+        });
+
+        (port, server)
+    }
+
+    async fn spawn_closed_tls_server() -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
         });
 
         (port, server)
@@ -370,6 +377,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_spdy_probe_returns_inconclusive_when_server_closes_without_response() {
+        let (port, server) = spawn_closed_tls_server().await;
+        let target = localhost_target(port);
+
+        let status = crime_tester(&target)
+            .test_spdy_compression()
+            .await
+            .expect("probe should return a status");
+
+        assert_eq!(status, CompressionProbeStatus::Inconclusive);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_spdy_probe_rejects_trailing_extension_after_spdy() {
         let mut response = server_hello(0x00);
         let ext_len_pos = response.len() - 2;
@@ -465,6 +486,20 @@ mod tests {
             .expect("probe should return a status");
         assert_eq!(status, CompressionProbeStatus::Inconclusive);
 
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tls_compression_returns_inconclusive_when_server_closes_without_response() {
+        let (port, server) = spawn_closed_tls_server().await;
+        let target = localhost_target(port);
+
+        let status = crime_tester(&target)
+            .test_tls_compression()
+            .await
+            .expect("probe should return a status");
+
+        assert_eq!(status, CompressionProbeStatus::Inconclusive);
         server.await.unwrap();
     }
 
