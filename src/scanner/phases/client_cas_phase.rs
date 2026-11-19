@@ -92,6 +92,7 @@ impl ScanPhase for ClientCasPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_client_cas_phase_should_run() {
@@ -116,5 +117,51 @@ mod tests {
     fn test_client_cas_phase_name() {
         let phase = ClientCasPhase::new();
         assert_eq!(phase.name(), "Extracting Client CAs List");
+    }
+
+    #[test]
+    fn test_client_cas_phase_default() {
+        let phase = ClientCasPhase::default();
+        assert_eq!(phase.name(), "Extracting Client CAs List");
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_client_ca_results() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            let mut request = [0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request)
+                .await
+                .expect("read client hello");
+        });
+
+        let mut args = ScanRequest::default();
+        args.scan.ciphers.show_client_cas = true;
+        let mut context = test_scan_context(args);
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        ClientCasPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("closed TLS handshake should yield an inconclusive result");
+        server.await.expect("server task should finish");
+
+        assert!(
+            context
+                .results
+                .advanced
+                .as_ref()
+                .and_then(|results| results.client_cas.as_ref())
+                .is_some()
+        );
     }
 }
