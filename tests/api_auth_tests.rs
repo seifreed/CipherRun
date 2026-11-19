@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use chrono::{Duration, Utc};
 
 mod common;
 
@@ -251,4 +252,118 @@ async fn test_admin_can_create_rotate_and_revoke_credential() {
     let (revoked_status, _) =
         common::api::send_get_json(&app, "/api/v1/stats", Some(rotated_secret)).await;
     assert_eq!(revoked_status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_credential_routes_validate_input_and_expiration() {
+    let app = common::api::test_api_router();
+    let valid = serde_json::json!({
+        "key_id": "runtime-validation-key",
+        "principal_id": "runtime-validation-principal",
+        "tenant_id": "tenant-a",
+        "permission": "User"
+    });
+
+    for payload in [
+        serde_json::json!({
+            "key_id": "",
+            "principal_id": "principal",
+            "permission": "User"
+        }),
+        serde_json::json!({
+            "key_id": "key",
+            "principal_id": "principal with whitespace",
+            "permission": "User"
+        }),
+        serde_json::json!({
+            "key_id": "key",
+            "principal_id": "principal",
+            "tenant_id": "tenant with whitespace",
+            "permission": "User"
+        }),
+        serde_json::json!({
+            "key_id": "key",
+            "principal_id": "principal",
+            "permission": "User",
+            "expires_at": (Utc::now() - Duration::seconds(1)).to_rfc3339()
+        }),
+    ] {
+        let (status, _) = common::api::send_json(
+            &app,
+            "POST",
+            "/api/v1/credentials",
+            Some("test-admin-key"),
+            Some(payload),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    let (created_status, created) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials",
+        Some("test-admin-key"),
+        Some(valid.clone()),
+    )
+    .await;
+    assert_eq!(created_status, StatusCode::CREATED);
+
+    let (duplicate_status, _) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials",
+        Some("test-admin-key"),
+        Some(valid),
+    )
+    .await;
+    assert_eq!(duplicate_status, StatusCode::CONFLICT);
+
+    let (list_status, credentials) =
+        common::api::send_get_json(&app, "/api/v1/credentials", Some("test-admin-key")).await;
+    assert_eq!(list_status, StatusCode::OK);
+    let created_credential = credentials
+        .as_array()
+        .expect("credentials response should be a list")
+        .iter()
+        .find(|credential| credential["key_id"] == "runtime-validation-key")
+        .expect("new credential should be listed");
+    assert!(created_credential.get("secret_hash").is_none());
+
+    let expired = serde_json::json!({
+        "expires_at": (Utc::now() - Duration::seconds(1)).to_rfc3339()
+    });
+    let (expired_rotation_status, _) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials/runtime-validation-key/rotate",
+        Some("test-admin-key"),
+        Some(expired),
+    )
+    .await;
+    assert_eq!(expired_rotation_status, StatusCode::BAD_REQUEST);
+
+    let valid_expiration = serde_json::json!({
+        "expires_at": (Utc::now() + Duration::hours(1)).to_rfc3339()
+    });
+    let (rotation_status, rotated) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials/runtime-validation-key/rotate",
+        Some("test-admin-key"),
+        Some(valid_expiration),
+    )
+    .await;
+    assert_eq!(rotation_status, StatusCode::OK);
+    assert!(rotated["secret"].as_str().is_some());
+
+    let (unknown_revoke_status, _) = common::api::send_json(
+        &app,
+        "POST",
+        "/api/v1/credentials/unknown-key/revoke",
+        Some("test-admin-key"),
+        None,
+    )
+    .await;
+    assert_eq!(unknown_revoke_status, StatusCode::BAD_REQUEST);
 }
