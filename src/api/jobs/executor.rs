@@ -1623,6 +1623,42 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn webhook_retries_transport_failures_and_reports_the_retry() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_completed(ScanResults::default());
+
+        let result = ScanExecutor::send_webhook_attempts(
+            &reqwest::Client::new(),
+            &format!("http://{address}/hook"),
+            &job,
+            &[b's'; 32],
+            2,
+            Duration::from_millis(1),
+        )
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        assert!(result.is_err());
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "scan_job.webhook.retry");
+        assert_eq!(event["fields"]["error_type"], "transport");
+        assert_eq!(event["fields"]["attempt"], 1);
+        assert!(!output.contains("/hook"));
+    }
+
     #[test]
     fn webhook_failure_event_has_duration_and_redacts_error_details() {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
