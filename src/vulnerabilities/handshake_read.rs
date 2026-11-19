@@ -102,6 +102,9 @@ pub(crate) async fn read_until_server_hello_done(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     /// Build a TLS handshake record (content type 0x16) containing a single
     /// handshake message of `handshake_type` with a given body.
@@ -121,6 +124,30 @@ mod tests {
         record.extend_from_slice(&(msg.len() as u16).to_be_bytes());
         record.extend_from_slice(&msg);
         record
+    }
+
+    async fn stream_with_response(bytes: Vec<u8>) -> (TcpStream, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have an address");
+        let client = TcpStream::connect(address)
+            .await
+            .expect("client should connect to loopback");
+        let (mut server, _) = listener
+            .accept()
+            .await
+            .expect("loopback connection should be accepted");
+        let writer = tokio::spawn(async move {
+            server
+                .write_all(&bytes)
+                .await
+                .expect("response bytes should be written");
+        });
+
+        (client, writer)
     }
 
     #[test]
@@ -168,5 +195,54 @@ mod tests {
     fn returns_false_when_only_partial_records_present() {
         let incomplete = handshake_record(0x02, &[0u8; 38]);
         assert!(!has_server_hello_done(&incomplete));
+    }
+
+    #[tokio::test]
+    async fn reads_until_server_hello_done_and_stops_at_full_buffer() {
+        let response = handshake_record(0x0e, &[]);
+        let (mut client, writer) = stream_with_response(response.clone()).await;
+        let mut buffer = [0u8; 64];
+
+        let bytes_read =
+            read_until_server_hello_done(&mut client, &mut buffer, Duration::from_secs(1)).await;
+        writer.await.expect("response writer should finish");
+
+        assert_eq!(bytes_read, response.len());
+        assert!(has_server_hello_done(&buffer[..bytes_read]));
+
+        let incomplete_header = [0x16, 0x03, 0x03, 0x00, 0x64];
+        let (mut client, writer) = stream_with_response(incomplete_header.to_vec()).await;
+        let mut small_buffer = [0u8; 5];
+        let bytes_read =
+            read_until_server_hello_done(&mut client, &mut small_buffer, Duration::from_secs(1))
+                .await;
+        writer.await.expect("response writer should finish");
+        assert_eq!(bytes_read, small_buffer.len());
+    }
+
+    #[tokio::test]
+    async fn returns_partial_bytes_on_peer_close_and_zero_on_timeout() {
+        let (mut client, writer) = stream_with_response(vec![0x16, 0x03]).await;
+        let mut buffer = [0u8; 64];
+        let bytes_read =
+            read_until_server_hello_done(&mut client, &mut buffer, Duration::from_secs(1)).await;
+        writer.await.expect("response writer should finish");
+        assert_eq!(bytes_read, 2);
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let address = listener.local_addr().expect("listener address");
+        let mut client = TcpStream::connect(address)
+            .await
+            .expect("client should connect to loopback");
+        let server = tokio::spawn(async move {
+            let (_connection, _) = listener.accept().await.expect("connection should arrive");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        });
+        let bytes_read =
+            read_until_server_hello_done(&mut client, &mut buffer, Duration::from_millis(1)).await;
+        server.await.expect("loopback server should finish");
+        assert_eq!(bytes_read, 0);
     }
 }
