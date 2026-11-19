@@ -1035,4 +1035,37 @@ mod tests {
             .expect_err("malformed persisted jobs should be diagnosed");
         assert!(matches!(error, crate::TlsError::ParseError { .. }));
     }
+
+    #[tokio::test]
+    async fn sqlite_recovery_skips_malformed_queued_jobs_without_failing_queue() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool.clone(), 10, None);
+        let id = queue
+            .enqueue(ScanJob::new(
+                "corrupt.example:443".to_string(),
+                Default::default(),
+                None,
+            ))
+            .await
+            .unwrap();
+        if let DatabasePool::Sqlite(pool) = pool.as_ref() {
+            sqlx::query("UPDATE cipherrun_jobs SET job_json = 'not-json' WHERE id = ?")
+                .bind(&id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(queue.queue_length().await.unwrap(), 1);
+        let error = queue
+            .get_job(&id)
+            .await
+            .expect_err("the damaged job should still report its parse error on direct access");
+        assert!(matches!(error, crate::TlsError::ParseError { .. }));
+    }
 }
