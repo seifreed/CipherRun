@@ -56,7 +56,7 @@ pub fn inventory_service_from_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::CertificateInventorySort;
+    use crate::{api::config::ApiConfig, application::CertificateInventorySort};
 
     struct FailingInventory;
 
@@ -107,11 +107,33 @@ mod tests {
         ];
 
         for result in results {
-            let Err(ApiError::Internal(message)) = result else {
-                panic!("expected a sanitized internal error");
+            let message = match result {
+                Err(ApiError::Internal(message)) => message,
+                _ => String::new(),
             };
             assert_eq!(message, "internal operation failed");
             assert!(!message.contains("private detail"));
         }
+    }
+
+    #[test]
+    fn inventory_service_requires_database_configuration() {
+        let state = AppState::new(ApiConfig::default()).expect("state should initialize");
+
+        assert!(matches!(
+            inventory_service_from_state(&state),
+            Err(ApiError::ServiceUnavailable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn inventory_service_uses_configured_database() {
+        let mut state = AppState::new(ApiConfig::default()).expect("state should initialize");
+        let pool = sqlx::SqlitePool::connect(":memory:")
+            .await
+            .expect("in-memory database should connect");
+        state.db_pool = Some(std::sync::Arc::new(crate::db::DatabasePool::Sqlite(pool)));
+
+        assert!(inventory_service_from_state(&state).is_ok());
     }
 }
