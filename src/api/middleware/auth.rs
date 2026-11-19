@@ -462,14 +462,25 @@ mod tests {
         let app = Router::new()
             .route("/protected", get(|| async { StatusCode::OK }))
             .route("/swagger", get(|| async { StatusCode::OK }))
+            .route("/swagger/", get(|| async { StatusCode::OK }))
+            .route("/api/docs", get(|| async { StatusCode::OK }))
+            .route("/api/docs/openapi.json", get(|| async { StatusCode::OK }))
             .route("/api/v1/health", get(|| async { StatusCode::OK }))
+            .route("/health", get(|| async { StatusCode::OK }))
             .route("/api/v1/scan/{id}/stream", get(|| async { StatusCode::OK }))
             .layer(axum_middleware::from_fn_with_state(
                 credentials.clone(),
                 authenticate,
             ));
 
-        for uri in ["/swagger", "/api/v1/health"] {
+        for uri in [
+            "/swagger",
+            "/swagger/",
+            "/api/docs",
+            "/api/docs/openapi.json",
+            "/health",
+            "/api/v1/health",
+        ] {
             assert_eq!(
                 send_auth_request(
                     &app,
@@ -479,6 +490,12 @@ mod tests {
                 StatusCode::OK
             );
         }
+
+        let ticket_only = HttpRequest::builder()
+            .uri("/api/v1/scan/scan-id/stream?ticket=one-use")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send_auth_request(&app, ticket_only).await, StatusCode::OK);
 
         let query_api_key = HttpRequest::builder()
             .uri("/protected?api_key=valid-key")
