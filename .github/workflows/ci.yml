@@ -193,7 +193,8 @@ jobs:
         env:
           OTEL_SERVICE_NAME: cipherrun-coverage
           OTEL_RESOURCE_ATTRIBUTES: service.name=cipherrun-sdk-test
-        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 80 --lcov --output-path lcov.info
+          RUST_TEST_THREADS: "1"
+        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 85 --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest'
