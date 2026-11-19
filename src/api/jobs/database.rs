@@ -915,4 +915,34 @@ mod tests {
         let persisted = queue.get_job(&second_id).await.unwrap().unwrap();
         assert_eq!(persisted.tenant_id.as_deref(), Some("tenant-b"));
     }
+
+    #[tokio::test]
+    async fn sqlite_database_queue_rejects_jobs_when_at_capacity() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool, 1, None);
+        queue
+            .enqueue(ScanJob::new(
+                "first.example:443".to_string(),
+                Default::default(),
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let error = queue
+            .enqueue(ScanJob::new(
+                "second.example:443".to_string(),
+                Default::default(),
+                None,
+            ))
+            .await
+            .expect_err("the configured capacity should be enforced");
+
+        assert!(matches!(error, crate::TlsError::Other(message) if message == "Job queue is full"));
+    }
 }
