@@ -104,6 +104,31 @@ fn test_aggregate_grade_conservative_prefers_certificate_over_low_numeric_score(
 }
 
 #[test]
+fn test_aggregate_grade_without_a_rating_uses_worst_case() {
+    let rated_ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let unrated_ip: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+    let mut results = HashMap::new();
+    results.insert(
+        rated_ip,
+        successful_scan(
+            rated_ip,
+            make_scan_result(Vec::new(), HashMap::new(), "fp", Grade::A, 100, Vec::new()),
+            0,
+        ),
+    );
+    results.insert(
+        unrated_ip,
+        successful_scan(unrated_ip, ScanResults::default(), 0),
+    );
+
+    let aggregator = ConservativeAggregator::new(results, Vec::new());
+    assert_eq!(
+        aggregator.aggregate_grade_conservative(),
+        ("T".to_string(), 0)
+    );
+}
+
+#[test]
 fn test_certificate_consistency_is_false_when_some_successful_backends_lack_certificates() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();

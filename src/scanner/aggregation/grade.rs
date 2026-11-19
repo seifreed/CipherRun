@@ -75,3 +75,29 @@ impl ConservativeAggregator {
             .unwrap_or_else(|| ("F".to_string(), 0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::grade_rank;
+    use crate::rating::grader::Grade;
+
+    #[test]
+    fn grade_rank_orders_every_grade_from_worst_to_best() {
+        let grades = [
+            Grade::T,
+            Grade::Unverified,
+            Grade::M,
+            Grade::F,
+            Grade::E,
+            Grade::D,
+            Grade::C,
+            Grade::B,
+            Grade::AMinus,
+            Grade::A,
+            Grade::APlus,
+        ];
+
+        let ranks: Vec<_> = grades.into_iter().map(grade_rank).collect();
+        assert_eq!(ranks, [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+}
