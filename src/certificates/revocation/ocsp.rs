@@ -451,6 +451,31 @@ mod tests {
     }
 
     #[test]
+    fn test_build_ocsp_request_requires_issuer() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+
+        let err = checker
+            .build_ocsp_request(&cert, None)
+            .expect_err("OCSP request requires the issuer certificate");
+
+        assert!(format!("{err}").contains("Issuer certificate required"));
+    }
+
+    #[test]
+    fn test_build_ocsp_request_accepts_valid_certificates() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+
+        let request = checker
+            .build_ocsp_request(&cert, Some(&cert))
+            .expect("valid certificate and issuer should create an OCSP request");
+
+        assert!(!request.is_empty());
+        assert!(OcspRequest::from_der(&request).is_ok());
+    }
+
+    #[test]
     fn test_extract_ocsp_url_malformed_aia_returns_error() {
         let checker = RevocationChecker::new(false);
         let cert = cert_with_raw_extension_der("1.3.6.1.5.5.7.1.1", b"\x05\x00");
