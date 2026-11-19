@@ -87,3 +87,81 @@ impl ErrorType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_status_constructors_preserve_success_and_failure_context() {
+        let success = ProbeStatus::success(Duration::from_millis(125));
+        assert!(success.success);
+        assert_eq!(success.error, None);
+        assert_eq!(success.error_type, None);
+        assert_eq!(success.connection_time_ms, Some(125));
+        assert_eq!(success.attempts, 1);
+
+        let failure = ProbeStatus::failure_string(
+            "connection refused".to_string(),
+            ErrorType::ConnectionRefused,
+        );
+        assert!(!failure.success);
+        assert_eq!(failure.error.as_deref(), Some("connection refused"));
+        assert_eq!(failure.error_type, Some(ErrorType::ConnectionRefused));
+        assert_eq!(failure.connection_time_ms, None);
+        assert_eq!(failure.attempts, 1);
+
+        let partial = ProbeStatus::partial_success(
+            Duration::from_millis(250),
+            "certificate chain incomplete".to_string(),
+        );
+        assert!(partial.success);
+        assert_eq!(
+            partial.error.as_deref(),
+            Some("certificate chain incomplete")
+        );
+        assert_eq!(partial.error_type, Some(ErrorType::Warning));
+        assert_eq!(partial.connection_time_ms, Some(250));
+        assert_eq!(partial.attempts, 1);
+    }
+
+    #[test]
+    fn probe_status_elapsed_time_saturates_at_u64_max() {
+        assert_eq!(
+            ProbeStatus::success(Duration::MAX).connection_time_ms,
+            Some(u64::MAX)
+        );
+        assert_eq!(
+            ProbeStatus::partial_success(Duration::MAX, "warning".to_string()).connection_time_ms,
+            Some(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn default_probe_status_means_not_attempted() {
+        let status = ProbeStatus::default();
+        assert!(!status.success);
+        assert_eq!(status.error.as_deref(), Some("Not attempted"));
+        assert_eq!(status.error_type, Some(ErrorType::NotAttempted));
+        assert_eq!(status.connection_time_ms, None);
+        assert_eq!(status.attempts, 0);
+    }
+
+    #[test]
+    fn error_type_descriptions_are_stable() {
+        for (error_type, expected) in [
+            (ErrorType::Timeout, "Connection timeout"),
+            (ErrorType::ConnectionRefused, "Connection refused"),
+            (ErrorType::DnsFailure, "DNS resolution failed"),
+            (ErrorType::TlsHandshakeFailed, "TLS handshake failed"),
+            (ErrorType::CertificateError, "Certificate error"),
+            (ErrorType::ProtocolNotSupported, "Protocol not supported"),
+            (ErrorType::NetworkError, "Temporary network error"),
+            (ErrorType::Warning, "Warning"),
+            (ErrorType::NotAttempted, "Not attempted"),
+            (ErrorType::Unknown, "Unknown error"),
+        ] {
+            assert_eq!(error_type.description(), expected);
+        }
+    }
+}
