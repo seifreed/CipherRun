@@ -3,7 +3,11 @@ use crate::error::TlsError;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use crate::rating::grader::Grade;
 use crate::rating::scoring::RatingResult;
-use crate::scanner::{RatingResults, ScanResults};
+use crate::scanner::{CertificateAnalysisResult, RatingResults, ScanResults};
+use crate::{
+    certificates::parser::{CertificateChain, CertificateInfo},
+    certificates::validator::ValidationResult,
+};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +38,27 @@ fn mx(priority: u16, hostname: &str) -> MxRecord {
     MxRecord {
         priority,
         hostname: hostname.to_string(),
+    }
+}
+
+fn certificate_result(certificate: Option<CertificateInfo>) -> CertificateAnalysisResult {
+    CertificateAnalysisResult {
+        chain: CertificateChain {
+            certificates: certificate.into_iter().collect(),
+            chain_length: 1,
+            chain_size_bytes: 0,
+        },
+        validation: ValidationResult {
+            valid: true,
+            issues: Vec::new(),
+            trust_chain_valid: true,
+            hostname_match: true,
+            not_expired: true,
+            signature_valid: true,
+            trusted_ca: None,
+            platform_trust: None,
+        },
+        revocation: None,
     }
 }
 
@@ -443,6 +468,44 @@ async fn test_query_mx_records_rejects_invalid_domain_before_lookup() {
 #[test]
 fn test_synthetic_backend_ip_does_not_collide_at_u16_boundary() {
     assert_ne!(synthetic_backend_ip(65_534), synthetic_backend_ip(65_535));
+}
+
+#[test]
+fn certificate_chain_signatures_use_fingerprint_der_and_metadata_fallbacks() {
+    let fingerprint = CertificateInfo {
+        fingerprint_sha256: Some("sha256:value".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        certificate_chain_signature(&certificate_result(Some(fingerprint))),
+        "fp:sha256:value"
+    );
+
+    let der = CertificateInfo {
+        der_bytes: vec![0xab, 0xcd],
+        ..Default::default()
+    };
+    assert_eq!(
+        certificate_chain_signature(&certificate_result(Some(der))),
+        "der:abcd"
+    );
+
+    let metadata = CertificateInfo {
+        subject: "subject".to_string(),
+        issuer: "issuer".to_string(),
+        serial_number: "serial".to_string(),
+        not_before: "start".to_string(),
+        not_after: "end".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(
+        certificate_chain_signature(&certificate_result(Some(metadata))),
+        "subject=subject;issuer=issuer;serial=serial;not_before=start;not_after=end"
+    );
+    assert_eq!(
+        certificate_chain_signature(&certificate_result(None)),
+        "<empty>"
+    );
 }
 
 #[test]
