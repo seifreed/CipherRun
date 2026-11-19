@@ -60,6 +60,15 @@ mod tests {
         }
     }
 
+    struct SuccessfulScanner;
+
+    #[async_trait]
+    impl ScannerPort for SuccessfulScanner {
+        async fn scan(&self, _request: ScanRequest) -> crate::Result<ScanResults> {
+            Ok(ScanResults::default())
+        }
+    }
+
     struct StubEvaluator;
 
     impl PolicyEvaluatorPort for StubEvaluator {
@@ -106,5 +115,73 @@ mod tests {
         .expect_err("failing scanner should propagate error");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn run_policy_check_succeeds_with_scanned_results() {
+        let (scan_results, policy_result) = run_policy_check(
+            &SuccessfulScanner,
+            &StubEvaluator,
+            &stub_policy(),
+            stub_request(),
+        )
+        .await
+        .expect("scan and policy evaluation should succeed");
+
+        assert_eq!(policy_result.policy_name, "test");
+        assert_eq!(scan_results.target, "");
+    }
+
+    #[tokio::test]
+    async fn run_policy_check_maps_unexpected_scanner_errors_to_internal() {
+        struct UnexpectedFailureScanner;
+
+        #[async_trait]
+        impl ScannerPort for UnexpectedFailureScanner {
+            async fn scan(&self, _request: ScanRequest) -> crate::Result<ScanResults> {
+                Err(crate::TlsError::DatabaseError("private detail".to_string()))
+            }
+        }
+
+        let error = run_policy_check(
+            &UnexpectedFailureScanner,
+            &StubEvaluator,
+            &stub_policy(),
+            stub_request(),
+        )
+        .await
+        .expect_err("unexpected scanner errors should fail the request");
+
+        assert!(
+            matches!(error, ApiError::Internal(message) if message == "internal operation failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_policy_check_maps_evaluator_errors_to_internal() {
+        struct FailingEvaluator;
+
+        impl PolicyEvaluatorPort for FailingEvaluator {
+            fn evaluate(
+                &self,
+                _policy: &Policy,
+                _assessment: &ScanAssessment,
+            ) -> crate::Result<PolicyResult> {
+                Err(crate::TlsError::DatabaseError("private detail".to_string()))
+            }
+        }
+
+        let error = run_policy_check(
+            &SuccessfulScanner,
+            &FailingEvaluator,
+            &stub_policy(),
+            stub_request(),
+        )
+        .await
+        .expect_err("evaluator errors should fail the request");
+
+        assert!(
+            matches!(error, ApiError::Internal(message) if message == "internal operation failed")
+        );
     }
 }
