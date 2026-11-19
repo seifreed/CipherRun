@@ -160,6 +160,49 @@ impl ScanPhase for HttpHeadersPhase {
 mod tests {
     use super::*;
     use crate::scanner::phases::test_scan_context;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
+
+    async fn spawn_https_server() -> (u16, tokio::task::JoinHandle<()>) {
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should have a port")
+            .port();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("test certificate should generate");
+        let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
+        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert_der],
+                rustls_pki_types::PrivateKeyDer::Pkcs8(key_der),
+            )
+            .expect("test certificate should configure");
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("probe should connect");
+            let mut stream = acceptor
+                .accept(stream)
+                .await
+                .expect("TLS handshake should succeed");
+            let mut request = [0; 4096];
+            let _ = stream
+                .read(&mut request)
+                .await
+                .expect("request should arrive");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nServer: phase-test\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .expect("response should be sent");
+        });
+        (port, handle)
+    }
 
     #[test]
     fn test_http_headers_phase_should_run() {
@@ -202,6 +245,41 @@ mod tests {
     fn test_http_headers_phase_name() {
         let phase = HttpHeadersPhase::new();
         assert_eq!(phase.name(), "Analyzing HTTP Security Headers");
+    }
+
+    #[test]
+    fn test_http_headers_phase_default() {
+        assert_eq!(
+            HttpHeadersPhase::default().name(),
+            "Analyzing HTTP Security Headers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_header_results() {
+        let (port, server) = spawn_https_server().await;
+        let mut context = test_scan_context(ScanRequest::default());
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        HttpHeadersPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("local HTTPS header analysis should succeed");
+        server.await.expect("HTTPS server task should finish");
+
+        assert!(
+            context
+                .results
+                .http
+                .as_ref()
+                .and_then(|http| http.http_headers.as_ref())
+                .is_some()
+        );
     }
 
     #[test]
