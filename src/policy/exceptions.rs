@@ -116,12 +116,11 @@ impl ExceptionMatcher {
             }
 
             // Check if target matches
-            if let Some(ref domain_pattern) = exception.domain {
-                if self.matches_domain(target, domain_pattern) {
-                    result.push(exception);
-                }
-            } else {
-                // No domain filter means it applies to all targets
+            if exception
+                .domain
+                .as_deref()
+                .is_none_or(|domain_pattern| self.matches_domain(target, domain_pattern))
+            {
                 result.push(exception);
             }
         }
@@ -411,6 +410,14 @@ mod tests {
                 domain: Some("example.com".to_string()),
                 rules: vec!["protocols.required".to_string()],
                 reason: "Scoped".to_string(),
+                expires: None,
+                approved_by: "Admin".to_string(),
+                ticket: None,
+            },
+            PolicyException {
+                domain: Some("other.example".to_string()),
+                rules: vec!["protocols.required".to_string()],
+                reason: "Unmatched".to_string(),
                 expires: None,
                 approved_by: "Admin".to_string(),
                 ticket: None,
