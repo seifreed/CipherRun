@@ -158,6 +158,11 @@ mod tests {
         assert_eq!(negotiator.protocol(), StarttlsProtocol::NNTP);
     }
 
+    #[test]
+    fn default_nntp_negotiator_uses_standard_protocol() {
+        assert_eq!(NntpNegotiator::default().protocol(), StarttlsProtocol::NNTP);
+    }
+
     #[tokio::test]
     async fn test_nntp_read_response_parse_error() {
         let err = read_nntp_status(b"abc\r\n").await.unwrap_err();
