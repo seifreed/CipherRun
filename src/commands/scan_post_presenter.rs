@@ -313,6 +313,23 @@ mod tests {
             CommandExit::POLICY_FAILURE
         );
 
+        let passing_policy = policy_result(PolicyOverallResult::Warning);
+        let policy_view = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: Some(&passing_policy),
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        assert_eq!(
+            presenter
+                .render(&ScanPostView {
+                    post_processing: &policy_view,
+                })
+                .unwrap()
+                .code(),
+            0
+        );
+
         let mut invalid_args = Args::default();
         invalid_args.compliance.format = "xml".to_string();
         let invalid_presenter = ScanPostPresenter::new(&invalid_args);
