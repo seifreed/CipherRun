@@ -82,6 +82,22 @@ mod tests {
     }
 
     #[test]
+    fn test_extension_new_additional_known_types() {
+        for (extension_type, expected_name) in [
+            (0x0001, "max_fragment_length"),
+            (0x0012, "signed_certificate_timestamp"),
+            (0x0015, "padding"),
+            (0x0018, "compress_certificate"),
+            (0x001b, "cert_compression"),
+        ] {
+            assert_eq!(
+                Extension::new(extension_type, Vec::new()).name,
+                expected_name
+            );
+        }
+    }
+
+    #[test]
     fn test_protocol_all_excludes_quic() {
         let all = Protocol::all();
         assert!(all.contains(&Protocol::TLS12));
