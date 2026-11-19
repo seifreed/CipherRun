@@ -98,6 +98,7 @@ impl ScanPhase for GroupsPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_groups_phase_should_run() {
@@ -151,5 +152,38 @@ mod tests {
     fn test_groups_phase_name() {
         let phase = GroupsPhase::new();
         assert_eq!(phase.name(), "Enumerating Key Exchange Groups");
+    }
+
+    #[test]
+    fn test_groups_phase_default() {
+        assert_eq!(
+            GroupsPhase::default().name(),
+            "Enumerating Key Exchange Groups"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_results_for_unreachable_target() {
+        let mut context = test_scan_context(ScanRequest::default());
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            9,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        GroupsPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("connection failures should produce an inconclusive result");
+
+        assert!(
+            context
+                .results
+                .advanced
+                .as_ref()
+                .and_then(|results| results.key_exchange_groups.as_ref())
+                .is_some()
+        );
     }
 }
