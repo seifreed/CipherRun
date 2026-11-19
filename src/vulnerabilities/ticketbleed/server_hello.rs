@@ -116,3 +116,66 @@ fn extract_session_id(response: &[u8]) -> Result<Option<&[u8]>> {
     }
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(kind: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![kind, 0x03, 0x03];
+        bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn handshake(kind: u8, body: &[u8]) -> Vec<u8> {
+        let length = body.len();
+        let mut bytes = vec![
+            kind,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
+        bytes.extend_from_slice(body);
+        record(CONTENT_TYPE_HANDSHAKE, &bytes)
+    }
+
+    fn parse_error(response: &[u8], expected: &str) {
+        let error = detect_memory_leak(response).expect_err("malformed ServerHello must fail");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+
+    #[test]
+    fn skips_non_handshake_records_and_other_handshake_messages() {
+        let mut response = record(0x15, &[]);
+        let server_hello = [handshake(0x0b, &[]), handshake(0x02, &[0; 35])].concat();
+        response.extend_from_slice(&server_hello);
+
+        assert!(!detect_memory_leak(&response).unwrap());
+        assert!(!detect_memory_leak(&record(0x15, &[])).unwrap());
+    }
+
+    #[test]
+    fn rejects_truncated_record_and_handshake_headers() {
+        assert!(!detect_memory_leak(&[0x15, 0x03]).unwrap());
+        parse_error(&[0x16, 0x03], "record header truncated");
+        parse_error(
+            &record(CONTENT_TYPE_HANDSHAKE, &[0x02, 0]),
+            "handshake header truncated",
+        );
+        parse_error(
+            &record(CONTENT_TYPE_HANDSHAKE, &[0x02, 0, 0, 10]),
+            "handshake length exceeds record",
+        );
+    }
+
+    #[test]
+    fn rejects_server_hello_without_session_id_length_or_complete_session_id() {
+        parse_error(&handshake(0x02, &[0; 34]), "session ID length truncated");
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.push(3);
+        body.extend_from_slice(&[1, 2]);
+        parse_error(&handshake(0x02, &body), "session ID exceeds handshake");
+    }
+}
