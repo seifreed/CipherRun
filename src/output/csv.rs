@@ -575,6 +575,86 @@ mod tests {
     }
 
     #[test]
+    fn test_csv_keeps_certificate_section_when_chain_has_no_leaf() {
+        use crate::certificates::parser::CertificateChain;
+        use crate::certificates::validator::ValidationResult;
+
+        let results = ScanResults {
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: Vec::new(),
+                    chain_length: 0,
+                    chain_size_bytes: 0,
+                },
+                validation: ValidationResult {
+                    valid: false,
+                    issues: Vec::new(),
+                    trust_chain_valid: false,
+                    hostname_match: false,
+                    not_expired: false,
+                    signature_valid: false,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("empty chain should render");
+
+        assert!(csv.contains("=== CERTIFICATE ==="));
+        assert!(!csv.contains("CN=example.com"));
+    }
+
+    #[test]
+    fn test_csv_includes_populated_ocsp_stapling_details() {
+        use crate::certificates::parser::{CertificateChain, CertificateInfo};
+        use crate::certificates::revocation::{
+            OcspStaplingResult, RevocationMethod, RevocationResult, RevocationStatus,
+        };
+        use crate::certificates::validator::ValidationResult;
+
+        let results = ScanResults {
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![CertificateInfo::default()],
+                    chain_length: 1,
+                    chain_size_bytes: 0,
+                },
+                validation: ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: Some(RevocationResult {
+                    status: RevocationStatus::Good,
+                    method: RevocationMethod::OCSP,
+                    details: "checked".to_string(),
+                    ocsp_stapling: true,
+                    ocsp_stapling_details: Some(OcspStaplingResult {
+                        stapling_supported: false,
+                        stapled_response_present: true,
+                        stapled_response_valid: Some(false),
+                        details: "invalid stapled response".to_string(),
+                    }),
+                    must_staple: true,
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("stapling details should render");
+
+        assert!(csv.contains("true,true,false,true,false,invalid stapled response"));
+    }
+
+    #[test]
     fn test_csv_omits_certificate_section_when_absent() {
         let results = ScanResults {
             target: "example.com:443".to_string(),
@@ -611,6 +691,33 @@ mod tests {
         assert!(csv.contains("Cloudflare"));
         assert!(csv.contains("=== LOAD BALANCER INFO ==="));
         assert!(csv.contains("AWS ALB"));
+    }
+
+    #[test]
+    fn test_csv_marks_empty_detection_indicators_as_na() {
+        let results = ScanResults {
+            advanced: Some(AdvancedResults {
+                cdn_detection: Some(CdnDetection {
+                    is_cdn: false,
+                    cdn_provider: None,
+                    confidence: 0.0,
+                    indicators: Vec::new(),
+                }),
+                load_balancer_info: Some(LoadBalancerInfo {
+                    detected: false,
+                    lb_type: None,
+                    sticky_sessions: false,
+                    indicators: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("empty indicators should render");
+
+        assert!(csv.contains("false,N/A,0,N/A"));
+        assert!(csv.contains("false,N/A,false,N/A"));
     }
 
     #[test]
