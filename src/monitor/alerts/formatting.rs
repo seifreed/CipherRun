@@ -44,3 +44,31 @@ pub fn severity_emoji(severity: &ChangeSeverity) -> &'static str {
         ChangeSeverity::Info => ":white_check_mark:",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_html, severity_color, severity_emoji};
+    use crate::monitor::detector::ChangeSeverity;
+
+    #[test]
+    fn severity_formats_are_stable_for_every_level() {
+        let cases = [
+            (ChangeSeverity::Critical, "#dc3545", ":rotating_light:"),
+            (ChangeSeverity::High, "#fd7e14", ":warning:"),
+            (ChangeSeverity::Medium, "#ffc107", ":large_orange_diamond:"),
+            (ChangeSeverity::Low, "#0dcaf0", ":information_source:"),
+            (ChangeSeverity::Info, "#6c757d", ":white_check_mark:"),
+        ];
+
+        for (severity, color, emoji) in cases {
+            assert_eq!(severity_color(&severity), color);
+            assert_eq!(severity_emoji(&severity), emoji);
+        }
+    }
+
+    #[test]
+    fn escape_html_encodes_markup_without_changing_other_text() {
+        assert_eq!(escape_html("<&>\"' café"), "&lt;&amp;&gt;&quot;&#x27; café");
+        assert_eq!(escape_html("plain text"), "plain text");
+    }
+}
