@@ -945,4 +945,38 @@ mod tests {
 
         assert!(matches!(error, crate::TlsError::Other(message) if message == "Job queue is full"));
     }
+
+    #[tokio::test]
+    async fn sqlite_database_queue_reports_missing_and_malformed_jobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool.clone(), 10, None);
+
+        assert!(queue.get_job("missing").await.unwrap().is_none());
+        let id = queue
+            .enqueue(ScanJob::new(
+                "example.com:443".to_string(),
+                Default::default(),
+                None,
+            ))
+            .await
+            .unwrap();
+        if let DatabasePool::Sqlite(pool) = pool.as_ref() {
+            sqlx::query("UPDATE cipherrun_jobs SET job_json = 'not-json' WHERE id = ?")
+                .bind(&id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+
+        let error = queue
+            .get_job(&id)
+            .await
+            .expect_err("malformed persisted jobs should be diagnosed");
+        assert!(matches!(error, crate::TlsError::ParseError { .. }));
+    }
 }
