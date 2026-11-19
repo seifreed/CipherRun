@@ -102,11 +102,8 @@ impl ProtocolPhase {
 
         tester = tester.with_ech(context.args.tls.ech);
 
-        // Set protocol filter if specified
-        // Allows testing only specific protocols (e.g., --tls12 --tls13)
-        if let Some(protocols) = context.args.protocols_to_test() {
-            tester = tester.with_protocol_filter(Some(protocols));
-        }
+        // Set protocol filter when specific protocols were requested.
+        tester = tester.with_protocol_filter(context.args.protocols_to_test());
 
         // Enable testing all IPs if specified
         // Useful for load balancer/Anycast detection
@@ -214,19 +211,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_protocol_phase_execute_stores_filtered_probe_results() {
+    async fn test_protocol_phase_execute_stores_sorted_filtered_probe_results() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener should bind");
         let port = listener.local_addr().expect("local addr").port();
         let server = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.expect("probe should connect");
-            drop(socket);
+            for _ in 0..2 {
+                let (socket, _) = listener.accept().await.expect("probe should connect");
+                drop(socket);
+            }
         });
 
         let mut args = ScanRequest::default();
         args.connection.no_retry = true;
         args.scan.proto.tls12 = true;
+        args.scan.proto.tls13 = true;
         let mut context = test_scan_context(args);
         context.target = crate::utils::network::Target::with_ips(
             "localhost".to_string(),
@@ -241,10 +241,18 @@ mod tests {
             .expect("probe failure should be represented as a result");
         server.await.expect("server task should finish");
 
-        assert_eq!(context.results.protocols.len(), 1);
+        assert_eq!(context.results.protocols.len(), 2);
         assert_eq!(
-            context.results.protocols[0].protocol,
-            crate::protocols::Protocol::TLS12
+            context
+                .results
+                .protocols
+                .iter()
+                .map(|result| result.protocol)
+                .collect::<Vec<_>>(),
+            [
+                crate::protocols::Protocol::TLS12,
+                crate::protocols::Protocol::TLS13,
+            ]
         );
     }
 
