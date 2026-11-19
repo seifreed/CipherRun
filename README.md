@@ -494,8 +494,9 @@ rustls and metadata-only limitations; see
 [client compatibility profiles](docs/client-compatibility-profiles.md).
 Delegated-credential checks capture OpenSSL's decrypted TLS `Certificate`
 handshake and verify RFC 9345 extension 34 when present; certificate-only
-backends conservatively report `not_observed`. See
-[delegated credentials](docs/delegated-credentials.md).
+backends conservatively report `not_observed`. Full positive/negative
+interoperability validation still requires dedicated RFC 9345 server fixtures.
+See [delegated credentials](docs/delegated-credentials.md).
 
 `remediate` generates configuration snippets for nginx, Apache, HAProxy, Envoy,
 or Caddy. It never changes a running service, and it deliberately leaves

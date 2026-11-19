@@ -10,7 +10,7 @@ use openssl::sign::{RsaPssSaltlen, Verifier};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion};
 use openssl::x509::X509;
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_int, c_long, c_void};
 use std::slice;
 use std::sync::Mutex;
 use tokio::time::Duration;
@@ -27,8 +27,12 @@ type SslMessageCallback = unsafe extern "C" fn(
 
 unsafe extern "C" {
     fn SSL_set_msg_callback(ssl: *mut c_void, callback: Option<SslMessageCallback>);
-    fn SSL_set_msg_callback_arg(ssl: *mut c_void, argument: *mut c_void);
+    fn SSL_ctrl(ssl: *mut c_void, command: c_int, argument: c_long, pointer: *mut c_void)
+    -> c_long;
 }
+
+// OpenSSL defines SSL_set_msg_callback_arg as a macro over SSL_ctrl.
+const SSL_CTRL_SET_MSG_CALLBACK_ARG: c_int = 16;
 
 #[derive(Default)]
 struct HandshakeCapture {
@@ -782,7 +786,12 @@ impl CertificateAdvancedTester {
                 unsafe {
                     let ssl_ptr = ssl.as_ptr().cast::<c_void>();
                     SSL_set_msg_callback(ssl_ptr, Some(capture_tls_message));
-                    SSL_set_msg_callback_arg(ssl_ptr, capture_ptr.cast::<c_void>());
+                    let _ = SSL_ctrl(
+                        ssl_ptr,
+                        SSL_CTRL_SET_MSG_CALLBACK_ARG,
+                        0,
+                        capture_ptr.cast::<c_void>(),
+                    );
                 }
 
                 let handshake = ssl.connect(std_stream);
@@ -1943,6 +1952,36 @@ mod tests {
         assert!(result.inconclusive);
         assert!(!result.compression_supported);
         assert!(result.details.contains("TLS 1.3 connection failed"));
+    }
+
+    #[tokio::test]
+    async fn multiple_certificate_probe_reports_no_certificates_when_handshakes_fail() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        let server = tokio::spawn(async move {
+            for _ in 0..5 {
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
+                };
+                drop(socket);
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = CertificateAdvancedTester::new(target)
+            .test_multiple_certificates()
+            .await
+            .expect("failed certificate handshakes should produce an empty analysis");
+
+        server.await.expect("test server should finish");
+        assert_eq!(result.certificates_count, 0);
+        assert!(result.certificates.is_empty());
+        assert!(!result.virtual_hosts_detected);
+        assert!(!result.sni_required);
+        assert!(result.details.contains("0 certificate(s) detected"));
     }
 
     #[tokio::test]
