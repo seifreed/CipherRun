@@ -70,11 +70,30 @@ mod tests {
         file.set_len(MAX_SIGNATURE_DATABASE_BYTES + 1)
             .expect("database file should be resized");
 
-        let err = match Ja3Database::from_file(&path) {
-            Ok(_) => panic!("oversized signature database should fail before read"),
-            Err(err) => err,
-        };
+        let err = Ja3Database::from_file(&path)
+            .expect_err("oversized signature database should fail before read");
 
         assert!(err.to_string().contains("Signature database too large"));
+    }
+
+    #[test]
+    fn signature_database_reads_utf8_and_rejects_invalid_utf8() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("signatures.json");
+        std::fs::write(&path, b"[]").expect("database text should be written");
+        assert_eq!(
+            read_signature_database(&path).expect("text should be readable"),
+            "[]"
+        );
+
+        std::fs::write(&path, [0xff]).expect("invalid UTF-8 should be written");
+        assert!(read_signature_database(&path).is_err());
+    }
+
+    #[test]
+    fn lower_hex_hash_requires_exact_lowercase_hex() {
+        assert!(is_lower_hex_hash("a1b2", 4));
+        assert!(!is_lower_hex_hash("A1b2", 4));
+        assert!(!is_lower_hex_hash("abc", 4));
     }
 }
