@@ -671,11 +671,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_requested_returns_empty_for_selected_check_that_is_skipped() {
+    async fn test_requested_returns_empty_for_selected_checks_that_are_skipped() {
         let mut request = ScanRequest::default();
         request.scan.vulns.renegotiation = true;
         request.scan.vulns.no_renegotiation = true;
+        request.scan.vulns.fallback = true;
+        request.scan.vulns.no_fallback = true;
+        request.scan.vulns.crime = true;
+        request.scan.vulns.no_compression = true;
+        request.scan.vulns.heartbleed = true;
+        request.scan.vulns.no_heartbleed = true;
         let scanner = VulnerabilityScanner::with_args(example_target(), &request);
+        assert_eq!(scanner.planned_test_count(), 4);
 
         let results = scanner
             .test_requested()
