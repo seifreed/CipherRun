@@ -317,8 +317,33 @@ mod tests {
                 Sslv2Status::Confirmed,
             ),
             ("error", sslv2_response(0x00), Sslv2Status::Probable),
+            (
+                "client error from server",
+                sslv2_response(0x02),
+                Sslv2Status::Suspicious,
+            ),
+            (
+                "client hello from server",
+                sslv2_response(0x03),
+                Sslv2Status::Suspicious,
+            ),
             ("server verify", sslv2_response(0x05), Sslv2Status::Probable),
+            (
+                "client finished from server",
+                sslv2_response(0x08),
+                Sslv2Status::Suspicious,
+            ),
             ("unknown", sslv2_response(0xff), Sslv2Status::Suspicious),
+            (
+                "empty record",
+                vec![0x80, 0x00, 0x04],
+                Sslv2Status::Suspicious,
+            ),
+            (
+                "truncated record",
+                vec![0x80, 0x04, 0x04],
+                Sslv2Status::Suspicious,
+            ),
             (
                 "tls record",
                 vec![0x16, 0x03, 0x01],
