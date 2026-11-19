@@ -23,6 +23,6 @@ pytest-3.13:
 pytest-3.14:
   extends: .pytest
   image: python:3.14-alpine
-pytest-latest:
+pytest-3.15:
   extends: .pytest
-  image: python:alpine
+  image: python:3.15-alpine
