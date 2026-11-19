@@ -267,15 +267,22 @@ mod tests {
 
     #[test]
     fn inventory_query_accepts_supported_sort_values() {
-        let query = CertificateQuery {
-            sort: "issued_desc".to_string(),
-            ..Default::default()
-        };
+        for (sort, expected) in [
+            ("expiry_desc", CertificateInventorySort::ExpiryDesc),
+            ("issued_asc", CertificateInventorySort::IssuedAsc),
+            ("issued_desc", CertificateInventorySort::IssuedDesc),
+            ("expiry_asc", CertificateInventorySort::ExpiryAsc),
+        ] {
+            let query = CertificateQuery {
+                sort: sort.to_string(),
+                ..Default::default()
+            };
 
-        let inventory_query =
-            inventory_query_from_api(&query).expect("sort should map successfully");
+            let inventory_query =
+                inventory_query_from_api(&query).expect("sort should map successfully");
 
-        assert_eq!(inventory_query.sort, CertificateInventorySort::IssuedDesc);
+            assert_eq!(inventory_query.sort, expected, "sort: {sort}");
+        }
     }
 
     #[test]
