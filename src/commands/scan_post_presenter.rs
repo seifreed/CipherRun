@@ -233,6 +233,105 @@ mod tests {
         assert_eq!(exit.code(), CommandExit::POLICY_FAILURE);
     }
 
+    #[test]
+    fn render_dispatches_supported_compliance_formats_and_severity_filtering() {
+        let report = compliance_report(ComplianceStatus::Pass);
+        for format in ["terminal", "json", "csv", "html"] {
+            let mut args = Args::default();
+            args.compliance.format = format.to_string();
+            if format == "json" {
+                args.compliance.severity = Some("high".to_string());
+            }
+            let presenter = ScanPostPresenter::new(&args);
+            let post_processing = ScanPostProcessingView {
+                compliance_report: Some(&report),
+                policy_result: None,
+                stored_scan_id: None,
+                should_fail_exit: false,
+            };
+            let post_view = ScanPostView {
+                post_processing: &post_processing,
+            };
+
+            assert_eq!(presenter.render(&post_view).unwrap().code(), 0);
+        }
+    }
+
+    #[test]
+    fn render_handles_skipped_invalid_and_failed_sections() {
+        let mut args = Args::default();
+        args.compliance.format = "terminal".to_string();
+        args.compliance.policy_format = "terminal".to_string();
+        let presenter = ScanPostPresenter::new(&args);
+        let empty = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        assert_eq!(
+            presenter
+                .render(&ScanPostView {
+                    post_processing: &empty,
+                })
+                .unwrap()
+                .code(),
+            0
+        );
+
+        let failed_report = compliance_report(ComplianceStatus::Fail);
+        let failed = ScanPostProcessingView {
+            compliance_report: Some(&failed_report),
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        assert_eq!(
+            presenter
+                .render(&ScanPostView {
+                    post_processing: &failed,
+                })
+                .unwrap()
+                .code(),
+            CommandExit::POLICY_FAILURE
+        );
+
+        let failed_policy = policy_result(PolicyOverallResult::Fail);
+        let policy_view = ScanPostProcessingView {
+            compliance_report: None,
+            policy_result: Some(&failed_policy),
+            stored_scan_id: None,
+            should_fail_exit: true,
+        };
+        assert_eq!(
+            presenter
+                .render(&ScanPostView {
+                    post_processing: &policy_view,
+                })
+                .unwrap()
+                .code(),
+            CommandExit::POLICY_FAILURE
+        );
+
+        let mut invalid_args = Args::default();
+        invalid_args.compliance.format = "xml".to_string();
+        let invalid_presenter = ScanPostPresenter::new(&invalid_args);
+        let passing_report = compliance_report(ComplianceStatus::Pass);
+        let passing = ScanPostProcessingView {
+            compliance_report: Some(&passing_report),
+            policy_result: None,
+            stored_scan_id: None,
+            should_fail_exit: false,
+        };
+        assert!(
+            invalid_presenter
+                .render(&ScanPostView {
+                    post_processing: &passing,
+                })
+                .is_err()
+        );
+    }
+
     fn compliance_report(status: ComplianceStatus) -> ComplianceReport {
         ComplianceReport {
             disclaimer: crate::compliance::COMPLIANCE_DISCLAIMER.to_string(),
