@@ -905,6 +905,32 @@ mod tests {
     }
 
     #[test]
+    fn rolling_file_appender_writes_to_its_configured_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("application.jsonl");
+        let mut file = rolling_log_file(&path).unwrap();
+        file.write_all(b"structured event\n").unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        let log_directory = directory.path().join(".application.jsonl.d");
+        let output = std::fs::read_dir(log_directory)
+            .unwrap()
+            .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+            .find(|bytes| bytes == b"structured event\n")
+            .expect("rolling file should contain the written event");
+        assert_eq!(output, b"structured event\n");
+    }
+
+    #[test]
+    fn rolling_file_appender_rejects_paths_without_a_filename() {
+        let error = rolling_log_file(std::path::Path::new(""))
+            .expect_err("a directory-only path cannot identify a log file");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
     fn json_format_escapes_untrusted_control_characters() {
         let output = Buffer(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
