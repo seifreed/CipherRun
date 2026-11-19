@@ -157,12 +157,35 @@ mod tests {
         tokio::spawn(async move {
             let mut remaining = max_accepts;
             while remaining > 0 {
-                if let Ok((mut socket, _)) = listener.accept().await {
-                    let mut buf = [0u8; 1024];
-                    let _ = socket.read(&mut buf).await;
-                    let _ = socket.write_all(&HANDSHAKE_FAILURE_ALERT).await;
-                    remaining -= 1;
-                }
+                let (mut socket, _) = listener.accept().await.expect("listener should accept");
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(&HANDSHAKE_FAILURE_ALERT).await;
+                remaining -= 1;
+            }
+        });
+        addr
+    }
+
+    async fn spawn_supporting_server() -> SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut remaining = EXPORT_RSA_CIPHER_SUITES.len();
+            while remaining > 0 {
+                let (mut socket, _) = listener.accept().await.expect("listener should accept");
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let mut server_hello = [0u8; 43];
+                server_hello[0..5].copy_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x26]);
+                server_hello[5..9].copy_from_slice(&[0x02, 0x00, 0x00, 0x22]);
+                socket
+                    .write_all(&server_hello)
+                    .await
+                    .expect("server hello should be sent");
+                remaining -= 1;
             }
         });
         addr
@@ -179,6 +202,18 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(!result.inconclusive);
         assert!(result.export_ciphers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_freak_tester_detects_export_cipher_support() {
+        let addr = spawn_supporting_server().await;
+        let target = localhost_target(addr.port());
+
+        let result = FreakTester::new(target).test().await.unwrap();
+
+        assert!(result.vulnerable);
+        assert!(!result.inconclusive);
+        assert_eq!(result.export_ciphers.len(), EXPORT_RSA_CIPHER_SUITES.len());
     }
 
     #[tokio::test]
