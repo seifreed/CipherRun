@@ -1003,6 +1003,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_queue_preserves_cancellation_and_handles_missing_leases_and_retries() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool, 10, None);
+        let job = ScanJob::new("cancel.example:443".to_string(), Default::default(), None);
+        let id = queue.enqueue(job.clone()).await.unwrap();
+
+        assert!(queue.cancel_job(&id).await.unwrap());
+        assert!(!queue.cancel_job(&id).await.unwrap());
+        assert!(!queue.renew_lease(&id).await.unwrap());
+        let mut completed = job;
+        completed.mark_completed(Default::default());
+        assert!(
+            !queue
+                .update_job_preserving_cancelled(&completed)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            queue.get_job(&id).await.unwrap().unwrap().status,
+            ScanStatus::Cancelled
+        );
+
+        assert!(
+            !queue
+                .renew_lease("missing-job")
+                .await
+                .expect("missing leases should be reported as not renewed")
+        );
+        let missing = ScanJob::new("missing.example:443".to_string(), Default::default(), None);
+        assert!(
+            queue
+                .retry_or_dead_letter(&missing, "missing", 3)
+                .await
+                .is_err()
+        );
+        assert_eq!(queue.prune_expired().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn sqlite_database_queue_reports_missing_and_malformed_jobs() {
         let directory = tempfile::tempdir().unwrap();
         let pool = Arc::new(
