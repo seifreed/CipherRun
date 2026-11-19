@@ -185,6 +185,28 @@ mod tests {
             .expect("testing an empty alert configuration should succeed");
     }
 
+    #[tokio::test]
+    async fn domain_sources_load_from_file_and_command_line() {
+        let daemon = crate::monitor::MonitorDaemon::new(crate::monitor::MonitorConfig::default())
+            .await
+            .unwrap();
+        let empty = MonitorCommand::new(Args::default());
+        empty.load_domains_from_file(&daemon).await.unwrap();
+        empty.add_single_domain(&daemon, 600).await.unwrap();
+
+        let directory = tempfile::tempdir().unwrap();
+        let domains_file = directory.path().join("domains.txt");
+        std::fs::write(&domains_file, "mail.example.net 5m\n").unwrap();
+        let mut args = Args::default();
+        args.monitoring.domains_file = Some(domains_file);
+        args.monitoring.domain = Some("example.com:8443".to_string());
+        let command = MonitorCommand::new(args);
+        command.load_domains_from_file(&daemon).await.unwrap();
+        command.add_single_domain(&daemon, 600).await.unwrap();
+
+        assert_eq!(daemon.stats().await.total_domains, 2);
+    }
+
     #[test]
     fn test_load_monitor_config_rejects_invalid_file() {
         let dir = tempfile::tempdir().expect("test assertion should succeed");
