@@ -112,10 +112,12 @@ impl crate::application::ComplianceEvaluatorPort for DefaultComplianceEvaluator 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ciphers::{CipherSuite, ProtocolCipherSummary, tester::CipherCounts};
     use crate::compliance::test_support::base_rule;
     use crate::compliance::{ComplianceFramework, Requirement, Rule};
     use crate::protocols::test_support::supported_protocol_result as protocol_result;
     use crate::protocols::{Protocol, ProtocolTestResult};
+    use std::collections::HashMap;
 
     fn test_framework(requirement_id: &str, rules: Vec<Rule>) -> ComplianceFramework {
         ComplianceFramework {
@@ -233,5 +235,49 @@ mod tests {
             .expect("all known rule types should dispatch");
         assert_eq!(report.summary.total, 1);
         assert_eq!(report.summary.passed, 1);
+    }
+
+    #[test]
+    fn test_medium_compliance_violations_are_warnings() {
+        let rule = Rule {
+            preferred_patterns: vec!["GCM".to_string()],
+            ..base_rule("CipherSuite")
+        };
+        let framework = test_framework("PREFERRED-CIPHER", vec![rule]);
+        let engine = ComplianceEngine::new(framework);
+        let protocol = Protocol::TLS12;
+        let cipher = CipherSuite {
+            hexcode: "0x002f".to_string(),
+            openssl_name: "ECDHE-RSA-AES128-SHA".to_string(),
+            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA".to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES".to_string(),
+            mac: "SHA".to_string(),
+            bits: 128,
+            export: false,
+        };
+        let results = ScanAssessment {
+            ciphers: HashMap::from([(
+                protocol,
+                ProtocolCipherSummary {
+                    protocol,
+                    supported_ciphers: vec![cipher],
+                    server_ordered: false,
+                    server_preference: Vec::new(),
+                    preferred_cipher: None,
+                    counts: CipherCounts::default(),
+                    avg_handshake_time_ms: None,
+                },
+            )]),
+            ..assessment(Vec::new())
+        };
+
+        let report = engine
+            .evaluate(&results)
+            .expect("warning should be reported");
+        assert_eq!(report.summary.warnings, 1);
+        assert_eq!(report.requirements[0].status, RequirementStatus::Warning);
     }
 }
