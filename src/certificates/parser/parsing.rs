@@ -798,6 +798,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_certificate_ed25519_key_normalizes_algorithm_name() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let key = PKey::generate_ed25519().unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "ed25519.example.com")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&key, MessageDigest::null()).unwrap();
+
+        let info =
+            CertificateParser::parse_certificate(&builder.build().to_der().unwrap()).unwrap();
+        assert_eq!(info.public_key_algorithm, "ed25519");
+        assert_eq!(info.public_key_size, None);
+        assert_eq!(info.rsa_exponent, None);
+    }
+
+    #[test]
     fn test_parse_certificate_rejects_malformed_extensions() {
         for (oid, contents, expected) in [
             (
