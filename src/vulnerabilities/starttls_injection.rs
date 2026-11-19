@@ -360,6 +360,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_smtp_injection_rejected_greeting_is_not_vulnerable() {
+        let port = start_scripted_server(b"554 service unavailable\r\n", Vec::new()).await;
+        let status = loopback_tester(port)
+            .test_smtp_injection_status()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, StarttlsInjectionStatus::NotVulnerable);
+    }
+
+    #[tokio::test]
+    async fn test_smtp_injection_inconclusive_when_ehlo_response_is_missing() {
+        let port = start_scripted_server(b"220 smtp.example\r\n", vec![b""]).await;
+        let status = loopback_tester(port)
+            .test_smtp_injection_status()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, StarttlsInjectionStatus::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_smtp_injection_inconclusive_when_probe_has_no_response() {
+        let port =
+            start_scripted_server(b"220 smtp.example\r\n", vec![b"250 hello\r\n", b""]).await;
+        let status = loopback_tester(port)
+            .test_smtp_injection_status()
+            .await
+            .expect("probe should return a status");
+        assert_eq!(status, StarttlsInjectionStatus::Inconclusive);
+    }
+
+    #[tokio::test]
     async fn test_imap_injection_vulnerable() {
         assert_imap_injection(
             vec![
