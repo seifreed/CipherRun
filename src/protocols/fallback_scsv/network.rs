@@ -444,4 +444,47 @@ mod tests {
             .expect("record should be complete");
         assert_eq!(record, vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56]);
     }
+
+    #[tokio::test]
+    async fn test_scsv_all_ips_reports_protection_after_alert_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        let server = tokio::spawn(async move {
+            for response in [
+                [0x16, 0x03, 0x03, 0x00, 0x01, 0x02].as_slice(),
+                [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56].as_slice(),
+            ] {
+                let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+                FallbackScsvTester::read_tls_record(&mut socket)
+                    .await
+                    .expect("ClientHello read should succeed")
+                    .expect("ClientHello record should be complete");
+                socket
+                    .write_all(response)
+                    .await
+                    .expect("mock response should be sent");
+            }
+        });
+
+        let target = crate::utils::network::Target::with_ips(
+            "example.com".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .expect("test target should be valid");
+        let tester = FallbackScsvTester::new(&target);
+
+        let result = tester
+            .test_scsv_all_ips(0x0301)
+            .await
+            .expect("probe should return a result");
+        server.await.expect("mock server should finish");
+
+        assert!(result.supported);
+        assert!(!result.inconclusive);
+        assert!(!result.vulnerable);
+    }
 }

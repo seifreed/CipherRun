@@ -34,7 +34,7 @@ fn classify_failure(code: openssl::ssl::ErrorCode, details: &str) -> ProtocolPro
 mod tests {
     use super::{ProtocolProbeOutcome as Outcome, classify_failure, classify_handshake_error};
     use openssl::ssl::{ErrorCode, HandshakeError, SslConnector, SslMethod};
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
 
     fn handshake_error_from_alert() -> HandshakeError<TcpStream> {
@@ -42,6 +42,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
+            let mut header = [0; 5];
+            stream.read_exact(&mut header).unwrap();
+            let mut client_hello = vec![0; u16::from_be_bytes([header[3], header[4]]) as usize];
+            stream.read_exact(&mut client_hello).unwrap();
             stream.write_all(&[21, 3, 3, 0, 2, 2, 70]).unwrap();
         });
         let stream = TcpStream::connect(addr).unwrap();

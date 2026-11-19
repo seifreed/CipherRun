@@ -140,11 +140,17 @@ mod tests {
         let server = tokio::spawn(async move {
             for _ in 0..11 {
                 let (mut stream, _) = listener.accept().await.expect("probe should connect");
-                let mut first_client_hello_byte = [0];
+                let mut record_header = [0; 5];
                 stream
-                    .read_exact(&mut first_client_hello_byte)
+                    .read_exact(&mut record_header)
                     .await
                     .expect("probe should send ClientHello");
+                let mut client_hello =
+                    vec![0; u16::from_be_bytes([record_header[3], record_header[4]]) as usize];
+                stream
+                    .read_exact(&mut client_hello)
+                    .await
+                    .expect("ClientHello record should be complete");
                 stream
                     .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
                     .await

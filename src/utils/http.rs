@@ -50,7 +50,7 @@ pub async fn read_response_body_capped(
 #[cfg(test)]
 mod tests {
     use super::read_response_body_capped;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
     async fn local_response(response: &'static [u8]) -> reqwest::Response {
@@ -61,9 +61,21 @@ mod tests {
             .local_addr()
             .expect("listener address should exist");
         tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("client should connect");
-            stream.read_u8().await.expect("request should be readable");
+            let (stream, _) = listener.accept().await.expect("client should connect");
+            let mut stream = BufReader::new(stream);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let read = stream
+                    .read_until(b'\n', &mut line)
+                    .await
+                    .expect("request headers should be readable");
+                if read == 0 || line == b"\r\n" {
+                    break;
+                }
+            }
             stream
+                .get_mut()
                 .write_all(response)
                 .await
                 .expect("response should be writable");
