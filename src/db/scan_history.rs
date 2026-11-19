@@ -483,6 +483,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_scan_history_isolated_by_principal_without_tenant() {
+        let pool = sqlite_pool().await;
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        for (principal, tenant) in [("alice", None), ("alice", Some("tenant-a")), ("bob", None)] {
+            sqlx::query(
+                "INSERT INTO scans (target_hostname, target_port, principal_id, tenant_id) VALUES (?, ?, ?, ?)",
+            )
+            .bind("owned-history.test")
+            .bind(443_i32)
+            .bind(principal)
+            .bind(tenant)
+            .execute(sqlite)
+            .await
+            .expect("owned scan should insert");
+        }
+
+        let page = ScanHistoryService::new(&pool)
+            .get_history(&ScanHistoryQuery {
+                hostname: "owned-history.test".to_string(),
+                port: 443,
+                limit: 10,
+                principal_id: Some("alice".to_string()),
+                tenant_id: None,
+            })
+            .await
+            .expect("history with a null tenant should load");
+
+        assert_eq!(page.total_scans, 1);
+        assert_eq!(page.scans.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_rejects_invalid_numeric_fields() {
+        let pool = sqlite_pool().await;
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            panic!("expected sqlite pool");
+        };
+
+        for (hostname, scan_id, score, duration, expected_field) in [
+            ("negative-id.test", Some(-1_i64), 80_i32, 100_i64, "scan_id"),
+            (
+                "invalid-score.test",
+                None,
+                101_i32,
+                100_i64,
+                "overall_score",
+            ),
+            (
+                "negative-duration.test",
+                None,
+                80_i32,
+                -1_i64,
+                "scan_duration_ms",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO scans (scan_id, target_hostname, target_port, overall_grade, overall_score, scan_duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(scan_id)
+            .bind(hostname)
+            .bind(443_i32)
+            .bind("A")
+            .bind(score)
+            .bind(duration)
+            .execute(sqlite)
+            .await
+            .expect("malformed history row should be insertable for validation test");
+
+            let error = ScanHistoryService::new(&pool)
+                .get_history(&ScanHistoryQuery {
+                    hostname: hostname.to_string(),
+                    port: 443,
+                    limit: 10,
+                    principal_id: None,
+                    tenant_id: None,
+                })
+                .await
+                .expect_err("malformed numeric history values should be rejected");
+            assert!(error.to_string().contains(expected_field), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_scan_history_rejects_limit_overflow_after_counting() {
+        let pool = sqlite_pool().await;
+
+        let error = ScanHistoryService::new(&pool)
+            .get_history(&ScanHistoryQuery {
+                hostname: "empty-history.test".to_string(),
+                port: 443,
+                limit: usize::MAX,
+                principal_id: None,
+                tenant_id: None,
+            })
+            .await
+            .expect_err("an overflowing limit should fail before issuing the page query");
+
+        assert!(error.to_string().contains("Invalid scan history limit"));
+    }
+
+    #[tokio::test]
     async fn sqlite_scan_history_rejects_invalid_timestamp() {
         let pool = sqlite_pool().await;
 
