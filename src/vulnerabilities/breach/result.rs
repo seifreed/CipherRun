@@ -108,4 +108,58 @@ mod tests {
         assert!(result.details.contains("Potential exposure to BREACH"));
         assert!(result.details.contains("was not demonstrated"));
     }
+
+    #[test]
+    fn negative_probe_combinations_explain_why_exposure_was_not_observed() {
+        let cases = [
+            (
+                Some(false),
+                Some(false),
+                Some(false),
+                "compression not enabled",
+            ),
+            (
+                Some(true),
+                Some(false),
+                Some(false),
+                "no dynamic content detected and no sensitive data reflection detected",
+            ),
+            (
+                Some(true),
+                Some(false),
+                Some(true),
+                "no dynamic content detected",
+            ),
+            (
+                Some(true),
+                Some(true),
+                Some(false),
+                "no sensitive data reflection detected",
+            ),
+        ];
+
+        for (compression, dynamic, sensitive, expected_detail) in cases {
+            let result = BreachTestResult::from_probe_results(compression, dynamic, sensitive);
+            assert!(!result.inconclusive);
+            assert!(!result.potential_exposure);
+            assert!(result.details.contains(expected_detail));
+        }
+    }
+
+    #[test]
+    fn probe_merge_truth_table_preserves_positive_and_unknown_results() {
+        let values = [Some(true), Some(false), None];
+        for current in values {
+            for next in values {
+                let expected = if current == Some(true) || next == Some(true) {
+                    Some(true)
+                } else if current.is_none() || next.is_none() {
+                    None
+                } else {
+                    Some(false)
+                };
+                assert_eq!(merge_probe_bool(current, next), expected);
+            }
+        }
+    }
 }
