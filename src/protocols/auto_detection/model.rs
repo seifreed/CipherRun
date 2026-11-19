@@ -77,3 +77,38 @@ impl ApplicationProtocol {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationProtocol::*;
+
+    #[test]
+    fn protocol_names_and_default_ports_are_stable() {
+        let cases = [
+            (Http, "HTTP", Some(80)),
+            (Https, "HTTPS", Some(443)),
+            (Smtp, "SMTP", Some(25)),
+            (SmtpStartTls, "SMTP+STARTTLS", Some(25)),
+            (Imap, "IMAP", Some(143)),
+            (ImapStartTls, "IMAP+STARTTLS", Some(143)),
+            (Pop3, "POP3", Some(110)),
+            (Pop3StartTls, "POP3+STARTTLS", Some(110)),
+            (Ftp, "FTP", Some(21)),
+            (FtpStartTls, "FTP+STARTTLS", Some(21)),
+            (Xmpp, "XMPP", Some(5222)),
+            (XmppStartTls, "XMPP+STARTTLS", Some(5222)),
+            (Ldap, "LDAP", Some(389)),
+            (LdapStartTls, "LDAP+STARTTLS", Some(389)),
+            (Mysql, "MySQL", Some(3306)),
+            (Postgres, "PostgreSQL", Some(5432)),
+            (Redis, "Redis", Some(6379)),
+            (MongoDB, "MongoDB", Some(27017)),
+            (Unknown, "Unknown", None),
+        ];
+
+        for (protocol, name, port) in cases {
+            assert_eq!(protocol.name(), name);
+            assert_eq!(protocol.default_port(), port);
+        }
+    }
+}
