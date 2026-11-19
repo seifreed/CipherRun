@@ -417,6 +417,53 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
 mod tests {
     use super::*;
     use crate::api::models::response::ProgressMessage;
+    use axum::{Router, extract::Path, routing::get};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+    async fn scan_websocket_route(
+        ws: WebSocketUpgrade,
+        Path(scan_id): Path<String>,
+        State(state): State<Arc<WsState>>,
+    ) -> Response {
+        handle_scan_websocket(ws, scan_id, State(state)).await
+    }
+
+    async fn start_test_server(state: Arc<WsState>) -> (String, oneshot::Sender<()>) {
+        let app = Router::new()
+            .route("/{scan_id}", get(scan_websocket_route))
+            .with_state(state);
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("address should resolve");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+        (format!("ws://{addr}"), shutdown_tx)
+    }
+
+    async fn next_text(
+        socket: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> serde_json::Value {
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("websocket message should arrive")
+            .expect("websocket should remain open")
+            .expect("websocket receive should succeed");
+        let ClientMessage::Text(text) = message else {
+            panic!("expected a text websocket frame, got {message:?}");
+        };
+        serde_json::from_str(&text).expect("websocket frame should contain JSON")
+    }
 
     #[tokio::test]
     async fn test_ws_state_broadcast_sends_progress() {
@@ -433,5 +480,80 @@ mod tests {
         assert_eq!(received.scan_id, "scan1");
         assert_eq!(received.progress, 5);
         assert_eq!(received.stage, "stage");
+    }
+
+    #[tokio::test]
+    async fn test_scan_websocket_filters_other_scans_and_closes_when_complete() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("{url}/requested-scan"))
+            .await
+            .expect("websocket should connect");
+
+        let connected = next_text(&mut socket).await;
+        assert_eq!(connected["type"], "connected");
+        assert_eq!(connected["scan_id"], "requested-scan");
+
+        tx.send(ProgressMessage::new("other-scan", 10, "ignored"))
+            .expect("other scan progress should broadcast");
+        tx.send(ProgressMessage::new("requested-scan", 25, "running"))
+            .expect("requested scan progress should broadcast");
+        let progress = next_text(&mut socket).await;
+        assert_eq!(progress["scan_id"], "requested-scan");
+        assert_eq!(progress["progress"], 25);
+
+        tx.send(ProgressMessage::completed("requested-scan"))
+            .expect("completion should broadcast");
+        let completed = next_text(&mut socket).await;
+        assert_eq!(completed["msg_type"], "completed");
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .expect("websocket should close after completion")
+                .expect("close frame should be received")
+                .expect("websocket receive should succeed"),
+            ClientMessage::Close(_)
+        ));
+
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
+    async fn test_scan_websocket_reports_lag_and_closes() {
+        let (tx, _) = broadcast::channel(1);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("{url}/requested-scan"))
+            .await
+            .expect("websocket should connect");
+
+        let connected = next_text(&mut socket).await;
+        assert_eq!(connected["type"], "connected");
+
+        for progress in 0..10 {
+            tx.send(ProgressMessage::new("requested-scan", progress, "running"))
+                .expect("progress should broadcast");
+        }
+
+        let lag_notice = next_text(&mut socket).await;
+        assert_eq!(lag_notice["type"], "lagged");
+        assert_eq!(lag_notice["scan_id"], "requested-scan");
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .expect("lagged websocket should close")
+                .expect("close frame should be received")
+                .expect("websocket receive should succeed"),
+            ClientMessage::Close(_)
+        ));
+
+        let _ = shutdown.send(());
     }
 }
