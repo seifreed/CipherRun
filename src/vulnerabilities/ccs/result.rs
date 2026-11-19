@@ -94,4 +94,35 @@ mod tests {
         assert!(result.status.is_inconclusive());
         assert!(result.details.contains("connection failed"));
     }
+
+    #[test]
+    fn all_statuses_have_details_and_merge_precedence_is_stable() {
+        for (status, expected) in [
+            (
+                TestStatus::Vulnerable,
+                "Server accepts early CCS messages",
+            ),
+            (
+                TestStatus::NotVulnerable,
+                "Server rejects early CCS messages",
+            ),
+            (
+                TestStatus::Inconclusive,
+                "unexpected response pattern",
+            ),
+            (TestStatus::ConnectionFailed, "connection failed"),
+            (TestStatus::HandshakeFailed, "handshake timeout or error"),
+        ] {
+            assert!(status.details().contains(expected));
+        }
+
+        assert_eq!(
+            TestStatus::NotVulnerable.merge(TestStatus::Inconclusive),
+            TestStatus::Inconclusive
+        );
+        assert_eq!(
+            TestStatus::NotVulnerable.merge(TestStatus::NotVulnerable),
+            TestStatus::NotVulnerable
+        );
+    }
 }
