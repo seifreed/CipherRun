@@ -509,6 +509,36 @@ fn certificate_chain_signatures_use_fingerprint_der_and_metadata_fallbacks() {
 }
 
 #[test]
+fn certificate_aggregation_selects_the_most_common_chain_and_rejects_all_failures() {
+    let common = ScanResults {
+        certificate_chain: Some(certificate_result(Some(CertificateInfo {
+            fingerprint_sha256: Some("common".to_string()),
+            ..Default::default()
+        }))),
+        ..Default::default()
+    };
+    let uncommon = ScanResults {
+        certificate_chain: Some(certificate_result(Some(CertificateInfo {
+            fingerprint_sha256: Some("uncommon".to_string()),
+            ..Default::default()
+        }))),
+        ..Default::default()
+    };
+    let selected = select_common_certificate_chain(&[&common, &common, &uncommon]).unwrap();
+    assert_eq!(
+        selected.chain.certificates[0].fingerprint_sha256.as_deref(),
+        Some("common")
+    );
+    assert!(select_common_certificate_chain(&[]).is_none());
+
+    let failures = [(
+        mx(10, "mx.example.com"),
+        Err(TlsError::Other("failed".into())),
+    )];
+    assert!(MxTester::aggregate_scan_results_for_domain("example.com", &failures).is_err());
+}
+
+#[test]
 fn test_aggregate_scan_results_for_domain_is_conservative() {
     let supported = ProtocolTestResult {
         protocol: Protocol::TLS12,
