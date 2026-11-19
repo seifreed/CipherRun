@@ -261,14 +261,30 @@ impl<'a> PoodleTester<'a> {
             }
         }
 
-        let oracle_detected = oracle_detection::detect_response_oracle(&responses_a, &responses_b);
+        Ok(Self::response_oracle_result(
+            variant,
+            &responses_a,
+            &responses_b,
+            vulnerable_msg,
+            not_vulnerable_msg,
+        ))
+    }
+
+    fn response_oracle_result(
+        variant: PoodleVariant,
+        responses_a: &[ServerResponse],
+        responses_b: &[ServerResponse],
+        vulnerable_msg: &str,
+        not_vulnerable_msg: &str,
+    ) -> PoodleVariantResult {
+        let oracle_detected = oracle_detection::detect_response_oracle(responses_a, responses_b);
         // Sample floor mirrors the MIN_TIMING_SAMPLES guard inside detect_response_oracle.
         // Below this, we cannot distinguish "no oracle" from "not enough data".
         const MIN_SAMPLES_FOR_VERDICT: usize = 3;
         let enough_samples = responses_a.len() >= MIN_SAMPLES_FOR_VERDICT
             && responses_b.len() >= MIN_SAMPLES_FOR_VERDICT;
 
-        Ok(PoodleVariantResult {
+        PoodleVariantResult {
             variant,
             vulnerable: oracle_detected,
             inconclusive: !oracle_detected && !enough_samples,
@@ -289,7 +305,7 @@ impl<'a> PoodleTester<'a> {
                 not_vulnerable_msg.to_string()
             },
             timing_data: None,
-        })
+        }
     }
 
     /// Test for Sleeping POODLE - Timing-based padding oracle
@@ -313,8 +329,6 @@ impl<'a> PoodleTester<'a> {
 
         // Increased from 20 to 30 for better statistical confidence
         const SAMPLES: usize = 30;
-        const TIMING_THRESHOLD_MS: f64 = 15.0;
-
         let mut valid_timings = TimingSampleSet::with_capacity(SAMPLES);
         let mut invalid_timings = TimingSampleSet::with_capacity(SAMPLES);
 
@@ -344,14 +358,26 @@ impl<'a> PoodleTester<'a> {
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
+        Ok(Self::sleeping_poodle_result(
+            &valid_timings,
+            &invalid_timings,
+        ))
+    }
+
+    fn sleeping_poodle_result(
+        valid_timings: &TimingSampleSet,
+        invalid_timings: &TimingSampleSet,
+    ) -> PoodleVariantResult {
+        const TIMING_THRESHOLD_MS: f64 = 15.0;
+
         if valid_timings.is_empty() || invalid_timings.is_empty() {
-            return Ok(PoodleVariantResult {
+            return PoodleVariantResult {
                 variant: PoodleVariant::SleepingPoodle,
                 vulnerable: false,
                 inconclusive: true,
                 details: "Inconclusive - could not collect timing samples".to_string(),
                 timing_data: None,
-            });
+            };
         }
 
         // Adaptive threshold based on coefficient of variation
@@ -377,7 +403,7 @@ impl<'a> PoodleTester<'a> {
         let analysis = match detect_timing_oracle(&valid_timings, &invalid_timings, &config) {
             Some(result) => result,
             None => {
-                return Ok(PoodleVariantResult {
+                return PoodleVariantResult {
                     variant: PoodleVariant::SleepingPoodle,
                     vulnerable: false,
                     // V3 fix: explicit inconclusive flag replaces the previous
@@ -390,7 +416,7 @@ impl<'a> PoodleTester<'a> {
                         invalid_timings.len()
                     ),
                     timing_data: None,
-                });
+                };
             }
         };
 
@@ -448,7 +474,7 @@ impl<'a> PoodleTester<'a> {
             )
         };
 
-        Ok(PoodleVariantResult {
+        PoodleVariantResult {
             variant: PoodleVariant::SleepingPoodle,
             // A remote timing difference cannot conclusively confirm the oracle
             // (network jitter is orders of magnitude larger than the MAC-timing
@@ -459,7 +485,7 @@ impl<'a> PoodleTester<'a> {
             inconclusive: analysis.oracle_detected || !analysis.timing_reliable,
             details,
             timing_data,
-        })
+        }
     }
 
     /// Test for OpenSSL 0-Length Fragment vulnerability (CVE-2011-4576)

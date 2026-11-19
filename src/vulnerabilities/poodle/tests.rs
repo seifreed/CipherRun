@@ -19,6 +19,14 @@ fn server_responses(
         .collect()
 }
 
+fn timing_samples(samples: &[f64]) -> TimingSampleSet {
+    let mut set = TimingSampleSet::with_capacity(samples.len());
+    for sample in samples {
+        set.push(*sample);
+    }
+    set
+}
+
 #[test]
 fn test_poodle_variant_names() {
     assert_eq!(PoodleVariant::SslV3.name(), "POODLE (SSLv3)");
@@ -143,6 +151,105 @@ fn test_cbc_probe_not_supported_result() {
     assert!(!result.vulnerable);
     assert!(!result.inconclusive);
     assert_eq!(result.details, "CBC ciphers not supported - not vulnerable");
+}
+
+#[test]
+fn response_oracle_result_covers_vulnerable_safe_and_insufficient_samples() {
+    let vulnerable_a = server_responses(true, Some(20), &[5.0, 5.0, 5.0], true);
+    let vulnerable_b = server_responses(true, None, &[5.0, 5.0, 5.0], false);
+    let vulnerable = PoodleTester::response_oracle_result(
+        PoodleVariant::ZombiePoodle,
+        &vulnerable_a,
+        &vulnerable_b,
+        "oracle detected",
+        "no oracle",
+    );
+    assert!(vulnerable.vulnerable);
+    assert!(!vulnerable.inconclusive);
+    assert!(vulnerable.details.contains("oracle detected"));
+
+    let insufficient = PoodleTester::response_oracle_result(
+        PoodleVariant::GoldenDoodle,
+        &vulnerable_a[..2],
+        &vulnerable_b[..2],
+        "oracle detected",
+        "no oracle",
+    );
+    assert!(!insufficient.vulnerable);
+    assert!(insufficient.inconclusive);
+    assert!(insufficient.details.contains("insufficient probe samples"));
+
+    let same_a = server_responses(true, Some(20), &[5.0, 5.0, 5.0], true);
+    let same_b = server_responses(true, Some(20), &[5.0, 5.0, 5.0], true);
+    let safe = PoodleTester::response_oracle_result(
+        PoodleVariant::GoldenDoodle,
+        &same_a,
+        &same_b,
+        "oracle detected",
+        "no oracle",
+    );
+    assert!(!safe.vulnerable);
+    assert!(!safe.inconclusive);
+    assert_eq!(safe.details, "no oracle");
+}
+
+#[test]
+fn sleeping_poodle_analysis_covers_collection_and_statistical_outcomes() {
+    let empty = TimingSampleSet::with_capacity(0);
+    let sparse = timing_samples(&[10.0, 11.0]);
+    let no_samples = PoodleTester::sleeping_poodle_result(&empty, &sparse);
+    assert!(no_samples.inconclusive);
+    assert!(
+        no_samples
+            .details
+            .contains("could not collect timing samples")
+    );
+
+    let insufficient = PoodleTester::sleeping_poodle_result(&sparse, &sparse);
+    assert!(insufficient.inconclusive);
+    assert!(insufficient.details.contains("insufficient timing samples"));
+
+    let low_variance = timing_samples(&[10.0; 10]);
+    let slightly_slower = timing_samples(&[11.0; 10]);
+    let below_threshold = PoodleTester::sleeping_poodle_result(&low_variance, &slightly_slower);
+    assert!(below_threshold.details.contains("below threshold"));
+    assert_eq!(
+        below_threshold
+            .timing_data
+            .as_ref()
+            .expect("sufficient samples should include statistics")
+            .samples_collected,
+        10
+    );
+
+    let valid_oracle = timing_samples(&[
+        95.0, 105.0, 95.0, 105.0, 95.0, 105.0, 95.0, 105.0, 95.0, 105.0,
+    ]);
+    let invalid_oracle = timing_samples(&[9.0, 11.0, 9.0, 11.0, 9.0, 11.0, 9.0, 11.0, 9.0, 11.0]);
+    let suspected = PoodleTester::sleeping_poodle_result(&valid_oracle, &invalid_oracle);
+    assert!(!suspected.vulnerable);
+    assert!(suspected.inconclusive);
+    assert!(suspected.details.contains("Suspected Sleeping POODLE"));
+
+    let uncertain = timing_samples(&[1.0, 300.0, 1.0, 300.0, 1.0, 300.0, 1.0, 300.0, 1.0, 300.0]);
+    let steady = timing_samples(&[10.0; 10]);
+    let unreliable = PoodleTester::sleeping_poodle_result(&uncertain, &steady);
+    assert!(unreliable.inconclusive);
+    assert!(unreliable.details.contains("measurement unreliable"));
+
+    let variable_valid = timing_samples(&[
+        80.0, 120.0, 80.0, 120.0, 80.0, 120.0, 80.0, 120.0, 80.0, 120.0,
+    ]);
+    let variable_invalid = timing_samples(&[
+        60.0, 100.0, 60.0, 100.0, 60.0, 100.0, 60.0, 100.0, 60.0, 100.0,
+    ]);
+    let not_significant = PoodleTester::sleeping_poodle_result(&variable_valid, &variable_invalid);
+    assert!(!not_significant.inconclusive);
+    assert!(
+        not_significant
+            .details
+            .contains("not statistically significant")
+    );
 }
 
 #[tokio::test]
