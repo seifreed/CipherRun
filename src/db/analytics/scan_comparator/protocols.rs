@@ -100,3 +100,84 @@ impl ScanComparator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::BindValue;
+    use crate::db::analytics::test_support::{insert_scan, setup_db};
+    use chrono::Utc;
+
+    async fn insert_protocol(
+        db: &crate::db::CipherRunDatabase,
+        scan_id: i64,
+        name: &str,
+        enabled: bool,
+        preferred: bool,
+    ) {
+        let mut query_builder = db.pool().query_builder();
+        let query = query_builder.insert_query(
+            "protocols",
+            &["scan_id", "protocol_name", "enabled", "preferred"],
+        );
+        db.pool()
+            .execute(
+                &query,
+                vec![
+                    BindValue::Int64(scan_id),
+                    BindValue::String(name.to_string()),
+                    BindValue::Bool(enabled),
+                    BindValue::Bool(preferred),
+                ],
+            )
+            .await
+            .expect("protocol record should insert");
+    }
+
+    #[tokio::test]
+    async fn compares_enabled_protocols_by_identity_and_preference() {
+        let db = setup_db("scan-comparator-protocols").await;
+        let first = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+        let second = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+
+        insert_protocol(&db, first, "TLS 1.2", true, true).await;
+        insert_protocol(&db, first, "TLS 1.0", true, false).await;
+        insert_protocol(&db, first, "SSLv3", false, false).await;
+        insert_protocol(&db, second, "TLSv1.2", true, false).await;
+        insert_protocol(&db, second, "TLS 1.3", true, true).await;
+        insert_protocol(&db, second, "TLS 1.1", true, false).await;
+        insert_protocol(&db, second, "TLS 1.0", false, false).await;
+
+        let diff = ScanComparator::new(db)
+            .compare_protocols(first, second)
+            .await
+            .expect("protocols should compare");
+
+        assert_eq!(diff.added, ["TLS 1.1", "TLS 1.3"]);
+        assert_eq!(diff.removed, ["TLS 1.0"]);
+        assert_eq!(diff.unchanged, ["TLSv1.2"]);
+        assert_eq!(
+            diff.preferred_change,
+            Some((Some("TLS 1.2".to_string()), Some("TLS 1.3".to_string())))
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_protocol_query_failures_with_context() {
+        let db = setup_db("scan-comparator-protocol-query-error").await;
+        let crate::db::connection::DatabasePool::Sqlite(pool) = db.pool() else {
+            panic!("test database should use SQLite");
+        };
+        sqlx::query("DROP TABLE protocols")
+            .execute(pool)
+            .await
+            .expect("test should remove the protocols table");
+
+        let error = ScanComparator::new(db)
+            .compare_protocols(1, 2)
+            .await
+            .expect_err("missing protocol table should fail the comparison");
+
+        assert!(error.to_string().contains("Failed to fetch protocols"));
+    }
+}
