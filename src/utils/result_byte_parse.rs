@@ -59,6 +59,35 @@ pub(crate) fn slice_range<'a>(
         .ok_or_else(|| parse_error(context, "truncated"))
 }
 
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+
+    #[test]
+    fn reads_integer_fields_and_rejects_truncated_or_overflowing_ranges() {
+        let data = [0x12, 0x34, 0x56, 0x78];
+
+        assert_eq!(read_u8_at(&data, 0, "value").unwrap(), 0x12);
+        assert_eq!(read_u16_at(&data, 1, "value").unwrap(), 0x3456);
+        assert_eq!(read_u24_at(&data, 1, "value").unwrap(), 0x345678);
+
+        assert!(read_u8_at(&data, data.len(), "value").is_err());
+        assert!(read_u16_at(&data, data.len() - 1, "value").is_err());
+        assert!(read_u16_at(&data, usize::MAX, "value").is_err());
+        assert!(read_u24_at(&data, data.len() - 2, "value").is_err());
+        assert!(read_u24_at(&data, usize::MAX, "value").is_err());
+    }
+
+    #[test]
+    fn slices_ranges_and_rejects_truncation_or_overflow() {
+        let data = [0x12, 0x34, 0x56];
+
+        assert_eq!(slice_range(&data, 1, 2, "value").unwrap(), &[0x34, 0x56]);
+        assert!(slice_range(&data, 2, 2, "value").is_err());
+        assert!(slice_range(&data, usize::MAX, 1, "value").is_err());
+    }
+}
+
 #[cfg(all(test, feature = "ct"))]
 mod tests {
     use super::*;
@@ -72,5 +101,6 @@ mod tests {
             0x0123_4567_89ab_cdef
         );
         assert!(read_u64_at(&data, 2, "value").is_err());
+        assert!(read_u64_at(&data, usize::MAX, "value").is_err());
     }
 }
