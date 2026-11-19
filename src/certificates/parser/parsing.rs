@@ -745,6 +745,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_certificate_rejects_invalid_der() {
+        let error = CertificateParser::parse_certificate(&[0xff, 0x00])
+            .expect_err("malformed DER must not be accepted as a certificate");
+
+        assert!(error.to_string().contains("Failed to parse certificate"));
+    }
+
+    #[test]
     fn test_parse_certificate_ec_key_reports_ec_algorithm_and_passes_strength() {
         use openssl::asn1::Asn1Time;
         use openssl::ec::{EcGroup, EcKey};
