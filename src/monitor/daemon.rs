@@ -1247,6 +1247,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_expiry_warning_obeys_disabled_and_cumulative_thresholds() {
+        let channel = RecordingChannel::default();
+        let recorded_alerts = Arc::clone(&channel.alerts);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(channel));
+        let no_thresholds = crate::monitor::types::AlertThresholds {
+            expiry_30d: false,
+            expiry_14d: false,
+            expiry_7d: false,
+            expiry_1d: false,
+            on_change: false,
+        };
+        let date_threshold = crate::monitor::types::AlertThresholds {
+            expiry_30d: true,
+            ..no_thresholds.clone()
+        };
+
+        MonitorDaemon::check_expiry_warnings(
+            "disabled.example:443",
+            &test_certificate("not-a-date".to_string()),
+            &no_thresholds,
+            &alert_manager,
+        )
+        .await
+        .expect("disabled expiry alerts should tolerate an invalid date");
+        MonitorDaemon::check_expiry_warnings(
+            "outside.example:443",
+            &test_certificate((Utc::now() + chrono::Duration::days(45)).to_rfc3339()),
+            &date_threshold,
+            &alert_manager,
+        )
+        .await
+        .expect("a certificate beyond the configured window should not alert");
+        assert!(recorded_alerts.lock().await.is_empty());
+
+        MonitorDaemon::check_expiry_warnings(
+            "inside.example:443",
+            &test_certificate((Utc::now() + chrono::Duration::days(10)).to_rfc3339()),
+            &date_threshold,
+            &alert_manager,
+        )
+        .await
+        .expect("the cumulative 30-day threshold should alert within its window");
+        let alerts = recorded_alerts.lock().await;
+        assert_eq!(alerts.len(), 1);
+        assert!(matches!(
+            alerts[0].alert_type,
+            AlertType::ExpiryWarning { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn test_load_domains_empty_file() -> Result<()> {
         let config = MonitorConfig::default();
         let daemon = MonitorDaemon::new(config)
