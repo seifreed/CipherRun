@@ -630,6 +630,88 @@ mod tests {
         assert!(!logs.contains("api.rate_limit.auth_missing"), "{logs}");
     }
 
+    #[tokio::test]
+    async fn middleware_adds_limit_headers_rejects_excess_and_honors_bypasses() {
+        let config = ApiConfig {
+            rate_limit_per_minute: 1,
+            ..ApiConfig::default()
+        };
+        let state = Arc::new(AppState::new(config).unwrap());
+        let app = Router::new()
+            .route("/protected", get(|| async { StatusCode::NO_CONTENT }))
+            .route("/api/v1/health", get(|| async { StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
+            .with_state(state);
+
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let mut user_request = Request::builder()
+            .uri("/protected")
+            .body(Body::empty())
+            .unwrap();
+        user_request.extensions_mut().insert(AuthExtension {
+            permission: Permission::User,
+            key_id: "user-key".to_string(),
+            principal_id: "user".to_string(),
+            tenant_id: None,
+        });
+        let allowed = app.clone().oneshot(user_request).await.unwrap();
+        assert_eq!(allowed.status(), StatusCode::NO_CONTENT);
+        assert_eq!(allowed.headers()["X-RateLimit-Limit"], "1");
+        assert_eq!(allowed.headers()["X-RateLimit-Remaining"], "0");
+        assert!(allowed.headers().contains_key("X-RateLimit-Reset"));
+
+        let mut limited_request = Request::builder()
+            .uri("/protected")
+            .body(Body::empty())
+            .unwrap();
+        limited_request.extensions_mut().insert(AuthExtension {
+            permission: Permission::User,
+            key_id: "user-key".to_string(),
+            principal_id: "user".to_string(),
+            tenant_id: None,
+        });
+        let limited = app.clone().oneshot(limited_request).await.unwrap();
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(limited.headers()["X-RateLimit-Remaining"], "0");
+        assert!(limited.headers().contains_key("Retry-After"));
+
+        let mut admin_request = Request::builder()
+            .uri("/protected")
+            .body(Body::empty())
+            .unwrap();
+        admin_request.extensions_mut().insert(AuthExtension {
+            permission: Permission::Admin,
+            key_id: "admin-key".to_string(),
+            principal_id: "admin".to_string(),
+            tenant_id: None,
+        });
+        let admin = app.clone().oneshot(admin_request).await.unwrap();
+        assert_eq!(admin.status(), StatusCode::NO_CONTENT);
+        assert!(!admin.headers().contains_key("X-RateLimit-Limit"));
+
+        let unauthenticated = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::NO_CONTENT);
+    }
+
     #[test]
     fn cleanup_logs_poisoned_index_without_sensitive_context() {
         let limiter = PerKeyRateLimiter::new(100);
