@@ -1349,6 +1349,68 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn shutdown_before_start_exits_without_dequeuing_jobs() {
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: ScanJob::new("unused.example".to_string(), ScanOptions::full(), None),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+
+        executor.shutdown().await.unwrap();
+        executor.clone().start().await.unwrap();
+
+        assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 0);
+    }
+
+    struct RecordingResultsStore(AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl ScanResultsStore for RecordingResultsStore {
+        async fn store_scan(&self, _scan: &PersistedScan) -> Result<i64> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(42)
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_results_is_optional_and_stores_owner_context_when_configured() {
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: ScanJob::new("unused.example".to_string(), ScanOptions::full(), None),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "principal-1".to_string();
+        job.tenant_id = Some("tenant-1".to_string());
+        job.created_by_key_id = "key-1".to_string();
+        let results = ScanResults {
+            target: job.target.clone(),
+            ..Default::default()
+        };
+        let without_store = ScanExecutor::new(queue.clone(), 1);
+        without_store.persist_results(&job, &results).await.unwrap();
+
+        let store = Arc::new(RecordingResultsStore(AtomicUsize::new(0)));
+        let with_store = ScanExecutor::new(queue, 1).with_results_store(store.clone());
+        with_store.persist_results(&job, &results).await.unwrap();
+
+        assert_eq!(store.0.load(Ordering::SeqCst), 1);
+    }
+
     struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
 
     struct CapturedWriter(Arc<std::sync::Mutex<Vec<u8>>>);
