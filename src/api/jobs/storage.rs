@@ -249,6 +249,29 @@ mod tests {
     }
 
     #[test]
+    fn test_load_all_jobs_loads_valid_jobs_and_ignores_other_files() {
+        let (temp_dir, storage) = temp_storage();
+        let job = test_job();
+        write_job(&temp_dir, &job);
+        std::fs::write(temp_dir.path().join("notes.txt"), "not a job")
+            .expect("unrelated file should be written");
+
+        let jobs = storage.load_all_jobs().expect("valid jobs should load");
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, job.id);
+    }
+
+    #[test]
+    fn test_delete_missing_job_is_idempotent() {
+        let (_temp_dir, storage) = temp_storage();
+
+        storage
+            .delete_job(&Uuid::new_v4().to_string())
+            .expect("deleting a missing job should succeed");
+    }
+
+    #[test]
     fn test_load_all_jobs_reports_corrupt_job_file() {
         let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
