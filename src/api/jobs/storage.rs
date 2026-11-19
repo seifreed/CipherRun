@@ -321,6 +321,14 @@ mod tests {
     }
 
     #[test]
+    fn test_read_job_file_reports_missing_file() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let path = temp_dir.path().join("missing.json");
+
+        assert!(FileJobStorage::read_job_file(&path).is_err());
+    }
+
+    #[test]
     fn test_load_all_jobs_rejects_oversized_file_before_read() {
         let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
