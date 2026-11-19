@@ -1086,6 +1086,83 @@ enable_swagger = true
     }
 
     #[tokio::test]
+    async fn runtime_store_rolls_back_rejected_and_unpersisted_credential_changes() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let missing_path = dir.path().join("missing").join("api.toml");
+        let mut config = ApiConfig::default();
+        config.credentials.push(ApiCredential::from_secret(
+            "runtime-key".to_string(),
+            "old-secret",
+            "runtime-principal".to_string(),
+            Some("tenant".to_string()),
+            Permission::User,
+        ));
+        let store = ApiCredentialStore::new_with_persist_path(&config, Some(missing_path));
+
+        assert_eq!(store.list().await.len(), 1);
+        assert!(
+            store
+                .insert(ApiCredential::from_secret(
+                    "runtime-key".to_string(),
+                    "duplicate-secret",
+                    "another-principal".to_string(),
+                    None,
+                    Permission::User,
+                ))
+                .await
+                .is_err()
+        );
+        assert!(store.rotate("missing-key", "secret", None).await.is_err());
+        assert!(store.revoke("missing-key").await.is_err());
+
+        let expired_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+        assert!(
+            store
+                .rotate("runtime-key", "expired-secret", Some(expired_at))
+                .await
+                .is_err()
+        );
+        assert!(store.authenticate_key("old-secret").await.is_some());
+
+        assert!(
+            store
+                .rotate("runtime-key", "unpersisted-secret", None)
+                .await
+                .is_err()
+        );
+        assert!(store.authenticate_key("old-secret").await.is_some());
+        assert!(store.authenticate_key("unpersisted-secret").await.is_none());
+        assert!(store.revoke("runtime-key").await.is_err());
+        assert!(store.authenticate_key("old-secret").await.is_some());
+
+        assert!(
+            store
+                .insert(ApiCredential::from_secret(
+                    "new-key".to_string(),
+                    "new-secret",
+                    "new-principal".to_string(),
+                    None,
+                    Permission::User,
+                ))
+                .await
+                .is_err()
+        );
+        assert_eq!(store.list().await.len(), 1);
+
+        let mut admin_config = ApiConfig::default();
+        admin_config.credentials.push(ApiCredential::from_secret(
+            "only-admin".to_string(),
+            "admin-secret",
+            "admin".to_string(),
+            None,
+            Permission::Admin,
+        ));
+        let admin_store = ApiCredentialStore::new(&admin_config);
+        assert!(admin_store.revoke("only-admin").await.is_err());
+        assert!(admin_store.authenticate_key("admin-secret").await.is_some());
+    }
+
+    #[tokio::test]
     async fn runtime_store_persists_rotation_and_revocation() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
         let path = dir.path().join("api.toml");
