@@ -578,11 +578,39 @@ mod tests {
     use super::*;
     use crate::ct_logs::CertType;
     use crate::ct_logs::parser::Certificate;
+    use axum::{Json, Router, extract::State, routing::get};
     use chrono::Utc;
     use std::io::Write;
     use std::sync::Mutex;
     use tracing::instrument::WithSubscriber;
     use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Default)]
+    struct EmptyEntriesState {
+        shutdown: Arc<AtomicBool>,
+        tree_size_requests: std::sync::atomic::AtomicUsize,
+        entries_requests: std::sync::atomic::AtomicUsize,
+    }
+
+    async fn test_tree_size(
+        State(state): State<Arc<EmptyEntriesState>>,
+    ) -> Json<serde_json::Value> {
+        state.tree_size_requests.fetch_add(1, Ordering::SeqCst);
+        Json(serde_json::json!({
+            "tree_size": 1,
+            "timestamp": 0,
+            "sha256_root_hash": "",
+            "tree_head_signature": ""
+        }))
+    }
+
+    async fn test_empty_entries(
+        State(state): State<Arc<EmptyEntriesState>>,
+    ) -> Json<serde_json::Value> {
+        state.entries_requests.fetch_add(1, Ordering::SeqCst);
+        state.shutdown.store(true, Ordering::Release);
+        Json(serde_json::json!({ "entries": [] }))
+    }
 
     #[derive(Clone)]
     struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
@@ -744,6 +772,38 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "source_stopped");
         assert!(event["fields"]["duration_ms"].as_u64().is_some());
         assert!(!String::from_utf8_lossy(&output).contains("sensitive-url"));
+    }
+
+    #[tokio::test]
+    async fn empty_ct_log_batch_retries_without_advancing_past_missing_entries() {
+        let state = Arc::new(EmptyEntriesState::default());
+        let app = Router::new()
+            .route("/ct/v1/get-sth", get(test_tree_size))
+            .route("/ct/v1/get-entries", get(test_empty_entries))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (tx, _rx) = mpsc::channel(1);
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            format!("http://{address}"),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::clone(&state.shutdown),
+            CtConfig {
+                custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                ..CtConfig::default()
+            },
+        )
+        .await;
+
+        assert_eq!(state.tree_size_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 
     #[test]
