@@ -66,4 +66,15 @@ mod tests {
         assert!(result.inconclusive);
         assert!(!result.cbc_supported);
     }
+
+    #[test]
+    fn unsupported_cbc_marks_result_safe_and_conclusive() {
+        let result = Lucky13TestResult::from_cbc_status(CbcCipherSupportStatus::NotSupported);
+
+        assert!(!result.vulnerable);
+        assert!(!result.partially_vulnerable);
+        assert!(!result.cbc_supported);
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("does not support CBC"));
+    }
 }
