@@ -164,6 +164,27 @@ mod tests {
     }
 
     #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_requires_explicit_api_configuration() {
+        let error = run_worker(&Args::default())
+            .await
+            .expect_err("worker without an API config must be rejected");
+        assert!(error.to_string().contains("--worker requires --api-config"));
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_requires_explicit_database_configuration() {
+        let mut args = Args::default();
+        args.api_server.config = Some("unused-api.toml".into());
+
+        let error = run_worker(&args)
+            .await
+            .expect_err("worker without a database config must be rejected");
+        assert!(error.to_string().contains("--worker requires --db-config"));
+    }
+
+    #[cfg(feature = "api")]
     #[test]
     fn worker_started_event_includes_startup_duration_and_concurrency() {
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
