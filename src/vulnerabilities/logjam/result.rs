@@ -139,4 +139,63 @@ mod tests {
         assert!(!result.vulnerable);
         assert!(result.inconclusive);
     }
+
+    #[test]
+    fn remaining_probe_outcomes_have_specific_results_and_details() {
+        let export = LogjamTestResult::from_probe_results(
+            true,
+            true,
+            WeakDhStatus::Strong,
+            Vec::new(),
+            true,
+        );
+        assert!(export.vulnerable);
+        assert!(!export.inconclusive);
+        assert!(export.details.contains("Export-grade DH supported"));
+
+        let rejected_weak_dh = LogjamTestResult::from_probe_results(
+            false,
+            false,
+            WeakDhStatus::Weak { bits: 0 },
+            Vec::new(),
+            false,
+        );
+        assert!(
+            rejected_weak_dh
+                .details
+                .contains("rejected by the TLS library")
+        );
+
+        let strong_dhe = LogjamTestResult::from_probe_results(
+            false,
+            false,
+            WeakDhStatus::Strong,
+            vec!["DHE-RSA-AES128-SHA".to_string()],
+            false,
+        );
+        assert!(!strong_dhe.vulnerable);
+        assert!(
+            strong_dhe
+                .details
+                .contains("DHE supported with strong parameters")
+        );
+
+        let no_dhe = LogjamTestResult::from_probe_results(
+            false,
+            false,
+            WeakDhStatus::Strong,
+            Vec::new(),
+            false,
+        );
+        assert!(no_dhe.details.contains("DHE not supported"));
+
+        let weak_dh_inconclusive = LogjamTestResult::from_probe_results(
+            false,
+            false,
+            WeakDhStatus::Inconclusive,
+            Vec::new(),
+            false,
+        );
+        assert!(weak_dh_inconclusive.inconclusive);
+    }
 }
