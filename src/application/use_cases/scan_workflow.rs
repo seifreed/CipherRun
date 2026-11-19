@@ -211,3 +211,167 @@ impl ScanWorkflow {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::{ComplianceEvaluatorPort, ScanResults, ScannerPort};
+    use async_trait::async_trait;
+
+    struct EmptyScanner;
+
+    #[async_trait]
+    impl ScannerPort for EmptyScanner {
+        async fn scan(&self, _request: ScanRequest) -> Result<ScanResults> {
+            Ok(ScanResults::default())
+        }
+    }
+
+    struct FailingScanner;
+
+    #[async_trait]
+    impl ScannerPort for FailingScanner {
+        async fn scan(&self, _request: ScanRequest) -> Result<ScanResults> {
+            Err(crate::TlsError::InvalidInput {
+                message: "invalid test target".to_string(),
+            })
+        }
+    }
+
+    struct UnusedComplianceEvaluator;
+
+    impl ComplianceEvaluatorPort for UnusedComplianceEvaluator {
+        fn evaluate(
+            &self,
+            _framework: &crate::compliance::ComplianceFramework,
+            _assessment: &ScanAssessment,
+        ) -> Result<crate::compliance::ComplianceReport> {
+            unreachable!("missing framework source should fail before evaluation")
+        }
+    }
+
+    struct UnusedPolicyEvaluator;
+
+    impl crate::application::PolicyEvaluatorPort for UnusedPolicyEvaluator {
+        fn evaluate(
+            &self,
+            _policy: &crate::policy::Policy,
+            _assessment: &ScanAssessment,
+        ) -> Result<crate::policy::PolicyResult> {
+            unreachable!("missing policy source should fail before evaluation")
+        }
+    }
+
+    fn make_services(scanner_port: Arc<dyn ScannerPort>) -> ScanWorkflowServices {
+        ScanWorkflowServices {
+            scanner_port,
+            compliance_framework_source: None,
+            compliance_evaluator: None,
+            policy_source: None,
+            policy_evaluator: None,
+            scan_results_store_factory: None,
+        }
+    }
+
+    fn default_input() -> ScanWorkflowInput {
+        ScanWorkflowInput::default()
+    }
+
+    fn is_config_error(result: Result<ScanExecutionReport>) -> bool {
+        matches!(result, Err(crate::TlsError::ConfigError { .. }))
+    }
+
+    #[tokio::test]
+    async fn execute_returns_scan_report_without_optional_operations() {
+        let services = make_services(Arc::new(EmptyScanner));
+
+        let report = ScanWorkflow::execute(default_input(), &services)
+            .await
+            .expect("default workflow should succeed");
+
+        assert!(!report.has_compliance_report());
+        assert!(!report.has_policy_result());
+        assert!(!report.has_stored_scan());
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_persistence_without_database_path() {
+        let services = make_services(Arc::new(EmptyScanner));
+        let input = ScanWorkflowInput {
+            store_results: true,
+            ..default_input()
+        };
+
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_reports_missing_compliance_dependencies() {
+        let services = make_services(Arc::new(EmptyScanner));
+        let input = ScanWorkflowInput {
+            compliance_framework: Some("baseline".to_string()),
+            ..default_input()
+        };
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+
+        let mut services = make_services(Arc::new(EmptyScanner));
+        services.compliance_evaluator = Some(Arc::new(UnusedComplianceEvaluator));
+        let input = ScanWorkflowInput {
+            compliance_framework: Some("baseline".to_string()),
+            ..default_input()
+        };
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_reports_missing_policy_dependencies() {
+        let services = make_services(Arc::new(EmptyScanner));
+        let input = ScanWorkflowInput {
+            policy_path: Some(PathBuf::from("policy.yaml")),
+            ..default_input()
+        };
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+
+        let mut services = make_services(Arc::new(EmptyScanner));
+        services.policy_evaluator = Some(Arc::new(UnusedPolicyEvaluator));
+        let input = ScanWorkflowInput {
+            policy_path: Some(PathBuf::from("policy.yaml")),
+            ..default_input()
+        };
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_reports_missing_results_store_factory() {
+        let services = make_services(Arc::new(EmptyScanner));
+        let input = ScanWorkflowInput {
+            store_results: true,
+            database_config_path: Some(PathBuf::from("database.toml")),
+            ..default_input()
+        };
+
+        assert!(is_config_error(
+            ScanWorkflow::execute(input, &services).await
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_scanner_errors() {
+        let services = make_services(Arc::new(FailingScanner));
+
+        assert!(matches!(
+            ScanWorkflow::execute(default_input(), &services).await,
+            Err(crate::TlsError::InvalidInput { .. })
+        ));
+    }
+}
