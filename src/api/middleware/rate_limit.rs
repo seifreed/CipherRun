@@ -762,6 +762,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn repeated_key_access_rebuilds_its_lru_index_entry() {
+        let limiter = PerKeyRateLimiter::new(10);
+        assert!(matches!(
+            limiter.check("reused-key"),
+            RateLimitResult::Allowed { .. }
+        ));
+        let old_timestamp = limiter
+            .limiters
+            .get("reused-key")
+            .expect("key should be indexed")
+            .last_access;
+
+        // Exercise the stale-index path as well as removal of an emptied timestamp bucket.
+        limiter.access_index.write().unwrap().remove(&old_timestamp);
+        assert!(matches!(
+            limiter.check("reused-key"),
+            RateLimitResult::Allowed { .. }
+        ));
+        assert!(matches!(
+            limiter.check("reused-key"),
+            RateLimitResult::Allowed { .. }
+        ));
+
+        let index = limiter.access_index.read().unwrap();
+        let references = index
+            .values()
+            .flat_map(|keys| keys.iter())
+            .filter(|key| key.as_str() == "reused-key")
+            .count();
+        assert_eq!(references, 1);
+        assert!(!index.contains_key(&old_timestamp));
+    }
+
+    #[test]
+    fn rate_limit_checks_still_work_when_access_index_is_poisoned() {
+        let limiter = PerKeyRateLimiter::new(1);
+        let index = limiter.access_index.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = index.write().unwrap();
+            panic!("test-only lock poison");
+        })
+        .join();
+
+        assert!(matches!(
+            limiter.check("key"),
+            RateLimitResult::Allowed { limit: 1, .. }
+        ));
+    }
+
     /// I1/I2 regression: cleanup() is idempotent and leaves the live index
     /// consistent with the DashMap after a run. Repeated invocations on a
     /// small set of keys must not corrupt state or remove live entries.
