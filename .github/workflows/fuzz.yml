@@ -22,6 +22,8 @@ jobs:
 
       - name: Setup Rust nightly
         uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
+        with:
+          components: rust-src
 
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@82fc405565b9cf90abfe700ba43b4751ce2fe422 # cargo-fuzz
@@ -29,4 +31,4 @@ jobs:
           tool: cargo-fuzz
 
       - name: Run fuzz target
-        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=120
+        run: cargo fuzz run ${{ matrix.target }} --target x86_64-unknown-linux-gnu -- -max_total_time=120
