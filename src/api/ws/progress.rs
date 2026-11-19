@@ -498,6 +498,29 @@ mod tests {
         assert_eq!(connected["type"], "connected");
         assert_eq!(connected["scan_id"], "requested-scan");
 
+        socket
+            .send(ClientMessage::Ping(vec![1].into()))
+            .await
+            .expect("ping should send");
+        let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("server should answer the ping")
+            .expect("websocket should remain open")
+            .expect("pong receive should succeed");
+        assert!(matches!(pong, ClientMessage::Pong(_)));
+        socket
+            .send(ClientMessage::Text("client command".into()))
+            .await
+            .expect("text frame should send");
+        socket
+            .send(ClientMessage::Binary(vec![1].into()))
+            .await
+            .expect("binary frame should send");
+        socket
+            .send(ClientMessage::Pong(vec![2].into()))
+            .await
+            .expect("pong frame should send");
+
         tx.send(ProgressMessage::new("other-scan", 10, "ignored"))
             .expect("other scan progress should broadcast");
         tx.send(ProgressMessage::new("requested-scan", 25, "running"))
