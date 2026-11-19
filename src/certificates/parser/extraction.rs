@@ -1,4 +1,6 @@
 use crate::Result;
+use openssl::error::ErrorStack;
+use openssl::string::OpensslString;
 use openssl::x509::X509 as OpensslX509;
 use x509_parser::prelude::*;
 
@@ -116,24 +118,21 @@ pub(crate) fn extract_rsa_exponent(der_bytes: &[u8]) -> Result<Option<String>> {
 
     // Try to extract RSA key - returns None if not RSA
     match public_key.rsa() {
-        Ok(rsa) => {
-            // Get the public exponent
-            let exponent = rsa.e();
-            // Convert BigNum to decimal string
-            let exponent_str = exponent.to_dec_str().map_err(|e| {
-                crate::error::TlsError::Other(format!(
-                    "Failed to convert exponent to string: {}",
-                    e
-                ))
-            })?;
-            // Format as "e {number}" to match SSL Labs format
-            Ok(Some(format!("e {}", exponent_str)))
-        }
+        Ok(rsa) => format_rsa_exponent(rsa.e().to_dec_str()),
         Err(_) => {
             // Not an RSA key (could be ECDSA, EdDSA, etc.)
             Ok(None)
         }
     }
+}
+
+fn format_rsa_exponent(
+    exponent: std::result::Result<OpensslString, ErrorStack>,
+) -> Result<Option<String>> {
+    let exponent_str = exponent.map_err(|e| {
+        crate::error::TlsError::Other(format!("Failed to convert exponent to string: {}", e))
+    })?;
+    Ok(Some(format!("e {}", exponent_str)))
 }
 
 /// Extract Authority Information Access (AIA) CA Issuers URL from certificate
@@ -188,6 +187,98 @@ pub(crate) fn extract_aia_url(cert: &X509Certificate) -> Result<Option<String>> 
 mod tests {
     use super::*;
 
+    fn certificate_der(extension: Option<(&str, &str)>, ec_key: bool) -> Vec<u8> {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let key = if ec_key {
+            use openssl::ec::{EcGroup, EcKey};
+            use openssl::nid::Nid;
+            PKey::from_ec_key(
+                EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+            )
+            .unwrap()
+        } else {
+            PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap()
+        };
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "extraction-test.example.com")
+            .unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        if let Some((name, value)) = extension {
+            #[allow(deprecated)]
+            let extension = {
+                let context = builder.x509v3_context(None, None);
+                X509Extension::new(None, Some(&context), name, value).unwrap()
+            };
+            builder.append_extension(extension).unwrap();
+        }
+
+        builder.sign(&key, MessageDigest::sha256()).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
+    fn certificate_der_with_raw_extension(
+        oid: &str,
+        der_contents: &[u8],
+        duplicate: bool,
+    ) -> Vec<u8> {
+        use openssl::asn1::{Asn1Object, Asn1OctetString, Asn1Time};
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509Extension, X509NameBuilder};
+
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "extraction-test.example.com")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        let oid = Asn1Object::from_str(oid).unwrap();
+        let contents = Asn1OctetString::new_from_bytes(der_contents).unwrap();
+        builder
+            .append_extension(X509Extension::new_from_der(&oid, false, &contents).unwrap())
+            .unwrap();
+        if duplicate {
+            builder
+                .append_extension(X509Extension::new_from_der(&oid, false, &contents).unwrap())
+                .unwrap();
+        }
+        builder.sign(&key, MessageDigest::sha256()).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
+    fn parsed_certificate(der: &[u8]) -> X509Certificate<'_> {
+        X509Certificate::from_der(der)
+            .expect("generated certificate should parse")
+            .1
+    }
+
     #[test]
     fn test_ev_oids_list() {
         // Test that the EV OIDs list contains known EV CAs
@@ -209,5 +300,104 @@ mod tests {
             assert!(!EV_POLICY_OIDS.is_empty());
         }
         assert!(EV_POLICY_OIDS.len() > 20); // Should have many known EV OIDs
+    }
+
+    #[test]
+    fn extended_validation_handles_missing_and_known_policy_extensions() {
+        let der = certificate_der(None, false);
+        assert_eq!(
+            check_extended_validation(&parsed_certificate(&der)).unwrap(),
+            (false, vec![])
+        );
+
+        let der = certificate_der_with_raw_extension(
+            "2.5.29.32",
+            &[
+                0x30, 0x09, 0x30, 0x07, 0x06, 0x05, 0x67, 0x81, 0x0c, 0x01, 0x01,
+            ],
+            false,
+        );
+        let (is_ev, policies) = check_extended_validation(&parsed_certificate(&der)).unwrap();
+        assert!(is_ev);
+        assert_eq!(policies, ["2.23.140.1.1"]);
+
+        let der = certificate_der_with_raw_extension(
+            "2.5.29.32",
+            &[0x30, 0x07, 0x30, 0x05, 0x06, 0x03, 0x2a, 0x03, 0x04],
+            false,
+        );
+        let (is_ev, policies) = check_extended_validation(&parsed_certificate(&der)).unwrap();
+        assert!(!is_ev);
+        assert_eq!(policies, ["1.2.3.4"]);
+
+        let malformed = certificate_der_with_raw_extension("2.5.29.32", &[0x05, 0x00], false);
+        assert!(check_extended_validation(&parsed_certificate(&malformed)).is_err());
+
+        let duplicate = certificate_der_with_raw_extension(
+            "2.5.29.32",
+            &[
+                0x30, 0x09, 0x30, 0x07, 0x06, 0x05, 0x67, 0x81, 0x0c, 0x01, 0x01,
+            ],
+            true,
+        );
+        assert!(check_extended_validation(&parsed_certificate(&duplicate)).is_err());
+    }
+
+    #[test]
+    fn rsa_exponent_extracts_rsa_and_skips_other_keys() {
+        let rsa_der = certificate_der(None, false);
+        assert_eq!(
+            extract_rsa_exponent(&rsa_der).unwrap().as_deref(),
+            Some("e 65537")
+        );
+
+        let ec_der = certificate_der(None, true);
+        assert_eq!(extract_rsa_exponent(&ec_der).unwrap(), None);
+        assert!(extract_rsa_exponent(&[0xff, 0x00]).is_err());
+
+        let mut invalid_key_der = certificate_der(None, false);
+        let (key_offset, key_len) = {
+            let cert = parsed_certificate(&invalid_key_der);
+            let key = &cert.tbs_certificate.subject_pki.subject_public_key.data;
+            (
+                key.as_ptr() as usize - invalid_key_der.as_ptr() as usize,
+                key.len(),
+            )
+        };
+        invalid_key_der[key_offset..key_offset + key_len].fill(0);
+        let error = extract_rsa_exponent(&invalid_key_der).unwrap_err();
+        assert!(error.to_string().contains("Failed to extract public key"));
+
+        assert!(format_rsa_exponent(Err(ErrorStack::get())).is_err());
+    }
+
+    #[test]
+    fn aia_extraction_returns_issuer_url_or_none() {
+        let der = certificate_der(None, false);
+        assert_eq!(extract_aia_url(&parsed_certificate(&der)).unwrap(), None);
+
+        let duplicate =
+            certificate_der_with_raw_extension("1.3.6.1.5.5.7.1.1", &[0x30, 0x00], true);
+        assert!(extract_aia_url(&parsed_certificate(&duplicate)).is_err());
+
+        let der = certificate_der(
+            Some((
+                "authorityInfoAccess",
+                "caIssuers;URI:http://ca.example/issuer.crt",
+            )),
+            false,
+        );
+        assert_eq!(
+            extract_aia_url(&parsed_certificate(&der))
+                .unwrap()
+                .as_deref(),
+            Some("http://ca.example/issuer.crt")
+        );
+
+        let der = certificate_der(
+            Some(("authorityInfoAccess", "OCSP;URI:http://ocsp.example/")),
+            false,
+        );
+        assert_eq!(extract_aia_url(&parsed_certificate(&der)).unwrap(), None);
     }
 }
