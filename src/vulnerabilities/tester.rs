@@ -693,6 +693,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_requested_collects_selected_probe_failures_as_inconclusive() {
+        let mut request = ScanRequest::default();
+        request.scan.vulns.drown = true;
+        request.scan.vulns.poodle = true;
+        let scanner = VulnerabilityScanner::with_args(inactive_target(), &request);
+
+        let results = scanner
+            .test_requested()
+            .await
+            .expect("selected scan should succeed");
+
+        assert_eq!(results.len(), 6);
+        assert!(results.iter().all(|result| result.inconclusive));
+    }
+
+    #[tokio::test]
     async fn test_cache_ciphers_skips_quic_only() {
         let scanner = VulnerabilityScanner::new(example_target());
         let cache = scanner
