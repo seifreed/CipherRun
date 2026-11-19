@@ -1513,6 +1513,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_while_waiting_for_a_slot_requeues_the_job() {
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job.clone())),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        let permit = Arc::clone(&executor.semaphore)
+            .acquire_owned()
+            .await
+            .expect("semaphore should be open");
+        let handle = tokio::spawn(Arc::clone(&executor).start());
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queue.dequeue_calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("executor should dequeue the pending job");
+        executor.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if queue.job.lock().await.is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("job should be returned to the queue");
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("executor should drain after requeue")
+            .expect("executor task should join")
+            .unwrap();
+        drop(permit);
+
+        assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn closed_execution_semaphore_requeues_the_dequeued_job() {
         use tracing::instrument::WithSubscriber;
 
