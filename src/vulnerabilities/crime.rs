@@ -134,9 +134,7 @@ impl<'a> CrimeTester<'a> {
         )
         .await
         {
-            Ok(Ok(n)) if n > 11 => {
-                Ok(server_hello::tls_compression_status(&buffer[..n]))
-            }
+            Ok(Ok(n)) if n > 11 => Ok(server_hello::tls_compression_status(&buffer[..n])),
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
     }
@@ -182,9 +180,7 @@ impl<'a> CrimeTester<'a> {
         )
         .await
         {
-            Ok(Ok(n)) if n > 43 => {
-                Ok(server_hello::spdy_compression_status(&buffer[..n]))
-            }
+            Ok(Ok(n)) if n > 43 => Ok(server_hello::spdy_compression_status(&buffer[..n])),
             _ => Ok(CompressionProbeStatus::Inconclusive),
         }
     }

@@ -1,9 +1,9 @@
+use crate::Result;
 use crate::constants::{
     CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, HANDSHAKE_TYPE_FINISHED,
     VERSION_TLS_1_0,
 };
 use crate::utils::invalid_input_length::{u16_len, u24_len};
-use crate::Result;
 
 pub(super) fn invalid_client_key_exchange(variant: u8, key_len: usize) -> Result<Vec<u8>> {
     let record_body_len = key_len
