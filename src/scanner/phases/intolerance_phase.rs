@@ -88,6 +88,7 @@ impl ScanPhase for IntolerancePhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_intolerance_phase_should_run() {
@@ -120,5 +121,38 @@ mod tests {
     fn test_intolerance_phase_name() {
         let phase = IntolerancePhase::new();
         assert_eq!(phase.name(), "Testing TLS Intolerance");
+    }
+
+    #[test]
+    fn test_intolerance_phase_default() {
+        assert_eq!(
+            IntolerancePhase::default().name(),
+            "Testing TLS Intolerance"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_results_for_unreachable_target() {
+        let mut context = test_scan_context(ScanRequest::default());
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            9,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        IntolerancePhase::new()
+            .execute(&mut context)
+            .await
+            .expect("failed TLS probes should yield an inconclusive result");
+
+        assert!(
+            context
+                .results
+                .advanced
+                .as_ref()
+                .and_then(|results| results.intolerance.as_ref())
+                .is_some()
+        );
     }
 }
