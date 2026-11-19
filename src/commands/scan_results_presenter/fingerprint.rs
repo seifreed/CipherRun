@@ -122,4 +122,15 @@ mod tests {
 
         presenter.render_fingerprint_and_summary_sections(&formatter, &view);
     }
+
+    #[test]
+    fn skips_fingerprint_sections_when_no_results_are_available() {
+        let args = Args::default();
+        let formatter = ScannerFormatter::new(&args);
+        let presenter = ScanResultsPresenter::new(&args);
+        let results = ScanResults::default();
+        let view = ScanFingerprintView { results: &results };
+
+        presenter.render_fingerprint_and_summary_sections(&formatter, &view);
+    }
 }
