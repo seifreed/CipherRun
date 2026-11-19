@@ -80,6 +80,29 @@ fn test_mx_record_creation() {
     assert_mx_records(&[mx(10, "mx.example.com")], &[(10, "mx.example.com")]);
 }
 
+#[tokio::test]
+async fn serial_and_parallel_mx_scans_preserve_records_when_targets_are_invalid() {
+    let tester = MxTester::new("example.com".to_string());
+    let request = crate::application::ScanRequest::default();
+    let records = [mx(20, "invalid host"), mx(10, "also invalid")];
+
+    let serial = tester
+        .scan_all_mx_serial(&records, &request)
+        .await
+        .expect("serial fan-out should collect per-host errors");
+    assert_eq!(serial.len(), 2);
+    assert_eq!(serial[0].0.priority, 20);
+    assert!(serial.iter().all(|(_, result)| result.is_err()));
+
+    let parallel = tester
+        .scan_all_mx_parallel(&records, &request, 1)
+        .await
+        .expect("parallel fan-out should collect per-host errors");
+    assert_eq!(parallel.len(), 2);
+    assert_eq!(parallel[0].0.priority, 20);
+    assert!(parallel.iter().all(|(_, result)| result.is_err()));
+}
+
 #[test]
 fn test_parse_dig_output() {
     let tester = MxTester::new("example.com".to_string());
