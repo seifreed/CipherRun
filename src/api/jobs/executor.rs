@@ -1229,6 +1229,30 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn running_progress_is_broadcast_and_persisted_to_the_queue() {
+        let job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let (progress_tx, mut progress_rx) = broadcast::channel(1);
+
+        ScanExecutor::report_running_progress(&job, &queue, &progress_tx, 42, "test stage").await;
+
+        let progress = progress_rx.try_recv().unwrap();
+        assert_eq!(progress.scan_id, job.id);
+        assert_eq!(progress.progress, 42);
+        assert_eq!(progress.stage, "test stage");
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
