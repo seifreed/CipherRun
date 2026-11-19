@@ -136,3 +136,136 @@ fn rsa_key_len_from_certificate(
         message: "RSA key length does not fit in usize".to_string(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openssl::{
+        asn1::Asn1Time,
+        ec::{EcGroup, EcKey},
+        hash::MessageDigest,
+        nid::Nid,
+        pkey::PKey,
+        rsa::Rsa,
+        x509::{X509Builder, X509NameBuilder},
+    };
+
+    fn record(payload: &[u8]) -> Vec<u8> {
+        record_with_type(0x16, payload)
+    }
+
+    fn record_with_type(kind: u8, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![kind, 0x03, 0x03];
+        bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn handshake_message(kind: u8, body: &[u8]) -> Vec<u8> {
+        let length = body.len();
+        let mut bytes = vec![
+            kind,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    fn handshake(kind: u8, body: &[u8]) -> Vec<u8> {
+        record(&handshake_message(kind, body))
+    }
+
+    fn certificate_body(certificate_list: &[u8]) -> Vec<u8> {
+        let length = certificate_list.len();
+        let mut body = vec![(length >> 16) as u8, (length >> 8) as u8, length as u8];
+        body.extend_from_slice(certificate_list);
+        body
+    }
+
+    fn certificate(key: PKey<openssl::pkey::Private>) -> Vec<u8> {
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "robot.test").unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_version(2).unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&key, MessageDigest::sha256()).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
+    fn certificate_entry(der: &[u8]) -> Vec<u8> {
+        let mut entry = vec![
+            (der.len() >> 16) as u8,
+            (der.len() >> 8) as u8,
+            der.len() as u8,
+        ];
+        entry.extend_from_slice(der);
+        certificate_body(&entry)
+    }
+
+    fn parse_error(bytes: &[u8], expected: &str) {
+        let error = extract_rsa_key_len(bytes).expect_err("malformed certificate must fail");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+
+    #[test]
+    fn extracts_rsa_modulus_length_from_certificate_message() {
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let body = certificate_entry(&certificate(key));
+        let mut bytes = record_with_type(0x15, &[]);
+        bytes.extend_from_slice(&record(
+            &[handshake_message(0x02, &[]), handshake_message(0x0b, &body)].concat(),
+        ));
+        assert_eq!(extract_rsa_key_len(&bytes).unwrap(), 256);
+    }
+
+    #[test]
+    fn rejects_record_and_handshake_length_errors() {
+        parse_error(&[0x16, 0x03, 0x03, 0, 4, 1], "record length exceeds");
+        parse_error(&record(&[0x0b, 0]), "handshake header truncated");
+        parse_error(
+            &record(&[0x02, 0, 0, 4, 0]),
+            "handshake length exceeds record",
+        );
+        parse_error(
+            &handshake(0x02, &[0, 0, 0]),
+            "Unable to determine RSA key length",
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_certificate_message_lengths() {
+        parse_error(&handshake(0x0b, &[0; 5]), "Certificate message too short");
+        parse_error(
+            &handshake(0x0b, &[0, 0, 2, 0, 0, 0]),
+            "Certificate list length mismatch",
+        );
+        parse_error(
+            &handshake(0x0b, &certificate_body(&[0, 0, 1])),
+            "Certificate length exceeds list",
+        );
+        parse_error(
+            &handshake(0x0b, &certificate_body(&[0, 0, 1, 0xff])),
+            "Certificate DER parse failed",
+        );
+    }
+
+    #[test]
+    fn rejects_non_rsa_certificate_keys() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let ec_key = EcKey::generate(&group).unwrap();
+        let key = PKey::from_ec_key(ec_key).unwrap();
+        let body = certificate_entry(&certificate(key));
+        parse_error(&handshake(0x0b, &body), "Certificate RSA key parse failed");
+    }
+}
