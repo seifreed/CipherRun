@@ -43,6 +43,7 @@ members = [
     "crates/cipherrun-policy",
     "crates/cipherrun-protocol",
 ]
+exclude = ["fuzz"]
 resolver = "2"
 
 # SQLx 0.8 pins libsqlite3-sys to 0.30.x, whose bundled SQLite predates the
