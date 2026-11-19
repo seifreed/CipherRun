@@ -40,10 +40,6 @@ impl<'a> ScanPostPresenter<'a> {
             exit = self.merge_non_zero_exit(exit, CommandExit::policy_failure());
         }
 
-        if post_view.should_return_failure_exit() && exit.code() == 0 {
-            return CommandExit::policy_failure();
-        }
-
         exit
     }
 
@@ -74,9 +70,6 @@ impl<'a> ScanPostPresenter<'a> {
         use crate::compliance::{ComplianceStatus, Reporter};
         use colored::Colorize;
 
-        if !post_view.should_render_compliance_section() {
-            return Ok(None);
-        }
         let Some(compliance_report) = post_view.compliance_report() else {
             return Ok(None);
         };
@@ -127,9 +120,6 @@ impl<'a> ScanPostPresenter<'a> {
     }
 
     fn render_policy_section(&self, post_view: &ScanPostView<'_>) -> Result<Option<CommandExit>> {
-        if !post_view.should_render_policy_section() {
-            return Ok(None);
-        }
         let Some(policy_result) = post_view.policy_result() else {
             return Ok(None);
         };
