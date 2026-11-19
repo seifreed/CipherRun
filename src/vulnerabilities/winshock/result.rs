@@ -77,4 +77,30 @@ mod tests {
         assert!(result.schannel_detected);
         assert!(result.inconclusive);
     }
+
+    #[test]
+    fn handled_malformed_probe_is_conclusive_but_not_vulnerable() {
+        let result = WinshockTestResult::from_probe_status(
+            SchannelDetectionStatus::Detected,
+            Some(MalformedHandshakeStatus::Handled),
+        );
+
+        assert!(!result.vulnerable);
+        assert!(result.schannel_detected);
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("Likely patched or protected"));
+    }
+
+    #[test]
+    fn missing_schannel_detection_uses_the_not_detected_outcome() {
+        let result = WinshockTestResult::from_probe_status(
+            SchannelDetectionStatus::NotDetected,
+            Some(MalformedHandshakeStatus::Handled),
+        );
+
+        assert!(!result.vulnerable);
+        assert!(!result.schannel_detected);
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("Schannel not detected"));
+    }
 }
