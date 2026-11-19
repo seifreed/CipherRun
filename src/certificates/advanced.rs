@@ -1193,6 +1193,51 @@ mod tests {
     }
 
     #[test]
+    fn capture_callback_keeps_only_bounded_incoming_handshake_messages() {
+        let capture = HandshakeCapture::default();
+        let byte = 0x16u8;
+        let buffer = (&byte as *const u8).cast::<c_void>();
+        let argument = (&capture as *const HandshakeCapture)
+            .cast_mut()
+            .cast::<c_void>();
+
+        unsafe {
+            capture_tls_message(1, 0x0304, 22, buffer, 1, std::ptr::null_mut(), argument);
+            capture_tls_message(0, 0x0304, 21, buffer, 1, std::ptr::null_mut(), argument);
+            capture_tls_message(
+                0,
+                0x0304,
+                22,
+                std::ptr::null(),
+                1,
+                std::ptr::null_mut(),
+                argument,
+            );
+            capture_tls_message(
+                0,
+                0x0304,
+                22,
+                buffer,
+                1,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            capture_tls_message(
+                0,
+                0x0304,
+                22,
+                buffer,
+                16 * 1024 * 1024 + 1,
+                std::ptr::null_mut(),
+                argument,
+            );
+            capture_tls_message(0, 0x0304, 22, buffer, 1, std::ptr::null_mut(), argument);
+        }
+
+        assert_eq!(*capture.messages.lock().unwrap(), vec![vec![byte]]);
+    }
+
+    #[test]
     fn delegated_credential_parser_rejects_invalid_lengths_and_fields() {
         let mut zero_valid_time = vec![0; 16];
         zero_valid_time[8] = 1;
@@ -1282,6 +1327,35 @@ mod tests {
                 .expect_err("malformed Certificate messages should be rejected");
             assert!(error.to_string().contains(expected), "{error}");
         }
+    }
+
+    #[test]
+    fn transcript_without_delegated_credentials_returns_none() {
+        let mut transcript = vec![1, 0, 0, 0]; // non-Certificate handshake message
+        transcript.extend(certificate_message(&[0, 0, 0, 5, 0, 0, 0, 0, 0]));
+
+        assert_eq!(
+            analyze_delegated_credential_tls_transcript(
+                &transcript,
+                DelegatedCredentialRole::Server,
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn delegated_credential_digest_supports_rsa_and_ecdsa_sha2_schemes() {
+        for scheme in [0x0401, 0x0403, 0x0804, 0x0809] {
+            assert!(digest_for_signature_scheme(scheme).is_some(), "{scheme:#x}");
+        }
+        for scheme in [0x0501, 0x0503, 0x0805, 0x080a] {
+            assert!(digest_for_signature_scheme(scheme).is_some(), "{scheme:#x}");
+        }
+        for scheme in [0x0601, 0x0603, 0x0806, 0x080b] {
+            assert!(digest_for_signature_scheme(scheme).is_some(), "{scheme:#x}");
+        }
+        assert!(digest_for_signature_scheme(0x9999).is_none());
     }
 
     #[test]
@@ -1595,6 +1669,59 @@ mod tests {
         assert_eq!(analysis.signature_verified, Some(true));
         assert_eq!(analysis.credential_signature_scheme, Some(0x0401));
         assert_eq!(analysis.signature_scheme, Some(0x0401));
+    }
+
+    #[test]
+    fn delegated_credential_entry_verifies_rsa_pss_signature() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "delegated-credential.example")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let certificate = builder.build().to_der().unwrap();
+        let public_key = pkey.public_key_to_der().unwrap();
+        let mut extension = vec![0, 0, 0, 60, 0x04, 0x01];
+        extension.extend_from_slice(&[
+            0,
+            ((public_key.len() >> 8) & 0xff) as u8,
+            (public_key.len() & 0xff) as u8,
+        ]);
+        extension.extend_from_slice(&public_key);
+        let credential_end = extension.len();
+        let signature_scheme = 0x0804u16;
+        let mut signed = vec![0x20; 64];
+        signed.extend_from_slice(DelegatedCredentialRole::Server.context());
+        signed.push(0);
+        signed.extend_from_slice(&certificate);
+        signed.extend_from_slice(&extension[..credential_end]);
+        signed.extend_from_slice(&signature_scheme.to_be_bytes());
+        let mut signer = Signer::new(MessageDigest::sha256(), &pkey).unwrap();
+        signer.set_rsa_padding(Padding::PKCS1_PSS).unwrap();
+        signer
+            .set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)
+            .unwrap();
+        signer.update(&signed).unwrap();
+        let signature = signer.sign_to_vec().unwrap();
+        extension.extend_from_slice(&signature_scheme.to_be_bytes());
+        extension.extend_from_slice(&(signature.len() as u16).to_be_bytes());
+        extension.extend_from_slice(&signature);
+
+        let analysis = analyze_delegated_credential_entry(&certificate, &extension)
+            .expect("RSA-PSS delegated credential should parse");
+        assert_eq!(analysis.status, "verified");
+        assert_eq!(analysis.signature_verified, Some(true));
     }
 
     #[test]
