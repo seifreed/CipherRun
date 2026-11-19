@@ -334,6 +334,49 @@ async fn test_beast_inactive_target_is_inconclusive() {
     assert!(result.details.to_ascii_lowercase().contains("inconclusive"));
 }
 
+#[tokio::test]
+async fn test_inactive_target_does_not_trigger_other_vulnerability_verdicts() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let target = Target::with_ips(
+        "localhost".to_string(),
+        port,
+        vec!["127.0.0.1".parse().unwrap()],
+    )
+    .unwrap();
+    let scanner = super::VulnerabilityScanner::new(target);
+
+    for (name, result) in [
+        (
+            "starttls injection",
+            scanner.test_starttls_injection().await,
+        ),
+        ("RC4", scanner.test_rc4().await),
+        ("null ciphers", scanner.test_null_ciphers().await),
+        ("export ciphers", scanner.test_export_ciphers().await),
+        ("TLS fallback", scanner.test_tls_fallback().await),
+        ("compression", scanner.test_compression().await),
+        ("Heartbleed", scanner.test_heartbleed().await),
+        ("CCS", scanner.test_ccs().await),
+        ("Ticketbleed", scanner.test_ticketbleed().await),
+        ("ROBOT", scanner.test_robot().await),
+        ("BREACH", scanner.test_breach().await),
+        ("SWEET32", scanner.test_sweet32().await),
+        ("FREAK", scanner.test_freak().await),
+        ("Logjam", scanner.test_logjam().await),
+        ("Opossum", scanner.test_opossum().await),
+        ("GREASE", scanner.test_grease().await),
+    ] {
+        let result = result.unwrap_or_else(|error| panic!("{name} probe failed: {error}"));
+        assert!(
+            !result.vulnerable,
+            "unreachable service must not be reported vulnerable for {name}: {}",
+            result.details
+        );
+    }
+}
+
 #[test]
 fn evaluate_beast_with_tls10_cbc_ciphers() {
     let ciphers = vec![make_cipher("AES128-CBC", 128, false)];
