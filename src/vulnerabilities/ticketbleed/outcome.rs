@@ -94,5 +94,12 @@ mod tests {
         assert!(!clean.vulnerable);
         assert!(!clean.inconclusive);
         assert_eq!(clean.details, "Not vulnerable - no leak");
+
+        let merged = TicketbleedProbeOutcome::NotVulnerable("first")
+            .merge(TicketbleedProbeOutcome::NotVulnerable("second"));
+        assert!(matches!(
+            merged,
+            TicketbleedProbeOutcome::NotVulnerable("first")
+        ));
     }
 }
