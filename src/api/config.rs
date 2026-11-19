@@ -1103,6 +1103,43 @@ enable_swagger = true
         assert!(err.to_string().contains("API config file too large"));
     }
 
+    #[test]
+    fn test_from_file_rejects_invalid_utf8_and_malformed_toml() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let invalid_utf8_path = dir.path().join("invalid-utf8.toml");
+        std::fs::write(&invalid_utf8_path, [0xff]).expect("fixture should be written");
+        assert!(ApiConfig::from_file(&invalid_utf8_path).is_err());
+
+        let malformed_path = dir.path().join("malformed.toml");
+        std::fs::write(&malformed_path, "port = [").expect("fixture should be written");
+        let error = ApiConfig::from_file(&malformed_path)
+            .expect_err("malformed TOML should fail during parsing");
+        assert!(error.to_string().contains("Failed to parse API config"));
+    }
+
+    #[test]
+    fn webhook_signing_secret_loads_only_when_configured() {
+        let mut config = ApiConfig::default();
+        assert_eq!(config.webhook_signing_secret().unwrap(), None);
+
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let path = dir.path().join("webhook.secret");
+        std::fs::write(&path, [vec![b's'; 32], vec![b'\n']].concat())
+            .expect("secret fixture should be written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("secret permissions should be restricted");
+        }
+        config.webhook_signing_secret_file = Some(path);
+
+        assert_eq!(
+            config.webhook_signing_secret().unwrap(),
+            Some(vec![b's'; 32])
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_from_file_does_not_pre_reject_non_utf8_path() {
@@ -1174,6 +1211,18 @@ enable_swagger = true
                     "runtime-key".to_string(),
                     "duplicate-secret",
                     "another-principal".to_string(),
+                    None,
+                    Permission::User,
+                ))
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .insert(ApiCredential::from_secret(
+                    "invalid-key".to_string(),
+                    "invalid-secret",
+                    String::new(),
                     None,
                     Permission::User,
                 ))
