@@ -202,6 +202,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ssh_fully_pqc_config_scores_100_and_skips_comments() {
+        let result = scan_config(
+            "\n# managed by automation\nKexAlgorithms mlkem768nistp256-sha256@openssh.com\nHostKeyAlgorithms ssh-mldsa\n",
+        );
+
+        assert_eq!(result.score, 100);
+        assert!(result.quantum_vulnerable.is_empty());
+        assert_eq!(result.pqc_safe.len(), 2);
+        assert!(result.recommendations.is_empty());
+    }
+
+    #[test]
     fn test_pqc_kex_detection() {
         assert!(is_ssh_pqc_kex("mlkem768nistp256-sha256@openssh.com"));
         assert!(is_ssh_pqc_kex("sntrup761x25519-sha512@openssh.com"));
