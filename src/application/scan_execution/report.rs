@@ -86,3 +86,43 @@ impl ScanExecutionReport {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ScanExecutionReport;
+    use crate::application::{ComplianceReport, ComplianceStatus, ScanResults};
+    use crate::compliance::ComplianceFramework;
+
+    #[test]
+    fn absent_optional_results_do_not_fail_the_scan() {
+        let report = ScanExecutionReport::new(ScanResults::default(), None, None, None);
+
+        assert!(!report.has_compliance_report());
+        assert!(!report.has_policy_result());
+        assert!(!report.has_stored_scan());
+        assert!(!report.compliance_failed());
+        assert!(!report.policy_failed(false));
+        assert!(!report.should_fail_exit(false));
+        assert!(!report.should_fail_exit(true));
+        assert!(!report.post_processing_view(true).should_fail_exit());
+    }
+
+    #[test]
+    fn passing_compliance_report_does_not_fail_the_scan() {
+        let framework = ComplianceFramework {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            version: "1".to_string(),
+            description: String::new(),
+            organization: String::new(),
+            effective_date: None,
+            requirements: Vec::new(),
+        };
+        let compliance = ComplianceReport::new(&framework, "example.com:443".to_string());
+        assert_eq!(compliance.overall_status, ComplianceStatus::Pass);
+
+        let report = ScanExecutionReport::new(ScanResults::default(), Some(compliance), None, None);
+        assert!(!report.compliance_failed());
+        assert!(!report.should_fail_exit(false));
+    }
+}
