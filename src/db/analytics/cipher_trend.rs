@@ -85,6 +85,19 @@ mod tests {
     use chrono::{Duration, Utc};
 
     #[tokio::test]
+    async fn empty_time_range_returns_database_error() {
+        let db = setup_db("cipher-trend-empty").await;
+        let analyzer = TrendAnalyzer::new(db);
+
+        let error = analyzer
+            .analyze_cipher_strength_trend("example.com", 443, 30)
+            .await
+            .expect_err("empty time range should fail");
+
+        assert!(error.to_string().contains("No scans found"));
+    }
+
+    #[tokio::test]
     async fn test_cipher_strength_trend_analysis() {
         let db = setup_db("cipher-trend").await;
         let hostname = "example.com";
