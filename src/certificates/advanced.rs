@@ -33,15 +33,16 @@ unsafe extern "C" {
 
 // OpenSSL defines SSL_set_msg_callback_arg as a macro over SSL_ctrl.
 const SSL_CTRL_SET_MSG_CALLBACK_ARG: c_int = 16;
+const TLS_1_3_VERSION: c_int = 0x0304;
 
 #[derive(Default)]
 struct HandshakeCapture {
-    messages: Mutex<Vec<Vec<u8>>>,
+    messages: Mutex<Vec<(c_int, Vec<u8>)>>,
 }
 
 unsafe extern "C" fn capture_tls_message(
     is_write: c_int,
-    _version: c_int,
+    version: c_int,
     content_type: c_int,
     buffer: *const c_void,
     length: usize,
@@ -61,7 +62,7 @@ unsafe extern "C" fn capture_tls_message(
     let bytes = unsafe { slice::from_raw_parts(buffer.cast::<u8>(), length) };
     let capture = unsafe { &*(argument.cast::<HandshakeCapture>()) };
     if let Ok(mut messages) = capture.messages.lock() {
-        messages.push(bytes.to_vec());
+        messages.push((version, bytes.to_vec()));
     }
 }
 
@@ -725,7 +726,10 @@ impl CertificateAdvancedTester {
         let (certificate, transcript) = self
             .get_peer_certificate_with_transcript(Some(&self.target.hostname))
             .await?;
-        for message in transcript {
+        for (version, message) in transcript {
+            if version != TLS_1_3_VERSION {
+                continue;
+            }
             if let Some(analysis) = analyze_delegated_credential_tls_transcript(
                 &message,
                 DelegatedCredentialRole::Server,
@@ -751,7 +755,7 @@ impl CertificateAdvancedTester {
     async fn get_peer_certificate_with_transcript(
         &self,
         sni_hostname: Option<&str>,
-    ) -> Result<(X509, Vec<Vec<u8>>)> {
+    ) -> Result<(X509, Vec<(c_int, Vec<u8>)>)> {
         let addr = self
             .target
             .socket_addrs()
@@ -768,7 +772,7 @@ impl CertificateAdvancedTester {
         let (hostname_to_use, use_sni) =
             crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, sni_hostname);
         crate::utils::task::spawn_blocking_with_current_span(
-            move || -> Result<(X509, Vec<Vec<u8>>)> {
+            move || -> Result<(X509, Vec<(c_int, Vec<u8>)>)> {
                 let mut builder = SslConnector::builder(SslMethod::tls())?;
                 // The scanner must retrieve and inspect certificates from hosts whose
                 // certificates are expired/self-signed/untrusted — exactly the cases a
@@ -1243,7 +1247,10 @@ mod tests {
             capture_tls_message(0, 0x0304, 22, buffer, 1, std::ptr::null_mut(), argument);
         }
 
-        assert_eq!(*capture.messages.lock().unwrap(), vec![vec![byte]]);
+        assert_eq!(
+            *capture.messages.lock().unwrap(),
+            vec![(TLS_1_3_VERSION, vec![byte])]
+        );
     }
 
     #[test]
@@ -1985,7 +1992,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multiple_certificate_probe_deduplicates_successful_handshakes() {
+    async fn local_certificate_handshakes_cover_fallback_and_deduplication() {
         use openssl::ssl::{SslAcceptor, SslMethod};
 
         let rsa = Rsa::generate(2048).expect("test RSA key should generate");
@@ -2037,25 +2044,58 @@ mod tests {
             .expect("server key should match certificate");
         let acceptor = std::sync::Arc::new(acceptor.build());
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
         let addr = listener.local_addr().expect("local address should exist");
-        let server = tokio::task::spawn_blocking(move || {
-            for _ in 0..5 {
-                let (stream, _) = listener.accept().expect("client should connect");
-                acceptor
-                    .accept(stream)
-                    .expect("client handshake should succeed");
+        let server = tokio::spawn(async move {
+            let mut accepted = 0;
+            for _ in 0..6 {
+                let Ok(Ok((socket, _))) =
+                    tokio::time::timeout(Duration::from_secs(3), listener.accept()).await
+                else {
+                    break;
+                };
+                let acceptor = acceptor.clone();
+                tokio::task::spawn_blocking(move || {
+                    let stream = socket.into_std().expect("socket should convert");
+                    stream
+                        .set_nonblocking(false)
+                        .expect("server socket should be blocking");
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .expect("server read timeout should be set");
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(3)))
+                        .expect("server write timeout should be set");
+                    acceptor
+                        .accept(stream)
+                        .expect("client handshake should succeed");
+                })
+                .await
+                .expect("handshake task should finish");
+                accepted += 1;
             }
+            accepted
         });
 
         let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
             .expect("target should build");
-        let result = CertificateAdvancedTester::new(target)
+        let tester = CertificateAdvancedTester::new(target);
+        let delegated = tester
+            .test_delegated_credentials()
+            .await
+            .expect("certificate without the authorization extension should be analyzed");
+        assert!(!delegated.certificate_allows_delegation);
+        assert!(!delegated.credential_observed);
+        assert_eq!(delegated.status, "not_observed");
+
+        let result = tester
             .test_multiple_certificates()
             .await
             .expect("successful handshakes should produce a certificate analysis");
 
-        server.await.expect("test server should finish");
+        assert_eq!(server.await.expect("test server should finish"), 6);
         assert_eq!(result.certificates_count, 1);
         assert!(!result.virtual_hosts_detected);
         assert!(!result.sni_required);

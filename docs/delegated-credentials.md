@@ -15,11 +15,14 @@ short entry point defaults to the server context.
 
 `CertificateAdvancedTester::test_delegated_credentials()` installs an OpenSSL
 message callback, parses the decrypted TLS `Certificate` handshake, and checks
-extension type `34` on each `CertificateEntry`. The captured extension is
-validated structurally and, for supported RSA/ECDSA schemes, its RFC 9345
-signature is verified against the certificate key. If the backend completes a
-handshake without exposing a `Certificate` transcript, the probe falls back to
-the X.509 `DelegationUsage` prerequisite and reports `not_observed`.
+extension type `34` on each TLS 1.3 `CertificateEntry`. TLS 1.2 handshakes use
+the legacy certificate-list format and are skipped for delegated-credential
+parsing; the probe falls back to the X.509 `DelegationUsage` prerequisite. The
+captured extension is validated structurally and, for supported RSA/ECDSA
+schemes, its RFC 9345 signature is verified against the certificate key. If the
+backend completes a handshake without exposing a `Certificate` transcript, the
+probe falls back to the X.509 `DelegationUsage` prerequisite and reports
+`not_observed`.
 
 Therefore:
 

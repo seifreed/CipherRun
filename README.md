@@ -492,9 +492,10 @@ and the conditions that produce an inconclusive verdict.
 Client simulations expose a versioned compatibility contract with explicit
 rustls and metadata-only limitations; see
 [client compatibility profiles](docs/client-compatibility-profiles.md).
-Delegated-credential checks capture OpenSSL's decrypted TLS `Certificate`
-handshake and verify RFC 9345 extension 34 when present; certificate-only
-backends conservatively report `not_observed`. Full positive/negative
+Delegated-credential checks parse OpenSSL's decrypted TLS 1.3 `Certificate`
+handshake and verify RFC 9345 extension 34 when present; TLS 1.2 uses the
+X.509 prerequisite fallback and certificate-only backends conservatively report
+`not_observed`. Full positive/negative
 interoperability validation still requires dedicated RFC 9345 server fixtures.
 See [delegated credentials](docs/delegated-credentials.md).
 
