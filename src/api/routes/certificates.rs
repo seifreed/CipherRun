@@ -230,11 +230,15 @@ pub async fn get_certificate_for_auth(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_CERTIFICATE_LIMIT, inventory_query_from_api, validate_certificate_fingerprint,
+        MAX_CERTIFICATE_LIMIT, inventory_query_from_api, present_inventory_record,
+        validate_certificate_fingerprint,
     };
     use crate::api::models::request::CertificateQuery;
     use crate::api::presenters::certificates::{CertificateView, present_certificate_summary};
+    use crate::application::CertificateInventoryRecord;
     use crate::application::CertificateInventorySort;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use chrono::Utc;
 
     fn certificate_view(subject: &str) -> CertificateView {
@@ -263,6 +267,26 @@ mod tests {
         let summary = present_certificate_summary(certificate_view(subject))
             .expect("empty SAN should present");
         assert_eq!(summary.common_name, subject);
+    }
+
+    #[test]
+    fn inventory_record_hides_presentation_errors_behind_internal_response() {
+        let now = Utc::now();
+        let record = CertificateInventoryRecord {
+            fingerprint: "a".repeat(64),
+            subject: "CN=example.com".to_string(),
+            issuer: "Example CA".to_string(),
+            not_before: now,
+            not_after: now,
+            san_json: Some("not valid JSON".to_string()),
+            hostnames: Vec::new(),
+        };
+
+        let response = present_inventory_record(record)
+            .expect_err("invalid SAN data must not be presented")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
