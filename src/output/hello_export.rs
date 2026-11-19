@@ -96,5 +96,21 @@ mod tests {
                 .into_bytes()
         );
         assert_eq!(render_hello(&bytes, HelloExportFormat::Binary), bytes);
+        assert_eq!(
+            render_hello(&bytes, HelloExportFormat::Hexdump),
+            simple_hex_dump(&bytes, HEXDUMP_COLUMNS).as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_file_extensions_match_each_format() {
+        for (format, extension) in [
+            (HelloExportFormat::Hex, "hex"),
+            (HelloExportFormat::Base64, "b64"),
+            (HelloExportFormat::Hexdump, "hexdump.txt"),
+            (HelloExportFormat::Binary, "bin"),
+        ] {
+            assert_eq!(format.file_extension(), extension);
+        }
     }
 }
