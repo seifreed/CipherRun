@@ -291,6 +291,89 @@ mod tests {
     }
 
     #[test]
+    fn every_api_error_maps_to_its_documented_status_and_code() {
+        let errors = [
+            (
+                ApiError::BadRequest(String::new()),
+                StatusCode::BAD_REQUEST,
+                "BAD_REQUEST",
+            ),
+            (
+                ApiError::Unauthorized(String::new()),
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+            ),
+            (
+                ApiError::Forbidden(String::new()),
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+            ),
+            (
+                ApiError::NotFound(String::new()),
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+            ),
+            (
+                ApiError::Conflict(String::new()),
+                StatusCode::CONFLICT,
+                "CONFLICT",
+            ),
+            (
+                ApiError::RateLimited(String::new()),
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+            ),
+            (
+                ApiError::Internal(String::new()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+            ),
+            (
+                ApiError::ServiceUnavailable(String::new()),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SERVICE_UNAVAILABLE",
+            ),
+            (
+                ApiError::Database(sqlx::Error::Protocol(String::new())),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DATABASE_ERROR",
+            ),
+            (
+                ApiError::Scanner(String::new()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SCANNER_ERROR",
+            ),
+            (
+                ApiError::Validation(String::new()),
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+            ),
+            (
+                ApiError::Timeout(String::new()),
+                StatusCode::REQUEST_TIMEOUT,
+                "TIMEOUT",
+            ),
+        ];
+
+        for (error, status, code) in errors {
+            assert_eq!(error.status_code(), status);
+            assert_eq!(error.error_code(), code);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_error_response_status_falls_back_to_internal_server_error() {
+        let response = ApiErrorResponse::new(StatusCode::OK, "BROKEN", "bad status".to_string());
+        let response = ApiErrorResponse {
+            status: u16::MAX,
+            ..response
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
     fn test_api_error_response_builders() {
         let resp = ApiErrorResponse::bad_request("oops");
         assert_eq!(resp.status, 400);
