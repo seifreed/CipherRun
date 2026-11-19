@@ -59,4 +59,22 @@ mod tests {
         assert_eq!(value["properties"]["schema_version"]["const"], "1.1");
         assert_eq!(value["title"], "CipherRun Scan Results");
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_non_utf8_output_path() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(vec![0xff]));
+        let error = SchemaCommand::new(Some(path))
+            .execute()
+            .await
+            .expect_err("non-UTF-8 schema path should be rejected");
+
+        assert!(matches!(
+            error,
+            crate::TlsError::InvalidInput { message }
+                if message == "Schema output path must be valid UTF-8"
+        ));
+    }
 }
