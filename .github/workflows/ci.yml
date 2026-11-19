@@ -185,19 +185,19 @@ jobs:
         run: cargo test --all --locked
 
       - name: Install cargo-llvm-cov
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2, cargo-llvm-cov 0.9.1
 
       - name: Generate coverage (lcov)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         env:
           OTEL_SERVICE_NAME: cipherrun-coverage
           OTEL_RESOURCE_ATTRIBUTES: service.name=cipherrun-sdk-test
           RUST_TEST_THREADS: "1"
-        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 86.9 --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 87.4 --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

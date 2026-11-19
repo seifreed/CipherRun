@@ -528,14 +528,14 @@ cargo tree --all-features --target all --locked -e features -i rsa -q
 cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo +nightly udeps
-cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 86.9 --summary-only
+cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 87.4 --summary-only
 cargo bench
 cargo fuzz list
 cargo fuzz build parsed_input
 cargo outdated
 ```
 
-CI measures line coverage across every Rust workspace crate, feature, and target, and currently requires at least 86.9% line coverage. The floor must rise as uncovered paths receive tests; the target is 100%.
+CI measures line coverage across every Rust workspace crate, feature, and target, and currently requires at least 87.4% line coverage. The floor must rise as uncovered paths receive tests; the target is 100%.
 
 `cargo deny` temporarily ignores the maintenance-only `RUSTSEC-2026-0543`
 advisory for `chrono`, which has no safe upgrade and remains required by SQLx
