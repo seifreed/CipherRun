@@ -345,4 +345,44 @@ mod tests {
 
         server.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn malformed_record_probe_reports_closed_port_without_a_tls_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let response = send_malformed_record(
+            &target,
+            MalformedRecordType::InvalidPaddingValidMac,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(!response.connection_accepted);
+        assert_eq!(response.alert_type, None);
+        assert_eq!(response.response_time_ms, 0.0);
+        assert!(!response.shows_differential_behavior);
+        assert_eq!(
+            measure_response_time(
+                &target,
+                MalformedRecordType::InvalidPaddingValidMac,
+                None,
+                None,
+                false,
+            )
+            .await
+            .unwrap(),
+            0.0
+        );
+    }
 }
