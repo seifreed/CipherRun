@@ -103,6 +103,25 @@ async fn serial_and_parallel_mx_scans_preserve_records_when_targets_are_invalid(
     assert!(parallel.iter().all(|(_, result)| result.is_err()));
 }
 
+#[tokio::test]
+async fn mx_lookup_rejects_invalid_domains_and_malformed_resolver_output() {
+    let tester = MxTester::new("localhost".to_string());
+    assert!(tester.query_mx_records().await.is_err());
+    assert!(tester.parse_dig_output(&[0xff]).is_err());
+    assert!(tester.parse_dig_output(b"10\n").is_err());
+    assert!(tester.parse_nslookup_output(&[0xff]).is_err());
+    assert!(
+        tester
+            .parse_nslookup_output(b"example.com mail exchanger =")
+            .is_err()
+    );
+    assert!(
+        tester
+            .parse_nslookup_output(b"example.com mail exchanger = 10")
+            .is_err()
+    );
+}
+
 #[test]
 fn test_parse_dig_output() {
     let tester = MxTester::new("example.com".to_string());
