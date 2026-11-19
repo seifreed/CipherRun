@@ -1185,6 +1185,105 @@ mod tests {
         message
     }
 
+    fn certificate_message(body: &[u8]) -> Vec<u8> {
+        let mut message = vec![11];
+        message.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        message.extend_from_slice(body);
+        message
+    }
+
+    #[test]
+    fn delegated_credential_parser_rejects_invalid_lengths_and_fields() {
+        let mut zero_valid_time = vec![0; 16];
+        zero_valid_time[8] = 1;
+        zero_valid_time[13] = 1;
+        let mut empty_public_key = zero_valid_time.clone();
+        empty_public_key[0..4].copy_from_slice(&1u32.to_be_bytes());
+        empty_public_key[8] = 0;
+        let mut truncated_before_signature_length = zero_valid_time.clone();
+        truncated_before_signature_length[0..4].copy_from_slice(&1u32.to_be_bytes());
+        truncated_before_signature_length[8] = 10;
+        let mut empty_signature = zero_valid_time.clone();
+        empty_signature[0..4].copy_from_slice(&1u32.to_be_bytes());
+        empty_signature[8] = 1;
+        empty_signature[12..14].copy_from_slice(&0u16.to_be_bytes());
+        let mut truncated_signature = zero_valid_time.clone();
+        truncated_signature[0..4].copy_from_slice(&1u32.to_be_bytes());
+        truncated_signature[8] = 1;
+        truncated_signature[12..14].copy_from_slice(&2u16.to_be_bytes());
+        truncated_signature.pop();
+
+        for (extension, expected) in [
+            (vec![0; 14], "shorter than its fixed-width fields"),
+            (zero_valid_time, "valid_time must be greater than zero"),
+            (empty_public_key, "public key must not be empty"),
+            (
+                truncated_before_signature_length,
+                "truncated before signature length",
+            ),
+            (empty_signature, "signature must not be empty"),
+            (truncated_signature, "trailing bytes"),
+        ] {
+            let error = match parse_delegated_credential_extension(&extension) {
+                Ok(_) => panic!("malformed delegated credentials should be rejected"),
+                Err(error) => error,
+            };
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn handshake_parser_rejects_truncated_records_and_messages() {
+        for (input, expected) in [
+            (&[22, 3, 3, 0, 1][..], "TLS record is truncated"),
+            (&[22, 3, 3, 0, 0, 1][..], "trailing bytes after TLS records"),
+            (&[1, 0, 0, 1][..], "TLS handshake message is truncated"),
+            (
+                &[1, 0, 0, 0, 0xaa][..],
+                "trailing bytes after TLS handshake messages",
+            ),
+        ] {
+            let error = parse_handshake_messages(input)
+                .expect_err("malformed handshake input should be rejected");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn certificate_message_parser_rejects_malformed_entry_lengths() {
+        let inputs = [
+            (vec![12, 0, 0, 0], "expected a TLS Certificate"),
+            (vec![11, 0, 0, 2, 0], "length does not match payload"),
+            (vec![11, 0, 0, 0], "missing request context"),
+            (
+                certificate_message(&[0]),
+                "truncated before certificate list",
+            ),
+            (
+                certificate_message(&[0, 0, 0, 1]),
+                "list length does not match payload",
+            ),
+            (
+                certificate_message(&[0, 0, 0, 1, 0]),
+                "truncated before certificate length",
+            ),
+            (
+                certificate_message(&[0, 0, 0, 4, 0, 0, 1, 0]),
+                "truncated before extensions",
+            ),
+            (
+                certificate_message(&[0, 0, 0, 10, 0, 0, 0, 0, 5, 0, 1, 0, 2, 0xff]),
+                "extension data is truncated",
+            ),
+        ];
+
+        for (message, expected) in inputs {
+            let error = parse_tls_certificate_message(&message)
+                .expect_err("malformed Certificate messages should be rejected");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
     #[test]
     fn test_extract_certificate_info() {
         let rsa = Rsa::generate(2048).unwrap();
