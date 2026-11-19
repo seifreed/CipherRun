@@ -1200,6 +1200,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn initial_status_check_failure_is_logged_without_backend_details() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let mut job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: true,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+
+        ScanExecutor::new(queue.clone(), 1)
+            .execute_scan(queue, job)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.status_check.failed"
+                && event["fields"]["error_code"] == "other"
+        }));
+        assert!(!output.contains("password=must-not-appear"));
+    }
+
+    #[tokio::test]
     async fn executor_dispatches_a_queued_job_and_drains_it_on_shutdown() {
         let mut job = ScanJob::new(
             "invalid target with spaces".to_string(),
