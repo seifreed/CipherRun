@@ -549,7 +549,10 @@ mod tests {
         let results = ScanResults {
             certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
                 chain: CertificateChain {
-                    certificates: vec![CertificateInfo::default()],
+                    certificates: vec![CertificateInfo {
+                        debian_weak_key: Some(false),
+                        ..Default::default()
+                    }],
                     chain_length: 1,
                     chain_size_bytes: 0,
                 },
@@ -571,6 +574,7 @@ mod tests {
         let csv = generate_csv(&results).expect("certificate output should render");
 
         assert!(csv.contains("N/A,N/A,N/A,N/A,N/A,N/A,N/A"));
+        assert!(csv.contains(",No,N/A,"));
         assert!(!csv.contains("=== REVOCATION ==="));
     }
 
@@ -928,6 +932,19 @@ mod tests {
         assert!(csv.contains("DATE/TIME CHECK"));
         assert!(csv.contains("SERVER BANNERS"));
         assert!(csv.contains("REVERSE PROXY DETECTION"));
+
+        let mut empty_cookie_results = results.clone();
+        empty_cookie_results
+            .http
+            .as_mut()
+            .and_then(|http| http.http_headers.as_mut())
+            .and_then(|headers| headers.cookie_analysis.as_mut())
+            .expect("test has cookie analysis")
+            .cookies
+            .clear();
+        let csv = generate_csv(&empty_cookie_results).expect("empty cookie output should render");
+        assert!(csv.contains("=== COOKIE SECURITY ==="));
+        assert!(!csv.contains("=== COOKIE DETAILS ==="));
         assert!(csv.contains("SSL LABS RATING"));
         assert!(csv.contains("CLIENT COMPATIBILITY"));
     }
