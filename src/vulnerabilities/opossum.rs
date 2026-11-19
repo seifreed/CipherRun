@@ -302,6 +302,30 @@ mod tests {
         assert_eq!(all.len(), 2);
     }
 
+    #[tokio::test]
+    async fn closed_target_is_inconclusive_for_both_network_probes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = OpossumTester::new(target);
+
+        assert_eq!(
+            tester.test_openssl_version().await.unwrap(),
+            OpossumStatus::Inconclusive
+        );
+        assert_eq!(
+            tester.test_certificate_parsing().await.unwrap(),
+            OpossumStatus::Inconclusive
+        );
+    }
+
     #[test]
     fn test_opossum_merge_status_preserves_uncertainty() {
         assert_eq!(
