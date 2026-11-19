@@ -24,11 +24,7 @@ mod tests {
     #[test]
     fn test_input_type_construction() {
         let input = InputType::Hostname("example.com".to_string());
-
-        match input {
-            InputType::Hostname(hostname) => assert_eq!(hostname, "example.com"),
-            _ => panic!("expected hostname input type"),
-        }
+        assert!(matches!(input, InputType::Hostname(hostname) if hostname == "example.com"));
     }
 
     #[test]
@@ -54,24 +50,15 @@ mod tests {
     fn test_input_type_ip_construction() {
         let ip: std::net::IpAddr = "192.0.2.5".parse().expect("valid ip");
         let input = InputType::Ip(ip);
-        match input {
-            InputType::Ip(addr) => assert_eq!(addr, ip),
-            _ => panic!("expected ip input type"),
-        }
+        assert!(matches!(input, InputType::Ip(addr) if addr == ip));
     }
 
     #[test]
     fn test_input_type_asn_and_cidr_construction() {
         let input = InputType::Asn("AS13335".to_string());
-        match input {
-            InputType::Asn(asn) => assert_eq!(asn, "AS13335"),
-            _ => panic!("expected asn input type"),
-        }
+        assert!(matches!(input, InputType::Asn(asn) if asn == "AS13335"));
 
         let input = InputType::Cidr("192.0.2.0/24".to_string());
-        match input {
-            InputType::Cidr(cidr) => assert_eq!(cidr, "192.0.2.0/24"),
-            _ => panic!("expected cidr input type"),
-        }
+        assert!(matches!(input, InputType::Cidr(cidr) if cidr == "192.0.2.0/24"));
     }
 }
