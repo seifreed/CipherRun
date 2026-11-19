@@ -104,6 +104,63 @@ mod tests {
                 session_resumption_tickets: None,
                 secure_renegotiation: None,
             }],
+            ciphers: std::collections::HashMap::from([(
+                Protocol::TLS12,
+                crate::ciphers::tester::ProtocolCipherSummary {
+                    protocol: Protocol::TLS12,
+                    supported_ciphers: Vec::new(),
+                    server_ordered: false,
+                    server_preference: Vec::new(),
+                    preferred_cipher: None,
+                    counts: Default::default(),
+                    avg_handshake_time_ms: None,
+                },
+            )]),
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: crate::certificates::parser::CertificateChain {
+                    certificates: vec![crate::certificates::parser::CertificateInfo::default()],
+                    chain_length: 1,
+                    chain_size_bytes: 0,
+                },
+                validation: crate::certificates::validator::ValidationResult {
+                    valid: true,
+                    issues: Vec::new(),
+                    trust_chain_valid: true,
+                    hostname_match: true,
+                    not_expired: true,
+                    signature_valid: true,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            http: Some(crate::scanner::HttpResults {
+                http_headers: Some(crate::http::tester::HeaderAnalysisResult {
+                    headers: Default::default(),
+                    issues: Vec::new(),
+                    score: 100,
+                    grade: crate::http::tester::SecurityGrade::A,
+                    hsts_analysis: None,
+                    hpkp_analysis: None,
+                    cookie_analysis: None,
+                    datetime_check: None,
+                    banner_detection: None,
+                    reverse_proxy_detection: None,
+                    http_status_code: Some(200),
+                    redirect_location: None,
+                    redirect_chain: Vec::new(),
+                    server_hostname: None,
+                }),
+            }),
+            vulnerabilities: vec![crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::CRIME,
+                vulnerable: false,
+                inconclusive: false,
+                details: "TLS compression is disabled".to_string(),
+                cve: None,
+                cwe: None,
+                severity: crate::vulnerabilities::Severity::Info,
+            }],
             rating: Some(RatingResults {
                 ssl_rating: Some(RatingResult {
                     grade: Grade::A,
@@ -156,6 +213,10 @@ mod tests {
             }),
             ..Default::default()
         };
+        let ciphers_only = ScanResults {
+            ciphers: results.ciphers.clone(),
+            ..Default::default()
+        };
         let report = ScanExecutionReport::new(results, None, None, None);
         let cli_view = report.cli_view(false);
         assert!(cli_view.should_render_primary_tls_view());
@@ -163,6 +224,9 @@ mod tests {
         assert!(cli_view.should_render_fingerprint_view());
 
         ScanResultsPresenter::new(&Args::default()).render(&cli_view);
+
+        let report = ScanExecutionReport::new(ciphers_only, None, None, None);
+        ScanResultsPresenter::new(&Args::default()).render(&report.cli_view(false));
     }
 
     #[test]
