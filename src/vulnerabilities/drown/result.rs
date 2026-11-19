@@ -110,4 +110,32 @@ mod tests {
         assert_eq!(result.sslv2_status, Some(Sslv2Status::Probable));
         assert!(result.details.contains("Potentially vulnerable"));
     }
+
+    #[test]
+    fn every_status_and_export_outcome_has_the_expected_result() {
+        let cases = [
+            (Sslv2Status::Confirmed, true, true, "highly vulnerable"),
+            (Sslv2Status::Confirmed, false, true, "ServerHello received"),
+            (Sslv2Status::Probable, true, false, "export ciphers enabled"),
+            (
+                Sslv2Status::Probable,
+                false,
+                false,
+                "Potentially vulnerable",
+            ),
+            (Sslv2Status::Suspicious, false, false, "manual verification"),
+            (Sslv2Status::NotSupported, false, false, "not supported"),
+            (Sslv2Status::Inconclusive, false, false, "inconclusive"),
+        ];
+
+        for (status, export, vulnerable, detail) in cases {
+            let export_status = export.then_some(Sslv2Status::Confirmed);
+            let result = DrownTestResult::from_statuses(status, export_status);
+            assert_eq!(result.vulnerable, vulnerable, "{status:?}");
+            assert_eq!(result.sslv2_supported, status.is_vulnerable());
+            assert_eq!(result.sslv2_status, status.detailed());
+            assert_eq!(result.sslv2_export_ciphers, export);
+            assert!(result.details.contains(detail), "{}", result.details);
+        }
+    }
 }
