@@ -162,6 +162,7 @@ impl Command for DatabaseCommand {
 mod tests {
     use super::*;
     use crate::Args;
+    use crate::db::{CipherRunDatabase, Config, DatabaseConfig};
     #[cfg(unix)]
     use std::ffi::OsString;
     use std::io::Write;
@@ -201,6 +202,78 @@ mod tests {
         let args = Args::default();
         let cmd = DatabaseCommand::new(args);
         assert_eq!(cmd.name(), "DatabaseCommand");
+    }
+
+    fn write_sqlite_config(directory: &tempfile::TempDir) -> std::path::PathBuf {
+        let config_path = directory.path().join("database.toml");
+        let config = Config {
+            database: DatabaseConfig::sqlite(directory.path().join("scans.sqlite")),
+            retention: None,
+        };
+        std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        config_path
+    }
+
+    #[tokio::test]
+    async fn database_command_runs_cleanup_and_history_for_a_configured_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = write_sqlite_config(&directory);
+        let config = DatabaseConfig::sqlite(directory.path().join("scans.sqlite"));
+        let db = CipherRunDatabase::new(&config).await.unwrap();
+        crate::db::analytics::test_support::insert_scan(
+            &db,
+            "example.com",
+            443,
+            chrono::Utc::now(),
+            Some("A"),
+            Some(95),
+        )
+        .await;
+        db.close().await;
+
+        let mut args = Args::default();
+        args.database.config = Some(config_path);
+        args.database.init = true;
+        args.database.cleanup_days = Some(30);
+        args.database.history = Some("example.com:443".to_string());
+        args.database.history_limit = 10;
+
+        DatabaseCommand::new(args)
+            .execute()
+            .await
+            .expect("database operations should succeed");
+    }
+
+    #[tokio::test]
+    async fn database_command_accepts_empty_history_and_skips_optional_operations() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = write_sqlite_config(&directory);
+        let mut args = Args::default();
+        args.database.config = Some(config_path);
+        args.database.history = Some("no-history.example".to_string());
+        args.database.history_limit = 10;
+
+        DatabaseCommand::new(args)
+            .execute()
+            .await
+            .expect("empty history should succeed");
+    }
+
+    #[tokio::test]
+    async fn database_command_rejects_invalid_history_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = write_sqlite_config(&directory);
+        let mut args = Args::default();
+        args.database.config = Some(config_path);
+        args.database.history = Some("invalid host:443:extra".to_string());
+        args.database.history_limit = 10;
+
+        let error = DatabaseCommand::new(args)
+            .execute()
+            .await
+            .expect_err("invalid history target should fail");
+
+        assert!(error.to_string().contains("Invalid"));
     }
 
     #[test]
