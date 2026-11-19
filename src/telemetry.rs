@@ -98,6 +98,7 @@ mod tests {
         context_from_traceparent, current_traceparent, telemetry_resource, traceparent_for_context,
     };
     use opentelemetry::Key;
+    use opentelemetry::propagation::Extractor;
     use opentelemetry::trace::{TraceContextExt, Tracer, TracerProvider};
     use opentelemetry_sdk::trace::SdkTracerProvider;
     use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -196,5 +197,14 @@ mod tests {
         });
 
         provider.shutdown().unwrap();
+    }
+
+    #[test]
+    fn trace_parent_extractor_only_exposes_the_standard_header() {
+        let extractor =
+            super::TraceParentExtractor("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01");
+        assert_eq!(extractor.get("traceparent"), Some(extractor.0));
+        assert_eq!(extractor.get("TraceParent"), None);
+        assert_eq!(extractor.keys(), ["traceparent"]);
     }
 }
