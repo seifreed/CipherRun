@@ -707,6 +707,29 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_removes_expired_entries_then_evicts_oldest_when_over_cap() {
+        let limiter = PerKeyRateLimiter::new(100);
+        for index in 0..10_001 {
+            let _ = limiter.check(&format!("fresh-{index}"));
+        }
+        let expired_key = "expired";
+        let _ = limiter.check(expired_key);
+        if let Some(mut entry) = limiter.limiters.get_mut(expired_key) {
+            entry.last_access = Instant::now() - std::time::Duration::from_secs(7200);
+        }
+
+        limiter.cleanup();
+
+        assert_eq!(limiter.limiters.len(), 5_000);
+        assert!(!limiter.limiters.contains_key(expired_key));
+        assert!(!limiter.limiters.contains_key("fresh-0"));
+        assert!(limiter.limiters.contains_key("fresh-10000"));
+        let index = limiter.access_index.read().expect("lock");
+        let indexed_count: usize = index.values().map(Vec::len).sum();
+        assert_eq!(indexed_count, limiter.limiters.len());
+    }
+
+    #[test]
     fn test_rate_limiter_cleanup_keeps_recent_key_with_stale_index_row() {
         let limiter = PerKeyRateLimiter::new(100);
         let key = "recent-key";
