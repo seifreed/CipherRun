@@ -1129,6 +1129,32 @@ fn http_headers_without_response_metadata_render_without_metadata_lines() {
 }
 
 #[test]
+fn client_auth_formatter_handles_optional_auth_and_ca_details() {
+    let args = Args::default();
+    let formatter = ScannerFormatter::new(&args);
+
+    formatter.display_client_cas_results(&ClientCAsResult {
+        cas: Vec::new(),
+        requires_client_auth: false,
+        inconclusive: false,
+    });
+    formatter.display_client_cas_results(&ClientCAsResult {
+        cas: Vec::new(),
+        requires_client_auth: true,
+        inconclusive: false,
+    });
+    formatter.display_client_cas_results(&ClientCAsResult {
+        cas: vec![ClientCA {
+            distinguished_name: "CN=Unknown CA".to_string(),
+            organization: None,
+            common_name: None,
+        }],
+        requires_client_auth: true,
+        inconclusive: false,
+    });
+}
+
+#[test]
 fn test_misc_display_helpers_and_fingerprints() {
     let args = Args::default();
     let formatter = ScannerFormatter::new(&args);
