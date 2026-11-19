@@ -476,6 +476,9 @@ cipherrun -t smtp mail.example.com:587
 
 # IMAP with STARTTLS
 cipherrun -t imap mail.example.com:143
+
+# Telnet with STARTTLS
+cipherrun -t telnet legacy.example.com:23
 ```
 
 ### JSON Contract

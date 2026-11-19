@@ -281,7 +281,6 @@ async fn test_ws_receive_handles_client_frames_and_close() {
         .await
         .expect("ping frame should send");
 
-    let mut saw_server_pong = false;
     loop {
         let message = timeout(Duration::from_secs(2), socket.next())
             .await
@@ -289,11 +288,9 @@ async fn test_ws_receive_handles_client_frames_and_close() {
             .expect("socket should remain open")
             .expect("server frame should be valid");
         if message.is_pong() {
-            saw_server_pong = true;
             break;
         }
     }
-    assert!(saw_server_pong);
 
     tx.send(ProgressMessage::new("scan-1", 42, "protocols"))
         .expect("progress should broadcast");

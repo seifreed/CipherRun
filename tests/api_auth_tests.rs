@@ -299,7 +299,7 @@ async fn test_credential_routes_validate_input_and_expiration() {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
-    let (created_status, created) = common::api::send_json(
+    let (created_status, _created) = common::api::send_json(
         &app,
         "POST",
         "/api/v1/credentials",
