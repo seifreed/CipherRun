@@ -147,3 +147,79 @@ impl ProtocolTestResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Protocol, ProtocolTestResult};
+    use std::str::FromStr;
+
+    #[test]
+    fn protocol_metadata_and_wire_versions_cover_all_variants() {
+        let protocols = [
+            (Protocol::SSLv2, 0x0002, "SSLv2", true),
+            (Protocol::SSLv3, 0x0300, "SSLv3", true),
+            (Protocol::TLS10, 0x0301, "TLS 1.0", true),
+            (Protocol::TLS11, 0x0302, "TLS 1.1", true),
+            (Protocol::TLS12, 0x0303, "TLS 1.2", false),
+            (Protocol::TLS13, 0x0304, "TLS 1.3", false),
+            (Protocol::QUIC, 0x0305, "QUIC", false),
+        ];
+
+        for (protocol, version, name, deprecated) in protocols {
+            assert_eq!(protocol.as_hex(), version);
+            assert_eq!(protocol.name(), name);
+            assert_eq!(protocol.to_string(), name);
+            assert_eq!(protocol.is_deprecated(), deprecated);
+            assert_eq!(Protocol::from(version), protocol);
+        }
+
+        assert_eq!(
+            Protocol::all(),
+            [
+                Protocol::SSLv2,
+                Protocol::SSLv3,
+                Protocol::TLS10,
+                Protocol::TLS11,
+                Protocol::TLS12,
+                Protocol::TLS13,
+            ]
+        );
+        assert_eq!(Protocol::from(0x9999), Protocol::TLS12);
+    }
+
+    #[test]
+    fn protocol_parser_normalizes_aliases_and_rejects_unknown_names() {
+        for (input, expected) in [
+            (" SSLv2.0 ", Protocol::SSLv2),
+            ("SSL-3.0", Protocol::SSLv3),
+            ("TLSv1.0", Protocol::TLS10),
+            ("TLS_1.1", Protocol::TLS11),
+            ("TLS 1.2", Protocol::TLS12),
+            ("TLSv1.3", Protocol::TLS13),
+            ("quic", Protocol::QUIC),
+        ] {
+            assert_eq!(Protocol::from_str(input).unwrap(), expected);
+        }
+        assert!(Protocol::from_str("TLS 9.9").is_err());
+    }
+
+    #[test]
+    fn protocol_test_results_expose_supported_inconclusive_and_unsupported_states() {
+        let result = |supported, inconclusive| ProtocolTestResult {
+            protocol: Protocol::TLS13,
+            supported,
+            inconclusive,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        };
+
+        assert_eq!(result(true, false).status_label(), "Supported");
+        assert_eq!(result(false, true).status_label(), "Inconclusive");
+        assert_eq!(result(false, false).status_label(), "Not supported");
+    }
+}
