@@ -455,4 +455,28 @@ mod tests {
         assert!(formatted.contains("Reason:"));
         assert!(!formatted.contains("Domain:"));
     }
+
+    #[test]
+    fn expired_exceptions_are_skipped_and_active_domain_exceptions_are_returned() {
+        let exception = |reason: &str, expires: &str| PolicyException {
+            domain: Some("example.com".to_string()),
+            rules: vec!["protocols.prohibited".to_string()],
+            reason: reason.to_string(),
+            expires: Some(expires.to_string()),
+            approved_by: "Admin".to_string(),
+            ticket: None,
+        };
+        let matcher = ExceptionMatcher::new(vec![
+            exception("Expired", "2020-01-01"),
+            exception("Active", "2099-12-31"),
+        ]);
+
+        let matched = matcher
+            .is_exception("example.com", "protocols.prohibited")
+            .expect("active exception should be returned");
+        assert_eq!(matched.reason, "Active");
+        let active = matcher.get_exceptions_for_target("example.com");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].reason, "Active");
+    }
 }
