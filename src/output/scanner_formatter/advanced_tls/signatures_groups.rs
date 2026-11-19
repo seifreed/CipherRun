@@ -86,3 +86,78 @@ impl<'a> ScannerFormatter<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ScannerFormatter;
+    use crate::cli::Args;
+    use crate::protocols::groups::{GroupEnumerationResult, GroupType, KeyExchangeGroup};
+    use crate::protocols::signatures::{SignatureAlgorithm, SignatureEnumerationResult};
+
+    #[test]
+    fn displays_signature_algorithms_and_measured_group_categories() {
+        colored::control::set_override(false);
+        let args = Args::default();
+        let formatter = ScannerFormatter::new(&args);
+        formatter.display_signature_results(&SignatureEnumerationResult {
+            algorithms: vec![
+                SignatureAlgorithm {
+                    name: "rsa_pkcs1_sha256".to_string(),
+                    iana_value: 0x0401,
+                    supported: true,
+                },
+                SignatureAlgorithm {
+                    name: "rsa_pkcs1_sha1".to_string(),
+                    iana_value: 0x0201,
+                    supported: false,
+                },
+            ],
+            inconclusive: false,
+        });
+
+        formatter.display_group_results(&GroupEnumerationResult {
+            groups: Vec::new(),
+            measured: false,
+            details: "probe failed".to_string(),
+        });
+
+        formatter.display_group_results(&GroupEnumerationResult {
+            groups: vec![
+                group("secp256r1", GroupType::EllipticCurve, true),
+                group("ffdhe2048", GroupType::FiniteField, false),
+                group("X25519MLKEM768", GroupType::PostQuantum, true),
+            ],
+            measured: true,
+            details: String::new(),
+        });
+    }
+
+    #[test]
+    fn group_details_respect_the_no_cipher_details_option() {
+        colored::control::set_override(false);
+        let mut args = Args::default();
+        args.scan.no_cipher_details = true;
+        let formatter = ScannerFormatter::new(&args);
+
+        formatter.display_group_results(&GroupEnumerationResult {
+            groups: vec![
+                group("secp256r1", GroupType::EllipticCurve, true),
+                group("ffdhe2048", GroupType::FiniteField, false),
+                group("X25519MLKEM768", GroupType::PostQuantum, true),
+            ],
+            measured: true,
+            details: String::new(),
+        });
+    }
+
+    fn group(name: &str, group_type: GroupType, supported: bool) -> KeyExchangeGroup {
+        KeyExchangeGroup {
+            name: name.to_string(),
+            iana_value: 0x001d,
+            group_type,
+            bits: 256,
+            supported,
+            quantum_vulnerable: group_type != GroupType::PostQuantum,
+        }
+    }
+}
