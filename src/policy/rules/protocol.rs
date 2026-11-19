@@ -278,4 +278,20 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_path, "protocols.prohibited");
     }
+
+    #[test]
+    fn helper_fallbacks_match_protocol_names_when_no_parsed_value_is_given() {
+        let policy = base_policy();
+        let results = vec![protocol_result(Protocol::TLS12, true)];
+        let any_supported = [Protocol::TLS13];
+        let rule = ProtocolRule::new(&policy, &results, &any_supported);
+        let tls12_name = Protocol::TLS12.to_string();
+        let tls13_name = Protocol::TLS13.to_string();
+
+        assert!(rule.protocol_supported_by_any_result(&tls12_name, None));
+        assert!(!rule.protocol_supported_by_any_result(&tls13_name, None));
+        assert!(rule.protocol_supported_on_any_backend(&tls12_name, None));
+        assert!(rule.protocol_supported_on_any_backend(&tls13_name, None));
+        assert!(!rule.protocol_supported_on_any_backend("SSLv3", None));
+    }
 }
