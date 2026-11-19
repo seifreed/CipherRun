@@ -176,6 +176,22 @@ mod tests {
     }
 
     #[test]
+    fn test_minimum_severity_accepts_each_supported_level_case_insensitively() {
+        for (value, expected) in [
+            (" LOW ", Severity::Low),
+            ("Medium", Severity::Medium),
+            ("HIGH", Severity::High),
+            ("critical", Severity::Critical),
+        ] {
+            let args = ComplianceArgs {
+                severity: Some(value.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(args.minimum_severity().unwrap(), Some(expected));
+        }
+    }
+
+    #[test]
     fn test_validate_rejects_unknown_values() {
         for args in [
             ComplianceArgs {
