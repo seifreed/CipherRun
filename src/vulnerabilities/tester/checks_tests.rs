@@ -287,6 +287,23 @@ fn evaluate_export_empty_summaries() {
 }
 
 #[test]
+fn evaluate_export_without_export_cipher_evidence_is_a_clean_result() {
+    let summary = summary_with_ciphers(
+        Protocol::TLS12,
+        vec![make_cipher("AES128-GCM", 128, false)],
+        CipherCounts::default(),
+    );
+
+    let result =
+        super::super::cipher_checks::evaluate_export(std::iter::once((Protocol::TLS12, &summary)));
+
+    assert!(!result.vulnerable);
+    assert!(!result.inconclusive);
+    assert_eq!(result.details, "Server does not support EXPORT ciphers");
+    assert_eq!(result.severity, Severity::Info);
+}
+
+#[test]
 fn evaluate_export_with_export_ciphers() {
     let counts = CipherCounts {
         total: 1,
