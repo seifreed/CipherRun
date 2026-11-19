@@ -195,3 +195,197 @@ impl FallbackScsvTester<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::network::Target;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn target() -> Target {
+        Target::with_ips(
+            "example.com".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
+    async fn mock_tls_server(
+        responses: Vec<&'static [u8]>,
+    ) -> (Target, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut header = [0; 5];
+                stream.read_exact(&mut header).await.unwrap();
+                let mut client_hello = vec![0; u16::from_be_bytes([header[3], header[4]]) as usize];
+                stream.read_exact(&mut client_hello).await.unwrap();
+                stream.write_all(response).await.unwrap();
+            }
+        });
+        (
+            Target::with_ips(
+                "example.com".to_string(),
+                address.port(),
+                vec![address.ip()],
+            )
+            .unwrap(),
+            server,
+        )
+    }
+
+    #[test]
+    fn formats_protocol_list_and_selects_highest_lower_protocol() {
+        let target = target();
+        let tester = FallbackScsvTester::new(&target);
+        let protocols = [Protocol::TLS10, Protocol::TLS11, Protocol::TLS12];
+
+        assert_eq!(
+            tester.format_protocol_list(&protocols),
+            "TLS 1.0, TLS 1.1, TLS 1.2"
+        );
+        assert_eq!(
+            tester.select_fallback_protocol(&protocols, Protocol::TLS13),
+            Some(Protocol::TLS12)
+        );
+        assert_eq!(
+            tester.select_fallback_protocol(&protocols, Protocol::TLS10),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn insufficient_protocol_results_are_inconclusive_and_require_detected_maximum() {
+        let target = target();
+        let mut tester = FallbackScsvTester::new(&target);
+        assert!(tester.build_scsv_result(&[]).await.is_err());
+        assert!(
+            tester
+                .test_rejects_inappropriate_fallback(&[])
+                .await
+                .is_err()
+        );
+
+        tester.max_supported_protocol = Some(Protocol::TLS13);
+        let result = tester.build_scsv_result(&[Protocol::TLS13]).await.unwrap();
+        assert!(result.inconclusive);
+        assert!(result.has_tls13_or_higher);
+        assert!(result.details.contains("only supports TLS 1.3"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_maximum_protocols_are_not_applicable() {
+        let target = target();
+        for protocol in [Protocol::SSLv2, Protocol::QUIC] {
+            let mut tester = FallbackScsvTester::new(&target);
+            tester.max_supported_protocol = Some(protocol);
+
+            let result = tester
+                .test_rejects_inappropriate_fallback(&[protocol])
+                .await
+                .unwrap();
+
+            assert!(result.not_applicable);
+            assert!(!result.inconclusive);
+        }
+
+        let mut tester = FallbackScsvTester::new(&target);
+        tester.max_supported_protocol = Some(Protocol::QUIC);
+        let result = tester
+            .build_scsv_result(&[Protocol::TLS13, Protocol::QUIC])
+            .await
+            .unwrap();
+        assert!(result.not_applicable);
+        assert!(result.has_tls13_or_higher);
+        assert!(result.details.contains("not applicable"));
+    }
+
+    #[tokio::test]
+    async fn absent_lower_protocol_and_ssl3_fallback_are_inconclusive() {
+        let target = target();
+        let mut tester = FallbackScsvTester::new(&target);
+        tester.max_supported_protocol = Some(Protocol::SSLv3);
+        let result = tester
+            .test_rejects_inappropriate_fallback(&[Protocol::SSLv3])
+            .await
+            .unwrap();
+        assert!(result.inconclusive);
+
+        tester.max_supported_protocol = Some(Protocol::TLS12);
+        let result = tester
+            .test_rejects_inappropriate_fallback(&[Protocol::TLS12])
+            .await
+            .unwrap();
+        assert!(result.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn counts_supported_protocols_while_skipping_ssl2_and_quic() {
+        let alert = &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        let (target, server) = mock_tls_server(vec![alert, alert, alert, alert, alert]).await;
+        let tester = FallbackScsvTester::new(&target);
+        let protocols = tester
+            .count_supported_protocols(&ProtocolTester::new(target.clone()))
+            .await
+            .unwrap();
+
+        server.await.unwrap();
+        assert!(protocols.is_empty());
+    }
+
+    #[tokio::test]
+    async fn builds_protected_result_from_all_ip_probe() {
+        let baseline = &[0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        let alert = &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56];
+        let (target, server) = mock_tls_server(vec![baseline, alert]).await;
+        let mut tester = FallbackScsvTester::new(&target).with_test_all_ips(true);
+        tester.max_supported_protocol = Some(Protocol::TLS12);
+
+        let result = tester
+            .build_scsv_result(&[Protocol::TLS11, Protocol::TLS12])
+            .await
+            .unwrap();
+
+        server.await.unwrap();
+        assert!(result.supported);
+        assert!(!result.inconclusive);
+        assert!(
+            result
+                .details
+                .contains("Protected against downgrade attacks")
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_inconclusive_and_vulnerable_results_from_single_ip_probes() {
+        let alert = &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
+        let (target, server) = mock_tls_server(vec![alert]).await;
+        let mut tester = FallbackScsvTester::new(&target);
+        tester.max_supported_protocol = Some(Protocol::TLS12);
+        let result = tester
+            .build_scsv_result(&[Protocol::TLS11, Protocol::TLS12])
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert!(result.inconclusive);
+        assert!(result.details.contains("Inconclusive"));
+
+        let baseline = &[0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        let handshake = &[0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        let (target, server) = mock_tls_server(vec![baseline, handshake]).await;
+        let mut tester = FallbackScsvTester::new(&target);
+        tester.max_supported_protocol = Some(Protocol::TLS12);
+        let result = tester
+            .build_scsv_result(&[Protocol::TLS11, Protocol::TLS12])
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert!(result.vulnerable);
+        assert!(result.accepts_downgrade);
+        assert!(result.details.contains("Vulnerable to downgrade attacks"));
+    }
+}

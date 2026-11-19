@@ -169,6 +169,10 @@ allow = []
 # These are typically crates where multiple versions are unavoidable due to
 # ecosystem fragmentation or where the duplicate poses no practical issue
 skip = [
+    { crate = "base64@0.22", reason = "axum, hyper, sqlx 0.8 and pem 3 still require 0.22, while patched lettre 0.11.24 requires 0.23; remove when those dependency ranges converge" },
+
+    { crate = "base64@0.22", reason = "axum, hyper, sqlx 0.8 and pem 3 still require 0.22, while patched lettre 0.11.24 requires 0.23; remove when those dependency ranges converge" },
+
     # hashbrown: Multiple versions due to ecosystem dependencies (0.14 via dashmap, 0.15/0.16 via sqlx/indexmap)
     { crate = "hashbrown@0.14", reason = "Older version required by dashmap/governor transitive deps" },
     { crate = "hashbrown@0.15", reason = "sqlx ecosystem uses 0.15, others use 0.16" },
@@ -209,6 +213,7 @@ skip = [
 # Skip entire dependency trees for these crates
 # Use sparingly - this is a heavy hammer
 skip-tree = [
+    { crate = "windows-sys@0.52", reason = "lettre 0.11.24's native-tls dependency retains the Windows 0.52 bindings alongside the workspace's 0.61 bindings; revisit when native-tls updates" },
     # proptest is only a dev-dependency, skip its entire tree for duplicate checking
     # { crate = "proptest", reason = "Dev-dependency only, duplicates don't affect production" },
 ]
