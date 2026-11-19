@@ -947,6 +947,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_retry_requeues_then_dead_letters_at_attempt_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::new(
+            DatabasePool::new(&DatabaseConfig::sqlite(directory.path().join("jobs.db")))
+                .await
+                .unwrap(),
+        );
+        let queue = DatabaseJobQueue::new(pool.clone(), 10, None);
+        let id = queue
+            .enqueue(ScanJob::new(
+                "retry.example:443".to_string(),
+                Default::default(),
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let first_attempt = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(first_attempt.attempts, 1);
+        assert_eq!(
+            queue
+                .retry_or_dead_letter(&first_attempt, "temporary", 2)
+                .await
+                .unwrap(),
+            super::super::RetryDisposition::Requeued
+        );
+        let requeued = queue.get_job(&id).await.unwrap().unwrap();
+        assert_eq!(requeued.status, ScanStatus::Queued);
+        assert_eq!(requeued.error.as_deref(), Some("temporary"));
+        assert!(!requeued.dead_letter);
+
+        let second_attempt = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(second_attempt.attempts, 2);
+        assert_eq!(
+            queue
+                .retry_or_dead_letter(&second_attempt, "permanent", 2)
+                .await
+                .unwrap(),
+            super::super::RetryDisposition::DeadLettered
+        );
+        let dead_lettered = queue.get_job(&id).await.unwrap().unwrap();
+        assert_eq!(dead_lettered.status, ScanStatus::Failed);
+        assert_eq!(dead_lettered.error.as_deref(), Some("permanent"));
+        assert!(dead_lettered.dead_letter);
+        if let DatabasePool::Sqlite(pool) = pool.as_ref() {
+            let status: String =
+                sqlx::query_scalar("SELECT status FROM cipherrun_jobs WHERE id = ?")
+                    .bind(&id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            assert_eq!(status, "dead_letter");
+        }
+    }
+
+    #[tokio::test]
     async fn sqlite_database_queue_reports_missing_and_malformed_jobs() {
         let directory = tempfile::tempdir().unwrap();
         let pool = Arc::new(
