@@ -873,6 +873,74 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_malformed_hashed_credentials() {
+        let mut cases = Vec::new();
+        let mut config = ApiConfig::default();
+        config.credentials.push(ApiCredential::from_secret(
+            String::new(),
+            "secret",
+            "principal".to_string(),
+            None,
+            Permission::User,
+        ));
+        cases.push((config, "key_id and principal_id"));
+
+        let mut config = ApiConfig::default();
+        let credential = ApiCredential::from_secret(
+            "duplicate".to_string(),
+            "secret",
+            "principal".to_string(),
+            None,
+            Permission::User,
+        );
+        config.credentials = vec![credential.clone(), credential];
+        cases.push((config, "duplicate credential key_id"));
+
+        let mut config = ApiConfig::default();
+        let mut credential = ApiCredential::from_secret(
+            "key-1".to_string(),
+            "secret",
+            "principal".to_string(),
+            None,
+            Permission::User,
+        );
+        credential.secret_hash = "plaintext-secret".to_string();
+        config.credentials.push(credential);
+        cases.push((config, "sha256:<hex>"));
+
+        let mut config = ApiConfig::default();
+        let mut credential = ApiCredential::from_secret(
+            "key-2".to_string(),
+            "secret",
+            "principal".to_string(),
+            None,
+            Permission::User,
+        );
+        credential.secret_hash = format!("sha256:{}", "z".repeat(64));
+        config.credentials.push(credential);
+        cases.push((config, "32-byte SHA-256 digest"));
+
+        let mut config = ApiConfig::default();
+        let mut credential = ApiCredential::from_secret(
+            "key-3".to_string(),
+            "secret",
+            "principal".to_string(),
+            None,
+            Permission::User,
+        );
+        credential.expires_at = Some(credential.created_at);
+        config.credentials.push(credential);
+        cases.push((config, "expires_at must be after created_at"));
+
+        for (config, expected) in cases {
+            let error = config
+                .validate()
+                .expect_err("malformed credential should fail");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
     fn test_tls_certificate_and_key_paths_must_match() {
         let config = ApiConfig {
             tls_cert_file: Some("server.crt".into()),
