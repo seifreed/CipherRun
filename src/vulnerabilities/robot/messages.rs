@@ -1,9 +1,9 @@
-use crate::Result;
 use crate::constants::{
     CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, HANDSHAKE_TYPE_FINISHED,
     VERSION_TLS_1_0,
 };
 use crate::utils::invalid_input_length::{u16_len, u24_len};
+use crate::Result;
 
 pub(super) fn invalid_client_key_exchange(variant: u8, key_len: usize) -> Result<Vec<u8>> {
     let record_body_len = key_len
@@ -11,12 +11,8 @@ pub(super) fn invalid_client_key_exchange(variant: u8, key_len: usize) -> Result
         .ok_or_else(|| crate::TlsError::InvalidInput {
             message: "ROBOT ClientKeyExchange record length exceeds maximum".to_string(),
         })?;
-    let handshake_body_len =
-        key_len
-            .checked_add(2)
-            .ok_or_else(|| crate::TlsError::InvalidInput {
-                message: "ROBOT ClientKeyExchange handshake length exceeds maximum".to_string(),
-            })?;
+    // The preceding +6 check also guarantees this smaller +2 cannot overflow.
+    let handshake_body_len = key_len + 2;
     let record_body_len = u16_len(record_body_len, "ROBOT ClientKeyExchange record")?;
     let handshake_body_len = u24_len(handshake_body_len, "ROBOT ClientKeyExchange handshake")?;
     let key_len = u16_len(key_len, "ROBOT RSA ciphertext")?;
