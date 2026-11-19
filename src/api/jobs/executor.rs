@@ -1199,6 +1199,79 @@ mod tests {
         assert!(messages.iter().any(|message| message.msg_type == "failed"));
     }
 
+    struct CancelOnStartQueue(ScanJob);
+
+    #[async_trait::async_trait]
+    impl JobQueue for CancelOnStartQueue {
+        async fn enqueue(&self, _job: ScanJob) -> Result<String> {
+            unreachable!()
+        }
+
+        async fn dequeue(&self) -> Result<Option<ScanJob>> {
+            Ok(None)
+        }
+
+        async fn get_job(&self, _id: &str) -> Result<Option<ScanJob>> {
+            Ok(Some(self.0.clone()))
+        }
+
+        async fn update_job(&self, _job: &ScanJob) -> Result<()> {
+            Ok(())
+        }
+
+        async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn cancel_job(&self, _id: &str) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn queue_length(&self) -> Result<usize> {
+            Ok(0)
+        }
+
+        async fn list_jobs(&self) -> Result<Vec<ScanJob>> {
+            Ok(Vec::new())
+        }
+
+        async fn active_jobs_count(&self) -> Result<usize> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_winning_start_persist_skips_scan() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue(job.clone()));
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        executor
+            .execute_scan(queue, job)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.cancelled_before_start"
+                && event["fields"]["outcome"] == "skipped"
+        }));
+        assert!(!output.contains("scan_job.progress.persist_failed"));
+    }
+
     #[tokio::test]
     async fn retryable_scan_failure_is_requeued_with_progress_event() {
         let mut job = ScanJob::new(
