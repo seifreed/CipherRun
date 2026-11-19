@@ -199,6 +199,15 @@ mod tests {
     }
 
     #[test]
+    fn captured_log_writer_flushes_successfully() {
+        let mut writer = CapturedLogWriter(Arc::new(Mutex::new(Vec::new())));
+
+        writer
+            .flush()
+            .expect("in-memory writer flush should succeed");
+    }
+
+    #[test]
     fn configured_scans_log_duration_and_counts_without_recording_paths() {
         let directory = tempfile::tempdir().unwrap();
         let ssh_path = directory.path().join("private-ssh.conf");
