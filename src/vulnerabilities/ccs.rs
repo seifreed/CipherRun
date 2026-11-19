@@ -305,7 +305,6 @@ mod tests {
     use crate::constants::BUFFER_SIZE_DEFAULT;
     use crate::constants::{CONTENT_TYPE_HANDSHAKE, HANDSHAKE_TYPE_CLIENT_HELLO};
     use crate::vulnerabilities::test_support::{localhost_target, two_ip_localhost_target};
-    use std::net::TcpListener;
     use std::time::Duration;
     use tokio::net::TcpListener as TokioTcpListener;
 
@@ -491,11 +490,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_ccs_injection_inactive_target_not_vulnerable() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        let target = localhost_target(port);
+        // Keep the refused connection outside the ephemeral range so parallel
+        // local test servers cannot claim the port after it is released.
+        let target = localhost_target(1);
 
         let tester = CcsInjectionTester::new(target);
         let result = tester.test().await.unwrap();
