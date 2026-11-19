@@ -95,6 +95,7 @@ impl ScanPhase for AlpnPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::phases::test_scan_context;
 
     #[test]
     fn test_alpn_phase_should_run() {
@@ -127,5 +128,42 @@ mod tests {
     fn test_alpn_phase_name() {
         let phase = AlpnPhase::new();
         assert_eq!(phase.name(), "Testing ALPN Protocol Negotiation");
+    }
+
+    #[test]
+    fn test_alpn_phase_default() {
+        let phase = AlpnPhase::default();
+        assert_eq!(phase.name(), "Testing ALPN Protocol Negotiation");
+    }
+
+    #[tokio::test]
+    async fn test_execute_stores_alpn_results_for_inactive_target() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+
+        let mut context = test_scan_context(ScanRequest::default());
+        context.target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().expect("valid loopback address")],
+        )
+        .expect("loopback target should build");
+
+        AlpnPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("failed ALPN probes should produce an inconclusive result");
+
+        assert!(
+            context
+                .results
+                .advanced
+                .as_ref()
+                .and_then(|results| results.alpn_result.as_ref())
+                .is_some()
+        );
     }
 }
