@@ -542,6 +542,39 @@ mod tests {
     }
 
     #[test]
+    fn test_csv_marks_missing_certificate_metadata_as_na() {
+        use crate::certificates::parser::{CertificateChain, CertificateInfo};
+        use crate::certificates::validator::ValidationResult;
+
+        let results = ScanResults {
+            certificate_chain: Some(crate::scanner::CertificateAnalysisResult {
+                chain: CertificateChain {
+                    certificates: vec![CertificateInfo::default()],
+                    chain_length: 1,
+                    chain_size_bytes: 0,
+                },
+                validation: ValidationResult {
+                    valid: false,
+                    issues: Vec::new(),
+                    trust_chain_valid: false,
+                    hostname_match: false,
+                    not_expired: false,
+                    signature_valid: false,
+                    trusted_ca: None,
+                    platform_trust: None,
+                },
+                revocation: None,
+            }),
+            ..Default::default()
+        };
+
+        let csv = generate_csv(&results).expect("certificate output should render");
+
+        assert!(csv.contains("N/A,N/A,N/A,N/A,N/A,N/A,N/A"));
+        assert!(!csv.contains("=== REVOCATION ==="));
+    }
+
+    #[test]
     fn test_csv_omits_certificate_section_when_absent() {
         let results = ScanResults {
             target: "example.com:443".to_string(),
