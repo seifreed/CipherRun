@@ -70,47 +70,46 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
+            let (mut socket, _) = listener.accept().await.expect("listener should accept");
+            let mut reader = BufReader::new(&mut socket);
+            let _ = reader
+                .get_mut()
+                .write_all(b"* OK IMAP4rev1 Service Ready\r\n")
+                .await;
+            let _ = reader.get_mut().flush().await;
+
+            let mut buf = String::new();
+            let _ = reader.read_line(&mut buf).await;
+
+            if send_starttls {
                 let _ = reader
                     .get_mut()
-                    .write_all(b"* OK IMAP4rev1 Service Ready\r\n")
+                    .write_all(b"* CAPABILITY IMAP4rev1 STARTTLS\r\n")
+                    .await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"a001 OK CAPABILITY completed\r\n")
                     .await;
                 let _ = reader.get_mut().flush().await;
 
-                let mut buf = String::new();
+                buf.clear();
                 let _ = reader.read_line(&mut buf).await;
 
-                if send_starttls {
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"* CAPABILITY IMAP4rev1 STARTTLS\r\n")
-                        .await;
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"a001 OK CAPABILITY completed\r\n")
-                        .await;
-                    let _ = reader.get_mut().flush().await;
-
-                    buf.clear();
-                    let _ = reader.read_line(&mut buf).await;
-
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"a002 OK Begin TLS negotiation\r\n")
-                        .await;
-                    let _ = reader.get_mut().flush().await;
-                } else {
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"* CAPABILITY IMAP4rev1\r\n")
-                        .await;
-                    let _ = reader
-                        .get_mut()
-                        .write_all(b"a001 OK CAPABILITY completed\r\n")
-                        .await;
-                    let _ = reader.get_mut().flush().await;
-                }
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"a002 OK Begin TLS negotiation\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
+            } else {
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"* CAPABILITY IMAP4rev1\r\n")
+                    .await;
+                let _ = reader
+                    .get_mut()
+                    .write_all(b"a001 OK CAPABILITY completed\r\n")
+                    .await;
+                let _ = reader.get_mut().flush().await;
             }
         });
 
@@ -122,6 +121,11 @@ mod tests {
         let negotiator = ImapNegotiator::new();
         assert_eq!(negotiator.protocol(), StarttlsProtocol::IMAP);
         assert_eq!(negotiator.expected_greeting(), Some("* OK"));
+    }
+
+    #[test]
+    fn test_imap_negotiator_default() {
+        assert_eq!(ImapNegotiator::default().protocol(), StarttlsProtocol::IMAP);
     }
 
     #[tokio::test]
@@ -162,9 +166,8 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.write_all(b"* BAD no greeting\r\n").await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("listener should accept");
+            let _ = socket.write_all(b"* BAD no greeting\r\n").await;
         });
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
