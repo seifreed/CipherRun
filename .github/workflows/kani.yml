@@ -19,8 +19,8 @@ jobs:
       - name: Run Kani proofs
         uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
         with:
-          # Maintainers: retry 0.68.0 after its codegen ICE is fixed upstream.
-          kani-version: "0.67.0"
+          # Latest release; this crate currently triggers an upstream Kani codegen ICE.
+          kani-version: "0.68.0"
           command: cargo-kani
           args: --no-default-features
         env:
