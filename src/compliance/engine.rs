@@ -210,4 +210,28 @@ mod tests {
             .expect_err("unknown rule type should fail compliance evaluation");
         assert!(err.to_string().contains("Unknown compliance rule type"));
     }
+
+    #[test]
+    fn test_engine_dispatches_every_supported_rule_type() {
+        let rule_types = [
+            "ProtocolVersion",
+            "CipherSuite",
+            "CertificateKeySize",
+            "SignatureAlgorithm",
+            "ForwardSecrecy",
+            "CertificateValidation",
+            "CertificateExpiration",
+            "Vulnerability",
+        ];
+        let framework =
+            test_framework("ALL-RULES", rule_types.into_iter().map(base_rule).collect());
+        let engine = ComplianceEngine::new(framework);
+
+        assert_eq!(engine.framework().id, "test");
+        let report = engine
+            .evaluate(&assessment(Vec::new()))
+            .expect("all known rule types should dispatch");
+        assert_eq!(report.summary.total, 1);
+        assert_eq!(report.summary.passed, 1);
+    }
 }
