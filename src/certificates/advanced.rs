@@ -1426,6 +1426,36 @@ mod tests {
     }
 
     #[test]
+    fn extract_certificate_info_formats_ip_subject_alt_names() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "ip-san.example").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+
+        let mut san = SubjectAlternativeName::new();
+        san.ip("192.0.2.1").ip("2001:db8::1");
+        let san_ext = san.build(&builder.x509v3_context(None, None)).unwrap();
+        builder.append_extension(san_ext).unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+
+        let info = extract_certificate_info(&builder.build()).expect("certificate info");
+        assert!(info.san_entries.contains(&"IP:192.0.2.1".to_string()));
+        assert!(info.san_entries.contains(&"IP:2001:db8::1".to_string()));
+    }
+
+    #[test]
     fn test_extract_certificate_info_includes_serial() {
         let rsa = Rsa::generate(2048).unwrap();
         let pkey = PKey::from_rsa(rsa).unwrap();
