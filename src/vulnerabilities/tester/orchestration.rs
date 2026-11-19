@@ -834,11 +834,32 @@ mod logging_tests {
                 cwe: None,
                 severity: Severity::Info,
             },
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::ROBOT,
+                vulnerable: true,
+                inconclusive: true,
+                details: "potential exposure private data".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            },
+            VulnerabilityResult {
+                vuln_type: VulnerabilityType::BEAST,
+                vulnerable: false,
+                inconclusive: false,
+                details: "not vulnerable private data".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Info,
+            },
         ];
 
         tracing::subscriber::with_default(subscriber, || {
-            log_vulnerability_test_completed("DROWN", &results[0]);
+            for result in &results {
+                log_vulnerability_test_completed("probe", result);
+            }
             log_vulnerability_tests_completed(&results, 125);
+            log_vulnerability_tests_completed(&[], 2);
         });
 
         let output = output.0.lock().unwrap();
@@ -847,27 +868,34 @@ mod logging_tests {
             .filter(|line| !line.is_empty())
             .map(|line| serde_json::from_slice(line).expect("event should be JSON"))
             .collect();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 6);
         assert_eq!(events[0]["level"], "DEBUG");
         assert_eq!(
             events[0]["fields"]["event_name"],
             "vulnerability.test.completed"
         );
-        assert_eq!(events[0]["fields"]["test"], "DROWN");
+        assert_eq!(events[0]["fields"]["test"], "probe");
         assert_eq!(events[0]["fields"]["finding_id"], "CR-TLS-DROWN-001");
         assert_eq!(events[0]["fields"]["outcome"], "vulnerable");
-        assert_eq!(events[1]["level"], "INFO");
+        assert_eq!(events[1]["fields"]["outcome"], "inconclusive");
+        assert_eq!(events[2]["fields"]["outcome"], "potential_exposure");
+        assert_eq!(events[3]["fields"]["outcome"], "not_vulnerable");
+        assert_eq!(events[4]["level"], "INFO");
         assert_eq!(
-            events[1]["fields"]["event_name"],
+            events[4]["fields"]["event_name"],
             "vulnerability.tests.completed"
         );
-        assert_eq!(events[1]["fields"]["test_count"], 2);
-        assert_eq!(events[1]["fields"]["vulnerable_count"], 1);
-        assert_eq!(events[1]["fields"]["inconclusive_count"], 1);
-        assert_eq!(events[1]["fields"]["duration_ms"], 125);
-        assert_eq!(events[1]["fields"]["outcome"], "partial");
+        assert_eq!(events[4]["fields"]["test_count"], 4);
+        assert_eq!(events[4]["fields"]["vulnerable_count"], 2);
+        assert_eq!(events[4]["fields"]["inconclusive_count"], 2);
+        assert_eq!(events[4]["fields"]["duration_ms"], 125);
+        assert_eq!(events[4]["fields"]["outcome"], "partial");
+        assert_eq!(events[5]["fields"]["test_count"], 0);
+        assert_eq!(events[5]["fields"]["outcome"], "success");
         let output = String::from_utf8_lossy(&output);
         assert!(!output.contains("sensitive target"));
         assert!(!output.contains("private diagnostic"));
+        assert!(!output.contains("potential exposure private data"));
+        assert!(!output.contains("not vulnerable private data"));
     }
 }

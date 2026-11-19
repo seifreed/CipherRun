@@ -430,7 +430,23 @@ mod tests {
             VulnerabilityType::Heartbleed,
             "sample",
         );
-        assert_eq!(results.len(), 2);
+        orchestration::collect_results(
+            &mut results,
+            Err(crate::TlsError::Other(
+                "multiple probe failures".to_string(),
+            )),
+            &[VulnerabilityType::DROWN, VulnerabilityType::POODLE],
+            "sample",
+        );
+        orchestration::collect_optional_result(
+            &mut results,
+            Err(crate::TlsError::Other("optional probe failure".to_string())),
+            VulnerabilityType::BREACH,
+            "sample",
+        );
+
+        assert_eq!(results.len(), 5);
+        assert!(results[2..].iter().all(|result| result.inconclusive));
     }
 
     #[tokio::test]
@@ -652,6 +668,21 @@ mod tests {
                 .expect("ok")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn test_requested_returns_empty_for_selected_check_that_is_skipped() {
+        let mut request = ScanRequest::default();
+        request.scan.vulns.renegotiation = true;
+        request.scan.vulns.no_renegotiation = true;
+        let scanner = VulnerabilityScanner::with_args(example_target(), &request);
+
+        let results = scanner
+            .test_requested()
+            .await
+            .expect("selected scan should succeed");
+
+        assert!(results.is_empty());
     }
 
     #[tokio::test]
