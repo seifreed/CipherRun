@@ -622,6 +622,33 @@ mod tests {
         }))
     }
 
+    struct ValidEntryState {
+        shutdown: Arc<AtomicBool>,
+        leaf_input: String,
+        entries_requests: std::sync::atomic::AtomicUsize,
+    }
+
+    async fn test_valid_tree_size(
+        State(_state): State<Arc<ValidEntryState>>,
+    ) -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "tree_size": 1,
+            "timestamp": 0,
+            "sha256_root_hash": "",
+            "tree_head_signature": ""
+        }))
+    }
+
+    async fn test_valid_entry(
+        State(state): State<Arc<ValidEntryState>>,
+    ) -> Json<serde_json::Value> {
+        state.entries_requests.fetch_add(1, Ordering::SeqCst);
+        state.shutdown.store(true, Ordering::Release);
+        Json(serde_json::json!({
+            "entries": [{ "leaf_input": state.leaf_input, "extra_data": "" }]
+        }))
+    }
+
     #[derive(Clone)]
     struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
 
@@ -856,6 +883,81 @@ mod tests {
         assert!(output.contains("ct_log.entry.parse_failed"), "{output}");
         assert!(output.contains("ct_log.source.stopped"), "{output}");
         assert!(!output.contains("%%%"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn valid_ct_log_entry_is_delivered_to_the_consumer() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let key = PKey::from_rsa(Rsa::generate(1024).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "ct-entry.example.test")
+            .unwrap();
+        let name = name.build();
+        let mut certificate = X509Builder::new().unwrap();
+        certificate.set_subject_name(&name).unwrap();
+        certificate.set_issuer_name(&name).unwrap();
+        certificate.set_pubkey(&key).unwrap();
+        certificate
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        certificate
+            .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        certificate.sign(&key, MessageDigest::sha256()).unwrap();
+        let der = certificate.build().to_der().unwrap();
+        let mut leaf = vec![0, 0];
+        leaf.extend_from_slice(&0_u64.to_be_bytes());
+        leaf.extend_from_slice(&0_u16.to_be_bytes());
+        leaf.push(((der.len() >> 16) & 0xff) as u8);
+        leaf.push(((der.len() >> 8) & 0xff) as u8);
+        leaf.push((der.len() & 0xff) as u8);
+        leaf.extend_from_slice(&der);
+
+        let state = Arc::new(ValidEntryState {
+            shutdown: Arc::new(AtomicBool::new(false)),
+            leaf_input: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, leaf),
+            entries_requests: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let app = Router::new()
+            .route("/ct/v1/get-sth", get(test_valid_tree_size))
+            .route("/ct/v1/get-entries", get(test_valid_entry))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (tx, mut rx) = mpsc::channel(1);
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            format!("http://{address}"),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::clone(&state.shutdown),
+            CtConfig {
+                custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                ..CtConfig::default()
+            },
+        )
+        .await;
+
+        let entry = rx
+            .try_recv()
+            .expect("valid CT entry should reach the consumer");
+        assert_eq!(entry.log_source, "test-source");
+        assert_eq!(entry.index, 0);
+        assert_eq!(
+            entry.certificate.subject_cn.as_deref(),
+            Some("ct-entry.example.test")
+        );
+        assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
         server.abort();
     }
 
