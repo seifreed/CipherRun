@@ -433,6 +433,108 @@ fn test_cipher_and_http_helpers() {
 }
 
 #[test]
+fn test_cipher_results_render_each_scan_focus_and_empty_states() {
+    let make_cipher =
+        |hexcode: &str, bits, encryption: &str, export, key_exchange: &str| CipherSuite {
+            hexcode: hexcode.to_string(),
+            openssl_name: format!("TEST_{hexcode}"),
+            iana_name: format!("TLS_TEST_{hexcode}"),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: key_exchange.to_string(),
+            authentication: "RSA".to_string(),
+            encryption: encryption.to_string(),
+            mac: "SHA256".to_string(),
+            bits,
+            export,
+        };
+    let ciphers = vec![
+        make_cipher("0000", 0, "NULL", false, "RSA"),
+        make_cipher("0001", 40, "RC4", true, "RSA"),
+        make_cipher("0002", 112, "AES", false, "RSA"),
+        make_cipher("0003", 128, "AES", false, "ECDHE"),
+        make_cipher("0004", 256, "CHACHA20", false, "ECDHE"),
+    ];
+    let make_summary = |supported_ciphers: Vec<CipherSuite>, server_ordered, server_preference| {
+        let total = supported_ciphers.len();
+        ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            preferred_cipher: supported_ciphers.first().cloned(),
+            supported_ciphers,
+            server_ordered,
+            server_preference,
+            counts: CipherCounts {
+                total,
+                null_ciphers: 1,
+                export_ciphers: 1,
+                low_strength: 1,
+                medium_strength: 1,
+                high_strength: 1,
+                forward_secrecy: 2,
+                aead: 1,
+            },
+            avg_handshake_time_ms: Some(12),
+        }
+    };
+    let display = |args: &Args, summary| {
+        let formatter = ScannerFormatter::new(args);
+        formatter.display_cipher_results(&HashMap::from([(Protocol::TLS12, summary)]));
+    };
+
+    display(
+        &Args::default(),
+        make_summary(Vec::new(), false, Vec::new()),
+    );
+
+    let mut args = Args::default();
+    args.scan.each_cipher = true;
+    args.output.iana_names = true;
+    args.output.show_cipher_ids = true;
+    display(&args, make_summary(ciphers.clone(), true, Vec::new()));
+
+    let mut args = Args::default();
+    args.scan.categories = true;
+    display(&args, make_summary(ciphers.clone(), false, Vec::new()));
+
+    let mut args = Args::default();
+    args.scan.forward_secrecy = true;
+    display(
+        &args,
+        make_summary(
+            ciphers
+                .iter()
+                .filter(|cipher| cipher.has_forward_secrecy())
+                .cloned()
+                .collect(),
+            false,
+            Vec::new(),
+        ),
+    );
+    display(&args, make_summary(ciphers.clone(), false, Vec::new()));
+
+    let mut args = Args::default();
+    args.scan.server_preference = true;
+    display(&args, make_summary(ciphers.clone(), false, Vec::new()));
+    display(
+        &args,
+        make_summary(ciphers.clone(), true, vec!["0003".into(), "ffff".into()]),
+    );
+
+    let mut args = Args::default();
+    args.output.iana_names = true;
+    args.output.show_cipher_ids = true;
+    args.output.show_times = true;
+    display(&args, make_summary(ciphers, true, Vec::new()));
+
+    let mut summary = make_summary(
+        vec![make_cipher("0003", 128, "AES", false, "ECDHE")],
+        true,
+        Vec::new(),
+    );
+    summary.preferred_cipher = None;
+    display(&Args::default(), summary);
+}
+
+#[test]
 fn test_client_sim_summary_helper() {
     let all_ok = format_client_sim_summary(2, 2);
     let none_ok = format_client_sim_summary(0, 2);
