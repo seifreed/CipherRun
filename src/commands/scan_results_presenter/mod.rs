@@ -116,6 +116,33 @@ mod tests {
                 }),
             }),
             advanced: Some(AdvancedResults {
+                client_simulations: Some(vec![crate::client_sim::simulator::ClientSimulationResult {
+                    client_name: "test client".to_string(),
+                    client_id: "test-client".to_string(),
+                    success: true,
+                    protocol: Some(Protocol::TLS12),
+                    cipher: Some("TLS_AES_128_GCM_SHA256".to_string()),
+                    error: None,
+                    handshake_time_ms: Some(12),
+                    alpn: None,
+                    key_exchange: None,
+                    forward_secrecy: true,
+                    certificate_type: None,
+                }]),
+                signature_algorithms: Some(crate::protocols::signatures::SignatureEnumerationResult {
+                    algorithms: Vec::new(),
+                    inconclusive: false,
+                }),
+                key_exchange_groups: Some(crate::protocols::groups::GroupEnumerationResult {
+                    groups: Vec::new(),
+                    measured: true,
+                    details: "test result".to_string(),
+                }),
+                client_cas: Some(crate::protocols::client_cas::ClientCAsResult {
+                    cas: Vec::new(),
+                    requires_client_auth: false,
+                    inconclusive: false,
+                }),
                 intolerance: Some(crate::protocols::intolerance::IntoleranceTestResult::default()),
                 pqc_readiness: Some(PqcReadinessAssessment {
                     score: 0,
