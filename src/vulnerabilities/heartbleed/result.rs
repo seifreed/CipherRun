@@ -110,4 +110,61 @@ mod tests {
         assert!(result.tested);
         assert!(result.details.contains("not supported"));
     }
+
+    #[test]
+    fn failure_constructors_preserve_diagnostics_and_byte_counts() {
+        let clean = HeartbleedResult::aggregate_clean(true);
+        assert!(clean.tested);
+        assert_eq!(clean.bytes_sent, 3);
+        assert!(clean.details.contains("No memory leak detected"));
+
+        let cases = [
+            (
+                HeartbleedResult::connection_failed(),
+                "Connection failed",
+                0,
+                0,
+            ),
+            (
+                HeartbleedResult::server_hello_timeout(),
+                "ServerHello timeout",
+                0,
+                0,
+            ),
+            (
+                HeartbleedResult::unexpected_server_hello(5),
+                "unexpected TLS response",
+                5,
+                0,
+            ),
+            (
+                HeartbleedResult::malformed_server_hello(crate::TlsError::ParseError {
+                    message: "truncated handshake".to_string(),
+                }),
+                "truncated handshake",
+                0,
+                0,
+            ),
+            (
+                HeartbleedResult::heartbeat_timeout(7),
+                "Timeout waiting",
+                0,
+                7,
+            ),
+            (
+                HeartbleedResult::heartbeat_connection_error(9),
+                "Connection error",
+                0,
+                9,
+            ),
+        ];
+
+        for (result, expected_detail, received, sent) in cases {
+            assert!(!result.vulnerable);
+            assert!(!result.tested);
+            assert_eq!(result.bytes_received, received);
+            assert_eq!(result.bytes_sent, sent);
+            assert!(result.details.contains(expected_detail));
+        }
+    }
 }
