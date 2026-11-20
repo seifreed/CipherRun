@@ -364,6 +364,44 @@ mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
 
+    fn aia_with_location(tag: u8, location: &str) -> Vec<u8> {
+        let location = location.as_bytes();
+        let mut description = vec![0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01];
+        description.extend_from_slice(&[tag, location.len() as u8]);
+        description.extend_from_slice(location);
+
+        let mut access_description = vec![0x30, description.len() as u8];
+        access_description.extend_from_slice(&description);
+        let mut aia = vec![0x30, access_description.len() as u8];
+        aia.extend_from_slice(&access_description);
+        aia
+    }
+
+    #[test]
+    fn test_extract_ocsp_url_accepts_http_aia_and_ignores_other_locations() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der(
+            "1.3.6.1.5.5.7.1.1",
+            &aia_with_location(0x86, "https://ocsp.example.test/status"),
+        );
+        assert_eq!(
+            checker.extract_ocsp_url(&cert).unwrap().as_deref(),
+            Some("https://ocsp.example.test/status")
+        );
+
+        let credentials = cert_with_raw_extension_der(
+            "1.3.6.1.5.5.7.1.1",
+            &aia_with_location(0x86, "https://user:secret@ocsp.example.test/status"),
+        );
+        assert!(checker.extract_ocsp_url(&credentials).unwrap().is_none());
+
+        let non_uri = cert_with_raw_extension_der(
+            "1.3.6.1.5.5.7.1.1",
+            &aia_with_location(0x82, "ocsp.example.test"),
+        );
+        assert!(checker.extract_ocsp_url(&non_uri).unwrap().is_none());
+    }
+
     #[test]
     fn test_extract_urls_empty_der() {
         let checker = RevocationChecker::new(true);
