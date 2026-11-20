@@ -1528,6 +1528,39 @@ mod tests {
         assert!(!output.contains("private queue detail"));
     }
 
+    #[test]
+    fn executor_optional_configuration_is_available_to_workers() {
+        let job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+            job,
+            persist_error: false,
+        });
+        let executor = ScanExecutor::new(queue, 1);
+        assert!(!executor.has_webhook_signing_secret());
+        assert_eq!(executor.webhook_signing_secret(), None);
+
+        let stats = Arc::new(RwLock::new(ApiStats::default()));
+        let allowed_cidrs = vec!["192.0.2.0/24".parse().unwrap()];
+        let configured = executor
+            .with_stats(stats.clone())
+            .with_webhook_signing_secret(Some(b"test secret".to_vec()))
+            .with_worker_allowed_cidrs(allowed_cidrs.clone());
+
+        assert!(Arc::ptr_eq(configured.stats.as_ref().unwrap(), &stats));
+        assert!(configured.has_webhook_signing_secret());
+        assert_eq!(
+            configured.webhook_signing_secret(),
+            Some(b"test secret".to_vec())
+        );
+        assert_eq!(configured.worker_allowed_cidrs.as_ref(), &allowed_cidrs);
+        assert!(
+            !configured
+                .clone()
+                .with_webhook_signing_secret(None)
+                .has_webhook_signing_secret()
+        );
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,
