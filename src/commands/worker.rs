@@ -185,6 +185,100 @@ mod tests {
     }
 
     #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_rejects_invalid_api_configuration_before_database_setup() {
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let api_path = directory.path().join("api.toml");
+        std::fs::write(&api_path, "invalid = [").expect("invalid API config should be written");
+        let args = Args {
+            api_server: crate::cli::ApiServerArgs {
+                config: Some(api_path),
+                ..Default::default()
+            },
+            database: crate::cli::DatabaseArgs {
+                config: Some(directory.path().join("unused-db.toml")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = run_worker(&args)
+            .await
+            .expect_err("invalid API config should fail before opening a database");
+
+        assert!(error.to_string().contains("Failed to parse API config"));
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_rejects_missing_database_configuration_file() {
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let api_path = directory.path().join("api.toml");
+        crate::api::ApiConfig::create_example(&api_path)
+            .expect("valid API config should be created");
+        let mut args = Args::default();
+        args.api_server.config = Some(api_path);
+        args.database.config = Some(directory.path().join("missing-db.toml"));
+
+        let error = run_worker(&args)
+            .await
+            .expect_err("missing database config should fail before connecting");
+
+        assert!(error.to_string().contains("Failed to read config"));
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_rejects_invalid_database_pool_configuration() {
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let api_path = directory.path().join("api.toml");
+        crate::api::ApiConfig::create_example(&api_path)
+            .expect("valid API config should be created");
+        let database_path = directory.path().join("database.toml");
+        let mut database = crate::db::DatabaseConfig::postgres(
+            "127.0.0.1".to_string(),
+            5432,
+            "unused".to_string(),
+            "unused".to_string(),
+            "unused".to_string(),
+        );
+        database.max_connections = Some(0);
+        let config = crate::db::Config {
+            database,
+            retention: None,
+        };
+        std::fs::write(
+            &database_path,
+            toml::to_string(&config).expect("database config should serialize"),
+        )
+        .expect("database config should be written");
+        let mut args = Args::default();
+        args.api_server.config = Some(api_path);
+        args.database.config = Some(database_path);
+
+        let error = run_worker(&args)
+            .await
+            .expect_err("invalid pool configuration should fail before connecting");
+
+        assert!(
+            error
+                .to_string()
+                .contains("max_connections must be greater than 0")
+        );
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn worker_command_propagates_startup_configuration_errors() {
+        let error = WorkerCommand::new(Args::default())
+            .execute()
+            .await
+            .expect_err("worker command should reject missing configuration");
+
+        assert!(error.to_string().contains("--worker requires --api-config"));
+    }
+
+    #[cfg(feature = "api")]
     #[test]
     fn worker_started_event_includes_startup_duration_and_concurrency() {
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
