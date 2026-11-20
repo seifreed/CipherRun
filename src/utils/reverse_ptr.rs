@@ -278,6 +278,26 @@ mod tests {
     }
 
     #[test]
+    fn test_try_common_patterns_provider_boundaries() {
+        let cases = [
+            ("52.255.1.2", None),
+            ("34.1.2.3", Some("3.2.1.34.bc.googleusercontent.com")),
+            ("104.15.1.2", None),
+            ("104.31.1.2", Some("cloudflare.example.com")),
+            ("104.32.1.2", None),
+        ];
+
+        for (address, expected) in cases {
+            let ip: IpAddr = address.parse().expect("test assertion should succeed");
+            assert_eq!(
+                ReversePtrLookup::try_common_patterns(&ip).as_deref(),
+                expected,
+                "{address}"
+            );
+        }
+    }
+
+    #[test]
     fn test_try_common_patterns_ipv6_none_additional() {
         let ip: IpAddr = "2001:db8::1"
             .parse()
