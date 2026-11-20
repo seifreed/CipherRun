@@ -312,6 +312,30 @@ impl ProbeAggregate {
 mod tests {
     use super::{ProbeAggregate, *};
 
+    fn tls_record(content_type: u8, payload: &[u8]) -> Vec<u8> {
+        let length = u16::try_from(payload.len()).expect("test record should fit TLS length");
+        let mut record = vec![content_type, 0x03, 0x01];
+        record.extend_from_slice(&length.to_be_bytes());
+        record.extend_from_slice(payload);
+        record
+    }
+
+    async fn read_response(records: Vec<Vec<u8>>) -> std::io::Result<Option<Vec<u8>>> {
+        let (mut client, mut peer) = tokio::io::duplex(BUFFER_SIZE_MAX_TLS_RECORD * 2);
+        let writer = tokio::spawn(async move {
+            for record in records {
+                peer.write_all(&record).await?;
+            }
+            peer.shutdown().await
+        });
+
+        let tester =
+            ProtocolTester::new(crate::utils::test_support::example_com_loopback_target(443));
+        let response = tester.read_server_hello_response(&mut client).await;
+        writer.await.expect("test writer should finish")?;
+        response
+    }
+
     #[test]
     fn test_server_hello_payload_len_accepts_full_fragment() {
         let body_len = BUFFER_SIZE_MAX_TLS_RECORD - 4;
@@ -349,5 +373,102 @@ mod tests {
     fn probe_aggregate_reports_unknown_when_no_signal() {
         let aggregate = ProbeAggregate::default();
         assert_eq!(aggregate.result(), None);
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_response_handles_missing_and_non_server_hello_records() {
+        assert_eq!(read_response(vec![]).await.unwrap(), None);
+
+        let alert = tls_record(21, &[2, 40]);
+        assert_eq!(
+            read_response(vec![alert.clone()]).await.unwrap(),
+            Some(alert)
+        );
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_response_preserves_a_complete_server_hello_record() {
+        let payload = [HANDSHAKE_TYPE_SERVER_HELLO, 0, 0, 0];
+        let record = tls_record(CONTENT_TYPE_HANDSHAKE, &payload);
+
+        assert_eq!(
+            read_response(vec![record.clone()]).await.unwrap(),
+            Some(record)
+        );
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_response_reassembles_server_hello_fragments() {
+        let payload = [HANDSHAKE_TYPE_SERVER_HELLO, 0, 0, 5, 1, 2, 3, 4, 5];
+        let first = tls_record(CONTENT_TYPE_HANDSHAKE, &payload[..6]);
+        let second = tls_record(CONTENT_TYPE_HANDSHAKE, &payload[6..]);
+
+        assert_eq!(
+            read_response(vec![first, second]).await.unwrap(),
+            Some(tls_record(CONTENT_TYPE_HANDSHAKE, &payload))
+        );
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_response_rejects_invalid_continuations_and_oversized_hello() {
+        let partial = [HANDSHAKE_TYPE_SERVER_HELLO, 0, 0, 5, 1];
+        let first = tls_record(CONTENT_TYPE_HANDSHAKE, &partial);
+        assert_eq!(
+            read_response(vec![first.clone(), tls_record(21, &[2, 40])])
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            read_response(vec![first, tls_record(CONTENT_TYPE_HANDSHAKE, &[2])])
+                .await
+                .unwrap(),
+            None
+        );
+
+        let oversized_length = u32::try_from(BUFFER_SIZE_MAX_TLS_RECORD)
+            .expect("record buffer limit should fit the handshake length")
+            .to_be_bytes();
+        let mut oversized_hello = vec![HANDSHAKE_TYPE_SERVER_HELLO];
+        oversized_hello.extend_from_slice(&oversized_length[1..]);
+        assert_eq!(
+            read_response(vec![tls_record(CONTENT_TYPE_HANDSHAKE, &oversized_hello)])
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_response_rejects_oversized_or_truncated_tls_records() {
+        let record_len = u16::try_from(BUFFER_SIZE_MAX_TLS_RECORD + 1)
+            .expect("oversized TLS record length should fit u16");
+        let mut oversized_header = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x01];
+        oversized_header.extend_from_slice(&record_len.to_be_bytes());
+        assert_eq!(read_response(vec![oversized_header]).await.unwrap(), None);
+
+        let mut truncated_record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x01, 0, 5];
+        truncated_record.push(HANDSHAKE_TYPE_SERVER_HELLO);
+        assert_eq!(read_response(vec![truncated_record]).await.unwrap(), None);
+    }
+
+    #[test]
+    fn server_hello_payload_length_rejects_non_server_hello_and_short_headers() {
+        assert_eq!(ProtocolTester::server_hello_payload_len(&[]), None);
+
+        let mut not_handshake = [0u8; 9];
+        not_handshake[0] = 21;
+        not_handshake[5] = HANDSHAKE_TYPE_SERVER_HELLO;
+        assert_eq!(
+            ProtocolTester::server_hello_payload_len(&not_handshake),
+            None
+        );
+
+        let mut not_server_hello = [0u8; 9];
+        not_server_hello[0] = CONTENT_TYPE_HANDSHAKE;
+        assert_eq!(
+            ProtocolTester::server_hello_payload_len(&not_server_hello),
+            None
+        );
     }
 }
