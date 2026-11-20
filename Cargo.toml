@@ -55,7 +55,7 @@ sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 tracing-appender = { path = "vendor/tracing-appender" }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)", "cfg(coverage)"] }
 
 [features]
 default = [

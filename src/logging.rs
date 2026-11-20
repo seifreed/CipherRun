@@ -1249,7 +1249,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual 30-second paced synthetic logging load validation"]
+    #[cfg_attr(
+        not(coverage),
+        ignore = "manual 30-second paced synthetic logging load validation"
+    )]
     fn rolling_file_writer_handles_paced_synthetic_rate_without_loss() {
         const PRODUCERS: usize = 8;
         const EVENTS_PER_PRODUCER: usize = 3_750;
@@ -1327,7 +1330,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual 30-second rolling-file logging soak"]
+    #[cfg_attr(not(coverage), ignore = "manual 30-second rolling-file logging soak")]
     fn rolling_file_writer_accounts_for_sustained_concurrent_logging() {
         const PRODUCERS: usize = 4;
         const SOAK: Duration = Duration::from_secs(30);
