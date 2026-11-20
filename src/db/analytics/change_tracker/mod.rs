@@ -606,4 +606,94 @@ mod tests {
         let report = tracker.generate_change_report(&[]);
         assert!(report.contains("No changes detected"));
     }
+
+    #[tokio::test]
+    async fn test_generate_change_report_groups_and_sorts_all_event_kinds() {
+        let db = Arc::new(
+            CipherRunDatabase::new(&crate::db::DatabaseConfig::sqlite(
+                std::path::PathBuf::from(":memory:"),
+            ))
+            .await
+            .unwrap(),
+        );
+        let tracker = ChangeTracker::new(db);
+        let timestamp = Utc::now();
+        let event = |change_type: ChangeType,
+                     severity: ChangeSeverity,
+                     description: &str,
+                     previous_value: Option<&str>,
+                     current_value: Option<&str>| ChangeEvent {
+            change_type,
+            severity,
+            description: description.to_string(),
+            previous_value: previous_value.map(str::to_string),
+            current_value: current_value.map(str::to_string),
+            timestamp,
+        };
+        let changes = vec![
+            event(
+                ChangeType::Rating,
+                ChangeSeverity::Info,
+                "z-last",
+                Some("old-z"),
+                Some("new-z"),
+            ),
+            event(
+                ChangeType::Vulnerability,
+                ChangeSeverity::Low,
+                "vulnerability",
+                None,
+                None,
+            ),
+            event(
+                ChangeType::Certificate,
+                ChangeSeverity::Medium,
+                "certificate",
+                Some("old-cert"),
+                None,
+            ),
+            event(
+                ChangeType::Cipher,
+                ChangeSeverity::High,
+                "cipher",
+                None,
+                Some("new-cipher"),
+            ),
+            event(
+                ChangeType::Protocol,
+                ChangeSeverity::Critical,
+                "protocol",
+                Some("disabled"),
+                Some("enabled"),
+            ),
+            event(
+                ChangeType::Rating,
+                ChangeSeverity::Info,
+                "a-first",
+                Some("old-a"),
+                Some("new-a"),
+            ),
+        ];
+
+        let report = tracker.generate_change_report(&changes);
+        let headings: Vec<_> = report
+            .lines()
+            .filter(|line| line.ends_with("Changes (1)") || line.ends_with("Changes (2)"))
+            .collect();
+        assert_eq!(
+            headings,
+            [
+                "Protocol Changes (1)",
+                "Cipher Changes (1)",
+                "Certificate Changes (1)",
+                "Vulnerability Changes (1)",
+                "Rating Changes (2)",
+            ]
+        );
+        assert!(report.contains("[CRITICAL] protocol"));
+        assert!(report.contains("[HIGH]     cipher"));
+        assert!(report.contains("Previous: disabled"));
+        assert!(report.contains("Current:  new-cipher"));
+        assert!(report.find("a-first").unwrap() < report.find("z-last").unwrap());
+    }
 }
