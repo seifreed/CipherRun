@@ -365,6 +365,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_winshock_read_complete_tls_record_returns_truncated_record_on_eof() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket
+                .write_all(&[CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x02, 0x01])
+                .await
+                .unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let mut buffer = [0u8; 16];
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(n, 6);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_winshock_read_complete_tls_record_stops_on_read_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let mut buffer = [0u8; 16];
+        let n = read_io::complete_tls_record(&mut stream, &mut buffer, Duration::from_millis(10))
+            .await
+            .unwrap();
+
+        assert_eq!(n, 0);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_winshock_read_complete_tls_record_accepts_record_above_default_buffer() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
