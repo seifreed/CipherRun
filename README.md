@@ -102,6 +102,8 @@ The standalone PQC configuration scanners and roadmap are enabled by the
 
 The reduced feature matrix is checked in CI with `--no-default-features`,
 `monitoring`, `ct,pqc`, both database backends, and `--all-features` builds.
+Linux CI also runs PostgreSQL repository and coverage tests against PostgreSQL
+18.7, the newest active release reported by `eol-cli`.
 
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.
@@ -537,7 +539,7 @@ cargo fuzz build parsed_input
 cargo outdated
 ```
 
-CI measures line coverage across every Rust workspace crate, feature, and target. The latest complete local run measured 87.74% (98,653/112,436 lines) with Rust 1.100.0 and `cargo-llvm-cov` 0.9.1; it passed the configured 86.9% floor. That run covered HTTPS CRL distribution-point extraction, rejection of unsupported LDAP URLs, DROWN SSLv2 buffer/error classification, OpenSSL STARTTLS protocol mappings, ServerHello framing, fragmentation, truncated records, invalid feature-detection responses, Winshock TLS EOF/timeout handling, MySQL banner versions and declared-length validation, and SQLite scan-repository error mapping. Linux CI checks rejection of persisted job files whose filename is not valid UTF-8. The two 30-second rolling-file load tests run under `cargo llvm-cov`; regular `cargo test` continues to skip them. The floor must rise as uncovered paths receive tests; the target is 100%.
+CI measures line coverage across every Rust workspace crate, feature, and target. The latest complete local run measured 87.80% (99,282/113,074 lines) with Rust 1.100.0, PostgreSQL 17.12, and `cargo-llvm-cov` 0.9.1; it passed the configured 86.9% floor. That run covered HTTPS CRL distribution-point extraction, rejection of unsupported LDAP URLs, DROWN SSLv2 buffer/error classification, OpenSSL STARTTLS protocol mappings, ServerHello framing, fragmentation, truncated records, invalid feature-detection responses, Winshock TLS EOF/timeout handling, MySQL banner versions and declared-length validation, SQLite scan-repository error mapping, and PostgreSQL scan-repository success/error paths. Linux CI runs the PostgreSQL paths against 18.7, the newest active release reported by `eol-cli`, and checks rejection of persisted job files whose filename is not valid UTF-8. The two 30-second rolling-file load tests run under `cargo llvm-cov`; regular `cargo test` continues to skip them. The floor must rise as uncovered paths receive tests; the target is 100%.
 
 CI artifact upload and release download use the Node 24-compatible, SHA-pinned `upload-artifact` 7.0.2 and `download-artifact` 8.0.2 actions.
 Scheduled CI uses the latest Kani release (0.68.0) and fuzzes `parsed_input` and `framework_loader` for 120 seconds each. Kani 0.68.0 currently hits an upstream codegen ICE in this crate. Kani 0.67.0 is not a workaround: its bundled Rust 1.93 compiler is below the project's Rust 1.100 MSRV. The formal-verification job remains an open upstream compatibility issue; retry the latest Kani release after the ICE is fixed.

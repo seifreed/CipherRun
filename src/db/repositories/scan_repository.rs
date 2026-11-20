@@ -499,4 +499,163 @@ mod tests {
 
         pool.close().await;
     }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn postgres_scan_repository_covers_success_and_error_paths() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let postgres = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        let pool = DatabasePool::Postgres(postgres);
+        let DatabasePool::Postgres(postgres) = &pool else {
+            unreachable!("test pool is PostgreSQL");
+        };
+        sqlx::query(
+            "CREATE TABLE scans (\
+                scan_id BIGSERIAL PRIMARY KEY, \
+                target_hostname VARCHAR(255) NOT NULL, \
+                target_port INTEGER NOT NULL DEFAULT 443, \
+                scan_timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+                overall_grade VARCHAR(5), overall_score INTEGER, \
+                scan_duration_ms BIGINT, revocation_json TEXT, \
+                scanner_version VARCHAR(50), principal_id TEXT, \
+                tenant_id TEXT, created_by_key_id TEXT\
+            )",
+        )
+        .execute(postgres)
+        .await
+        .expect("test scans table should be created");
+        let repo = ScanRepositoryImpl::new(pool.clone());
+        let scan = ScanRecord::new("example.com".to_string(), 443);
+        let scan_id = repo
+            .create_scan(&scan)
+            .await
+            .expect("scan should be inserted");
+        let fetched = repo
+            .get_scan_by_id(scan_id)
+            .await
+            .expect("scan lookup should succeed")
+            .expect("inserted scan should exist");
+        assert_eq!(fetched.target_hostname, "example.com");
+        assert_eq!(
+            repo.get_scans_by_hostname("example.com", 443, 10)
+                .await
+                .expect("hostname lookup should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            repo.get_scans_by_hostname_since(
+                "example.com",
+                443,
+                chrono::Utc::now() - chrono::Duration::minutes(1),
+            )
+            .await
+            .expect("time-bounded lookup should succeed")
+            .len(),
+            1
+        );
+        assert_eq!(
+            repo.get_latest_scan("example.com", 443)
+                .await
+                .expect("latest scan lookup should succeed")
+                .expect("inserted scan should be latest")
+                .scan_id,
+            Some(scan_id)
+        );
+        repo.update_scan_rating(scan_id, "A", 98)
+            .await
+            .expect("scan rating should update");
+        assert_eq!(repo.delete_old_scans(30).await.unwrap(), 0);
+        repo.delete_scan(scan_id)
+            .await
+            .expect("scan should be deleted");
+        assert!(repo.get_scan_by_id(scan_id).await.unwrap().is_none());
+
+        let scan = ScanRecord::new("example.com".to_string(), 443);
+        let _ = repo.create_scan(&scan).await.unwrap();
+        sqlx::query("DROP TABLE scans CASCADE")
+            .execute(match &pool {
+                DatabasePool::Postgres(pool) => pool,
+                DatabasePool::Sqlite(_) => unreachable!(),
+            })
+            .await
+            .expect("test should remove the scans table");
+        assert!(
+            repo.create_scan(&scan)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to insert scan")
+        );
+        assert!(
+            repo.get_scan_by_id(1)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scan")
+        );
+        assert!(
+            repo.get_scans_by_hostname("example.com", 443, 10)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scans")
+        );
+        assert!(
+            repo.get_scans_by_hostname_since("example.com", 443, chrono::Utc::now())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scans")
+        );
+        assert!(
+            repo.delete_old_scans(30)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to delete old scans")
+        );
+        assert!(
+            repo.update_scan_rating(1, "A", 98)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to update scan rating")
+        );
+        assert!(
+            repo.delete_scan(1)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to delete scan")
+        );
+
+        pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+        admin.close().await;
+    }
 }
