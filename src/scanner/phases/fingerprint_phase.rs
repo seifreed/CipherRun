@@ -482,6 +482,28 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_execute_continues_when_requested_fingerprints_cannot_connect() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local listener should bind");
+        let port = listener.local_addr().expect("listener address").port();
+        drop(listener);
+
+        let target = localhost_target(port);
+        let mut args = ScanRequest::default();
+        args.scan.scope.all = false;
+        args.fingerprint.explicit_ja3 = true;
+        args.fingerprint.explicit_ja3s = true;
+        args.fingerprint.explicit_jarm = true;
+        let mut context = ScanContext::new(target, Arc::new(args), None, None);
+
+        FingerprintPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("fingerprint failures should not abort the scan phase");
+    }
+
     #[test]
     fn test_load_default_fingerprint_databases() {
         let target = localhost_target(443);
