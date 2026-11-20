@@ -537,7 +537,7 @@ cargo fuzz build parsed_input
 cargo outdated
 ```
 
-CI measures line coverage across every Rust workspace crate, feature, and target. The latest valid local run measured 87.70% (98,753/112,603 lines) with Rust 1.100.0 and `cargo-llvm-cov` 0.9.1; the latest successful CI coverage step passed its 86.9% floor. The two 30-second rolling-file load tests run under `cargo llvm-cov`; regular `cargo test` continues to skip them. The floor must rise as uncovered paths receive tests; the target is 100%.
+CI measures line coverage across every Rust workspace crate, feature, and target. The latest valid local run measured 87.70% (98,753/112,603 lines) with Rust 1.100.0 and `cargo-llvm-cov` 0.9.1; the latest successful CI coverage step passed its 86.9% floor. New deterministic CRL tests exercise extraction of HTTPS distribution-point URLs and rejection of unsupported LDAP URLs; the published measurement will be refreshed after the next full coverage run. The two 30-second rolling-file load tests run under `cargo llvm-cov`; regular `cargo test` continues to skip them. The floor must rise as uncovered paths receive tests; the target is 100%.
 Scheduled CI uses the latest Kani release (0.68.0) and fuzzes `parsed_input` and `framework_loader` for 120 seconds each. Kani 0.68.0 currently hits an upstream codegen ICE in this crate. Kani 0.67.0 is not a workaround: its bundled Rust 1.93 compiler is below the project's Rust 1.100 MSRV. The formal-verification job remains an open upstream compatibility issue; retry the latest Kani release after the ICE is fixed.
 
 `cargo deny` temporarily ignores the maintenance-only `RUSTSEC-2026-0543`

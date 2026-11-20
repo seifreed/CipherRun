@@ -199,6 +199,49 @@ mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
 
+    fn crl_distribution_points_with_uri(uri: &[u8]) -> Vec<u8> {
+        fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+            assert!(
+                value.len() < 128,
+                "test DER helper only supports short lengths"
+            );
+            let mut encoded = vec![tag, value.len() as u8];
+            encoded.extend_from_slice(value);
+            encoded
+        }
+
+        let uri = tlv(0x86, uri);
+        let full_name = tlv(0xa0, &uri);
+        let distribution_point = tlv(0xa0, &full_name);
+        let point = tlv(0x30, &distribution_point);
+        tlv(0x30, &point)
+    }
+
+    #[test]
+    fn extract_crl_url_selects_http_uri_from_distribution_point() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der(
+            "2.5.29.31",
+            &crl_distribution_points_with_uri(b"https://crl.example.test/root.crl"),
+        );
+
+        assert_eq!(
+            checker.extract_crl_url(&cert).unwrap().as_deref(),
+            Some("https://crl.example.test/root.crl")
+        );
+    }
+
+    #[test]
+    fn extract_crl_url_ignores_non_http_uri() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der(
+            "2.5.29.31",
+            &crl_distribution_points_with_uri(b"ldap://crl.example.test/root.crl"),
+        );
+
+        assert!(checker.extract_crl_url(&cert).unwrap().is_none());
+    }
+
     #[test]
     fn crl_completion_events_report_structured_outcomes_and_duration() {
         use std::sync::{Arc, Mutex};
