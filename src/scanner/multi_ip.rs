@@ -514,4 +514,30 @@ mod tests {
         let scanner = MultiIpScanner::new(target, request).with_terminal_progress();
         assert!(scanner.callback.is_some());
     }
+
+    #[tokio::test]
+    async fn scan_all_ips_collects_scanner_creation_failures_without_network_access() {
+        let target = target_with_ips(&["192.0.2.1", "192.0.2.2"]);
+        let mut scanner = MultiIpScanner::new(target, ScanRequest::default())
+            .with_callback(Arc::new(SilentMultiIpProgress));
+        scanner.max_concurrent_scans = 0;
+
+        let report = scanner
+            .scan_all_ips()
+            .await
+            .expect("per-IP scanner creation failures should be reported");
+
+        assert_eq!(report.total_ips, 2);
+        assert_eq!(report.per_ip_results.len(), 2);
+        assert_eq!(report.successful_scans, 0);
+        assert_eq!(report.failed_scans, 2);
+        assert_eq!(report.failed_results().len(), 2);
+        assert!(report.avg_scan_duration_ms().is_none());
+        assert!(report.per_ip_results.values().all(|result| {
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Failed to create scanner:"))
+        }));
+    }
 }
