@@ -366,6 +366,46 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[test]
+    fn test_grease_client_hello_builders_with_and_without_sni() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.test".to_string(),
+            443,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+        let client_hellos = [
+            tester.build_client_hello_with_grease_ciphers().unwrap(),
+            tester.build_client_hello_with_grease_extensions().unwrap(),
+            tester.build_client_hello_with_grease_groups().unwrap(),
+            tester.build_client_hello_combined_grease().unwrap(),
+        ];
+        assert!(client_hellos.iter().all(|hello| !hello.is_empty()));
+
+        let ip_target = crate::utils::network::Target::with_ips(
+            "127.0.0.1".to_string(),
+            443,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let no_sni_tester = GreaseTester::new(ip_target);
+        assert!(
+            !no_sni_tester
+                .build_client_hello_with_grease_ciphers()
+                .unwrap()
+                .is_empty()
+        );
+
+        let overridden_tester = tester.with_sni(Some("override.example.test".to_string()));
+        assert!(
+            !overridden_tester
+                .build_client_hello_combined_grease()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_classify_grease_response_rejects_malformed_inputs() {
         for (response, expected) in [
             (
