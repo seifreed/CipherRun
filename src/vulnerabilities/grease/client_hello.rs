@@ -427,6 +427,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_classify_grease_response_handles_alert_outcomes() {
+        assert!(matches!(
+            classify_grease_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02]),
+            GreaseTestOutcome::Inconclusive(reason) if reason == "Truncated TLS alert record"
+        ));
+
+        for description in [0x46, 0x28, 0x2f] {
+            assert_eq!(
+                classify_grease_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, description]),
+                GreaseTestOutcome::Rejected
+            );
+        }
+
+        assert!(matches!(
+            classify_grease_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32]),
+            GreaseTestOutcome::Inconclusive(reason) if reason == "Server returned internal error"
+        ));
+        assert!(matches!(
+            classify_grease_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x0a]),
+            GreaseTestOutcome::Inconclusive(reason) if reason.contains("alert 10 (level 1)")
+        ));
+    }
+
     #[tokio::test]
     async fn test_read_complete_response_handles_fragmented_alert() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -496,6 +520,34 @@ mod tests {
             .expect("read should succeed");
 
         assert_eq!(n, TLS_RECORD_HEADER_SIZE + BUFFER_SIZE_DEFAULT);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_response_rejects_record_larger_than_buffer() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 16];
+            let _ = socket.read(&mut buf).await.unwrap();
+            socket
+                .write_all(&[CONTENT_TYPE_HANDSHAKE, 0x03, 0x03, 0x00, 0x20])
+                .await
+                .unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let error = GreaseTester::read_complete_response(&mut stream, &mut [0u8; 8])
+            .await
+            .expect_err("oversized TLS record should be rejected");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exceeds buffer"));
         server.await.unwrap();
     }
 }
