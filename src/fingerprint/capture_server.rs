@@ -382,6 +382,57 @@ mod tests {
     use super::*;
     use crate::utils::test_support::example_com_target;
 
+    fn target_for_local_port(port: u16) -> Target {
+        Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap()
+    }
+
+    fn capture_with_local_server(
+        response: &'static [u8],
+    ) -> (ServerHelloNetworkCapture, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut header = [0u8; 5];
+            stream.read_exact(&mut header).unwrap();
+            let mut client_hello = vec![0u8; u16::from_be_bytes([header[3], header[4]]) as usize];
+            stream.read_exact(&mut client_hello).unwrap();
+            stream.write_all(response).unwrap();
+        });
+
+        (
+            ServerHelloNetworkCapture::new(target_for_local_port(port))
+                .with_timeout(Duration::from_secs(2)),
+            server,
+        )
+    }
+
+    async fn capture_with_local_async_server(
+        response: &'static [u8],
+    ) -> (ServerHelloNetworkCapture, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut header = [0u8; 5];
+            stream.read_exact(&mut header).await.unwrap();
+            let mut client_hello = vec![0u8; u16::from_be_bytes([header[3], header[4]]) as usize];
+            stream.read_exact(&mut client_hello).await.unwrap();
+            stream.write_all(response).await.unwrap();
+        });
+
+        (
+            ServerHelloNetworkCapture::new(target_for_local_port(port))
+                .with_timeout(Duration::from_secs(2)),
+            server,
+        )
+    }
+
     #[test]
     fn test_build_client_hello() {
         let capture = ServerHelloNetworkCapture::new(example_com_target());
@@ -457,6 +508,53 @@ mod tests {
             extension
                 .windows(server_name.len())
                 .any(|window| window == server_name)
+        );
+    }
+
+    #[test]
+    fn capture_reads_and_parses_tls_alert_from_local_server() {
+        let (capture, server) =
+            capture_with_local_server(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
+        let error = capture.capture().unwrap_err();
+        server.join().unwrap();
+
+        assert!(error.to_string().contains("TLS Alert received"));
+    }
+
+    #[test]
+    fn capture_rejects_oversized_tls_record_before_reading_payload() {
+        let (capture, server) = capture_with_local_server(&[0x16, 0x03, 0x03, 0x40, 0x01]);
+        let error = capture.capture().unwrap_err();
+        server.join().unwrap();
+
+        assert!(
+            error
+                .to_string()
+                .contains("TLS record too large: 16385 bytes")
+        );
+    }
+
+    #[tokio::test]
+    async fn capture_async_reads_and_parses_tls_alert_from_local_server() {
+        let (capture, server) =
+            capture_with_local_async_server(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]).await;
+        let error = capture.capture_async().await.unwrap_err();
+        server.await.unwrap();
+
+        assert!(error.to_string().contains("TLS Alert received"));
+    }
+
+    #[tokio::test]
+    async fn capture_async_rejects_oversized_tls_record_before_reading_payload() {
+        let (capture, server) =
+            capture_with_local_async_server(&[0x16, 0x03, 0x03, 0x40, 0x01]).await;
+        let error = capture.capture_async().await.unwrap_err();
+        server.await.unwrap();
+
+        assert!(
+            error
+                .to_string()
+                .contains("TLS record too large: 16385 bytes")
         );
     }
 }
