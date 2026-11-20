@@ -483,6 +483,17 @@ mod tests {
     }
 
     #[test]
+    fn test_load_default_fingerprint_databases() {
+        let target = localhost_target(443);
+        let mut context = ScanContext::new(target, Arc::new(ScanRequest::default()), None, None);
+        let phase = FingerprintPhase::new();
+
+        assert!(phase.load_ja3_database(&mut context).is_ok());
+        assert!(phase.load_ja3s_database(&mut context).is_ok());
+        assert!(phase.load_jarm_database(&mut context).is_ok());
+    }
+
+    #[test]
     fn test_load_ja3_database_rejects_invalid_custom_path() {
         let target = localhost_target(443);
 
