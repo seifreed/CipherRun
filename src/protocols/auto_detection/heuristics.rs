@@ -215,4 +215,140 @@ mod tests {
 
         assert_eq!(version.as_deref(), Some("220 smtp.example ESMTP ready"));
     }
+
+    #[test]
+    fn protocol_from_port_maps_known_services_and_unknown_ports() {
+        let cases = [
+            (21, ApplicationProtocol::FtpStartTls),
+            (22, ApplicationProtocol::Unknown),
+            (25, ApplicationProtocol::SmtpStartTls),
+            (587, ApplicationProtocol::SmtpStartTls),
+            (2525, ApplicationProtocol::SmtpStartTls),
+            (80, ApplicationProtocol::Http),
+            (8080, ApplicationProtocol::Http),
+            (8000, ApplicationProtocol::Http),
+            (110, ApplicationProtocol::Pop3StartTls),
+            (143, ApplicationProtocol::ImapStartTls),
+            (389, ApplicationProtocol::LdapStartTls),
+            (443, ApplicationProtocol::Https),
+            (8443, ApplicationProtocol::Https),
+            (465, ApplicationProtocol::Smtp),
+            (993, ApplicationProtocol::Imap),
+            (995, ApplicationProtocol::Pop3),
+            (3306, ApplicationProtocol::Mysql),
+            (5222, ApplicationProtocol::XmppStartTls),
+            (5269, ApplicationProtocol::XmppStartTls),
+            (5432, ApplicationProtocol::Postgres),
+            (6379, ApplicationProtocol::Redis),
+            (27017, ApplicationProtocol::MongoDB),
+            (0, ApplicationProtocol::Unknown),
+        ];
+
+        for (port, expected) in cases {
+            assert_eq!(protocol_from_port(port), expected, "port {port}");
+        }
+    }
+
+    #[test]
+    fn analyze_banner_classifies_text_and_binary_protocols() {
+        let mongo = [0x3a, 0x00, 0x00, 0x00];
+        let cases: &[(&[u8], ApplicationProtocol, f64)] = &[
+            (
+                b"220 mail.example ESMTP ready",
+                ApplicationProtocol::SmtpStartTls,
+                0.95,
+            ),
+            (
+                b"+OK Dovecot POP3 ready",
+                ApplicationProtocol::Pop3StartTls,
+                0.95,
+            ),
+            (
+                b"* OK IMAP4rev1 ready",
+                ApplicationProtocol::ImapStartTls,
+                0.95,
+            ),
+            (
+                b"220 ftp.example FTP server",
+                ApplicationProtocol::FtpStartTls,
+                0.90,
+            ),
+            (
+                b"<stream:stream jabber:server>",
+                ApplicationProtocol::XmppStartTls,
+                0.90,
+            ),
+            (
+                b"<?xml version='1.0'?> jabber",
+                ApplicationProtocol::XmppStartTls,
+                0.90,
+            ),
+            (b"PostgreSQL 16", ApplicationProtocol::Postgres, 0.90),
+            (b"-ERR unknown command", ApplicationProtocol::Redis, 0.85),
+            (b"+PONG", ApplicationProtocol::Redis, 0.85),
+            (&mongo, ApplicationProtocol::MongoDB, 0.80),
+            (&[0xff, 0x00], ApplicationProtocol::Unknown, 0.0),
+        ];
+
+        for (banner, expected, confidence) in cases {
+            assert_eq!(analyze_banner(banner), (*expected, *confidence));
+        }
+    }
+
+    #[test]
+    fn starttls_requirement_matches_protocol_capabilities() {
+        for protocol in [
+            ApplicationProtocol::SmtpStartTls,
+            ApplicationProtocol::ImapStartTls,
+            ApplicationProtocol::Pop3StartTls,
+            ApplicationProtocol::FtpStartTls,
+            ApplicationProtocol::XmppStartTls,
+            ApplicationProtocol::LdapStartTls,
+            ApplicationProtocol::Mysql,
+            ApplicationProtocol::Postgres,
+        ] {
+            assert!(requires_starttls(protocol), "{protocol:?}");
+        }
+
+        for protocol in [
+            ApplicationProtocol::Http,
+            ApplicationProtocol::Https,
+            ApplicationProtocol::Smtp,
+            ApplicationProtocol::Imap,
+            ApplicationProtocol::Pop3,
+            ApplicationProtocol::Ftp,
+            ApplicationProtocol::Xmpp,
+            ApplicationProtocol::Ldap,
+            ApplicationProtocol::Redis,
+            ApplicationProtocol::MongoDB,
+            ApplicationProtocol::Unknown,
+        ] {
+            assert!(!requires_starttls(protocol), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn extract_version_supports_text_protocols_and_ignores_binary_protocols() {
+        let banner = b"220 mail.example ESMTP ready\r\nignored second line";
+        for protocol in [
+            ApplicationProtocol::Smtp,
+            ApplicationProtocol::SmtpStartTls,
+            ApplicationProtocol::Imap,
+            ApplicationProtocol::ImapStartTls,
+            ApplicationProtocol::Pop3,
+            ApplicationProtocol::Pop3StartTls,
+            ApplicationProtocol::Ftp,
+            ApplicationProtocol::FtpStartTls,
+        ] {
+            assert_eq!(
+                extract_version(banner, protocol).unwrap().as_deref(),
+                Some("220 mail.example ESMTP ready")
+            );
+        }
+
+        assert_eq!(
+            extract_version(banner, ApplicationProtocol::Postgres).unwrap(),
+            None
+        );
+    }
 }
