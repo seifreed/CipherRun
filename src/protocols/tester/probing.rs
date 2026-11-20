@@ -862,7 +862,9 @@ mod legacy_probe_tests {
     async fn test_tls_legacy_raw_probe_handles_fragmented_server_hello() {
         let addr = spawn_fragmented_probe_response_server(server_hello_record(0x0301), 6).await;
 
-        let tester = short_timeout_tester(addr);
+        let tester = ProtocolTester::new(example_target_for_addr(addr))
+            .with_connect_timeout(Duration::from_millis(100))
+            .with_read_timeout(Duration::from_secs(1));
 
         let outcome = tester
             .test_tls_legacy_raw_on_ip(Protocol::TLS10, addr)
