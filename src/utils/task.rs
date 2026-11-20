@@ -1,12 +1,17 @@
 use tokio::task::JoinHandle;
-use tracing::Instrument;
+use tracing::{Instrument, instrument::WithSubscriber};
 
 pub(crate) fn spawn_with_current_span<F>(future: F) -> JoinHandle<F::Output>
 where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(future.instrument(tracing::Span::current()))
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    tokio::spawn(
+        future
+            .with_subscriber(dispatch)
+            .instrument(tracing::Span::current()),
+    )
 }
 
 pub(crate) fn spawn_blocking_with_current_span<F, R>(f: F) -> JoinHandle<R>
@@ -81,6 +86,40 @@ mod tests {
             serde_json::from_str(output.lines().next().unwrap()).unwrap();
         assert_eq!(event["fields"]["event_name"], "task.context.test");
         assert_eq!(event["spans"][0]["request_id"], "request-123");
+    }
+
+    #[test]
+    fn spawned_task_keeps_subscriber_on_multi_thread_runtime() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(async {
+                let span = tracing::info_span!("worker.task", task_id = "task-42");
+                span.in_scope(|| {
+                    spawn_with_current_span(async {
+                        tracing::info!(event_name = "task.dispatch.test", "task event");
+                    })
+                })
+                .await
+                .unwrap();
+            });
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(output.lines().next().unwrap()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "task.dispatch.test");
+        assert_eq!(event["spans"][0]["task_id"], "task-42");
     }
 
     #[test]

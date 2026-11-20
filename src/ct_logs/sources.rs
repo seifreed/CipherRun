@@ -91,6 +91,16 @@ impl SourceManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_test_sources(sources: impl IntoIterator<Item = LogSource>) -> Self {
+        let mut manager = Self::new();
+        manager.sources = sources
+            .into_iter()
+            .map(|source| (source.id.clone(), source))
+            .collect();
+        manager
+    }
+
     /// Fetch CT log sources from Google's log list
     pub async fn fetch_sources(&mut self) -> Result<()> {
         let started = std::time::Instant::now();

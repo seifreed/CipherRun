@@ -628,6 +628,17 @@ mod tests {
         entries_requests: std::sync::atomic::AtomicUsize,
     }
 
+    #[derive(Default)]
+    struct RejectingSink(Mutex<Vec<CtLogEntry>>);
+
+    #[async_trait::async_trait]
+    impl crate::ct_logs::CtEntrySink for RejectingSink {
+        async fn handle_entry(&self, entry: &CtLogEntry) -> crate::ct_logs::Result<()> {
+            self.0.lock().unwrap().push(entry.clone());
+            Err(crate::TlsError::Other("private sink detail".to_string()))
+        }
+    }
+
     async fn test_valid_tree_size(
         State(_state): State<Arc<ValidEntryState>>,
     ) -> Json<serde_json::Value> {
@@ -704,7 +715,7 @@ mod tests {
         };
 
         let result = streamer
-            .start_with_sink(None)
+            .start()
             .with_subscriber(tracing::Dispatch::new(subscriber))
             .await;
         assert!(result.is_err());
@@ -888,6 +899,42 @@ mod tests {
 
     #[tokio::test]
     async fn valid_ct_log_entry_is_delivered_to_the_consumer() {
+        let state = valid_entry_state();
+        let app = valid_entry_router(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (tx, mut rx) = mpsc::channel(1);
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            format!("http://{address}"),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::clone(&state.shutdown),
+            CtConfig {
+                custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                ..CtConfig::default()
+            },
+        )
+        .await;
+
+        let entry = rx
+            .try_recv()
+            .expect("valid CT entry should reach the consumer");
+        assert_eq!(entry.log_source, "test-source");
+        assert_eq!(entry.index, 0);
+        assert_eq!(
+            entry.certificate.subject_cn.as_deref(),
+            Some("ct-entry.example.test")
+        );
+        assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    fn valid_entry_state() -> Arc<ValidEntryState> {
         use openssl::asn1::Asn1Time;
         use openssl::hash::MessageDigest;
         use openssl::pkey::PKey;
@@ -919,45 +966,73 @@ mod tests {
         leaf.push((der.len() & 0xff) as u8);
         leaf.extend_from_slice(&der);
 
-        let state = Arc::new(ValidEntryState {
+        Arc::new(ValidEntryState {
             shutdown: Arc::new(AtomicBool::new(false)),
             leaf_input: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, leaf),
             entries_requests: std::sync::atomic::AtomicUsize::new(0),
-        });
-        let app = Router::new()
+        })
+    }
+
+    fn valid_entry_router(state: Arc<ValidEntryState>) -> Router {
+        Router::new()
             .route("/ct/v1/get-sth", get(test_valid_tree_size))
             .route("/ct/v1/get-entries", get(test_valid_entry))
-            .with_state(state.clone());
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn start_with_sink_drains_entries_and_redacts_sink_errors() {
+        let state = valid_entry_state();
+        let app = valid_entry_router(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let (tx, mut rx) = mpsc::channel(1);
-
-        CtStreamer::stream_source(
-            "test-source".to_string(),
-            format!("http://{address}"),
-            CtClient::new(),
-            Parser::new("test-source".to_string()),
-            tx,
-            StatsTracker::new(),
-            Arc::clone(&state.shutdown),
-            CtConfig {
+        let source_manager = SourceManager::with_test_sources([super::super::sources::LogSource {
+            id: "test-source".to_string(),
+            description: "Local test CT log".to_string(),
+            operator: "test".to_string(),
+            url: format!("http://{address}"),
+            key: None,
+            mmd: None,
+            tree_size: 0,
+            usable: true,
+            last_error: None,
+            failure_count: 0,
+        }]);
+        let sink = Arc::new(RejectingSink::default());
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let mut streamer = CtStreamer {
+            config: CtConfig {
                 custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                silent: true,
                 ..CtConfig::default()
             },
-        )
-        .await;
+            source_manager,
+            stats: StatsTracker::new(),
+            shutdown: Arc::clone(&state.shutdown),
+        };
 
-        let entry = rx
-            .try_recv()
-            .expect("valid CT entry should reach the consumer");
-        assert_eq!(entry.log_source, "test-source");
-        assert_eq!(entry.index, 0);
-        assert_eq!(
-            entry.certificate.subject_cn.as_deref(),
-            Some("ct-entry.example.test")
-        );
+        streamer
+            .start_with_sink(Some(sink.clone()))
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("streaming should stop after the local log signals shutdown");
+
+        let entries = sink.0.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].log_source, "test-source");
+        assert_eq!(entries[0].index, 0);
         assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("ct_log.streaming.started"), "{output}");
+        assert!(output.contains("ct_log.sink.failed"), "{output}");
+        assert!(output.contains("ct_log.streaming.stopped"), "{output}");
+        assert!(!output.contains("private sink detail"), "{output}");
         server.abort();
     }
 

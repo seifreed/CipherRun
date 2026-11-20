@@ -311,8 +311,10 @@ failure count, and completion outcome after joining its background tasks;
 individual failed tasks retain their own categorized error events. If the task
 owner is dropped before graceful shutdown, `api_server.background_tasks.drop_cleanup`
 records whether a shutdown signal was sent and whether the executor cleanup could
-be scheduled in the active Tokio runtime. The executor, job-retention, and
-rate-limit cleanup tasks inherit the server's current tracing span.
+be scheduled in the active Tokio runtime. Background tasks spawned through the
+shared Tokio helper retain both the active tracing subscriber and span across
+worker threads. The executor, job-retention, and rate-limit cleanup tasks inherit
+the server's current tracing context.
 `scan_job.task.join_failed` classifies unexpected task panics and cancellations
 with stable error codes and an outcome; its structured event omits the panic
 payload. Parallel mass-scan tasks inherit the command span; join failures use
