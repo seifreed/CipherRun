@@ -247,6 +247,7 @@ mod tests {
     use crate::db::BindValue;
     use crate::db::analytics::test_support::{insert_scan, setup_db};
     use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
 
     async fn insert_certificate(
         db: &crate::db::CipherRunDatabase,
@@ -351,5 +352,146 @@ mod tests {
             .await
             .expect("compare two missing certificates");
         assert!(!both_missing.fingerprint_changed);
+    }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn postgres_comparison_reads_leaf_certificates_and_maps_query_errors() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        sqlx::query(
+            "CREATE TABLE certificates (\
+                cert_id BIGSERIAL PRIMARY KEY, fingerprint_sha256 TEXT NOT NULL, \
+                subject TEXT NOT NULL, issuer TEXT NOT NULL, serial_number TEXT, \
+                not_before TIMESTAMPTZ NOT NULL, not_after TIMESTAMPTZ NOT NULL, \
+                signature_algorithm TEXT, public_key_algorithm TEXT, public_key_size INTEGER, \
+                san_domains TEXT[] NOT NULL DEFAULT '{}', is_ca BOOLEAN NOT NULL, \
+                key_usage TEXT[] NOT NULL DEFAULT '{}', \
+                extended_key_usage TEXT[] NOT NULL DEFAULT '{}', der_bytes BYTEA, \
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP\
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("test certificates table should be created");
+        sqlx::query(
+            "CREATE TABLE scan_certificates (\
+                scan_id BIGINT NOT NULL, cert_id BIGINT NOT NULL, chain_position INTEGER NOT NULL\
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scan-certificate table should be created");
+
+        let now = Utc::now();
+        for (scan_id, fingerprint, subject, issuer, key_size, not_after) in [
+            (1_i64, "first", "CN=first", "CN=CA A", 2048_i32, now),
+            (
+                2_i64,
+                "second",
+                "CN=second",
+                "CN=CA B",
+                4096_i32,
+                now + chrono::Duration::days(1),
+            ),
+        ] {
+            let certificate_id: i64 = sqlx::query_scalar(
+                "INSERT INTO certificates (fingerprint_sha256, subject, issuer, not_before, \
+                    not_after, public_key_size, san_domains, is_ca, key_usage, \
+                    extended_key_usage) VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9) \
+                    RETURNING cert_id",
+            )
+            .bind(fingerprint)
+            .bind(subject)
+            .bind(issuer)
+            .bind(now)
+            .bind(not_after)
+            .bind(key_size)
+            .bind(vec!["example.test".to_string()])
+            .bind(vec!["digitalSignature".to_string()])
+            .bind(vec!["serverAuth".to_string()])
+            .fetch_one(&pool)
+            .await
+            .expect("test certificate should be inserted");
+            sqlx::query(
+                "INSERT INTO scan_certificates (scan_id, cert_id, chain_position) \
+                    VALUES ($1, $2, 0)",
+            )
+            .bind(scan_id)
+            .bind(certificate_id)
+            .execute(&pool)
+            .await
+            .expect("leaf certificate should be linked to its scan");
+        }
+
+        let database = Arc::new(crate::db::CipherRunDatabase::from_pool(
+            DatabasePool::Postgres(pool.clone()),
+        ));
+        let comparator = ScanComparator::new(database);
+        let diff = comparator
+            .compare_certificates(1, 2)
+            .await
+            .expect("PostgreSQL leaf certificates should compare");
+        assert!(diff.fingerprint_changed);
+        assert!(diff.subject_changed);
+        assert!(diff.issuer_changed);
+        assert!(diff.key_size_changed);
+        assert!(diff.expiry_changed);
+        assert_eq!(diff.scan_1_cert.unwrap().fingerprint, "first");
+        assert_eq!(diff.scan_2_cert.unwrap().fingerprint, "second");
+
+        let missing = comparator
+            .compare_certificates(1, 99)
+            .await
+            .expect("missing leaf certificate should compare");
+        assert!(missing.fingerprint_changed);
+        assert!(missing.scan_1_cert.is_some());
+        assert!(missing.scan_2_cert.is_none());
+        let both_missing = comparator
+            .compare_certificates(98, 99)
+            .await
+            .expect("two missing leaf certificates should compare");
+        assert!(!both_missing.fingerprint_changed);
+
+        sqlx::query("DROP TABLE certificates CASCADE")
+            .execute(&pool)
+            .await
+            .expect("test should remove the certificates table");
+        assert!(
+            comparator
+                .compare_certificates(1, 2)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch certificate")
+        );
+
+        pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+        admin.close().await;
     }
 }
