@@ -1495,6 +1495,39 @@ mod tests {
         assert_eq!(progress.stage, "test stage");
     }
 
+    #[tokio::test]
+    async fn running_progress_persistence_failure_is_logged_safely() {
+        use tracing::instrument::WithSubscriber;
+
+        let job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+            job: job.clone(),
+            persist_error: true,
+        });
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let (progress_tx, mut progress_rx) = broadcast::channel(1);
+
+        ScanExecutor::report_running_progress(&job, &queue, &progress_tx, 42, "test stage")
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let progress = progress_rx.try_recv().unwrap();
+        assert_eq!(progress.progress, 42);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scan_job.progress.persist_failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "other");
+        assert!(!output.contains("private queue detail"));
+    }
+
     struct GatedJobQueue {
         job: tokio::sync::Mutex<Option<ScanJob>>,
         cancelled_job: ScanJob,

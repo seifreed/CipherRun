@@ -13,8 +13,12 @@ use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::fmt::MakeWriter;
+
+// Keep thread-local tracing dispatchers from racing across workflow tests.
+static WORKFLOW_TEST_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 #[derive(Clone)]
 struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
@@ -82,6 +86,7 @@ impl ScannerPort for CountingScannerPort {
 
 #[test]
 fn test_workflow_with_mock_scanner() {
+    let _test_guard = WORKFLOW_TEST_LOCK.blocking_lock();
     let mock = Arc::new(MockScannerPort::default_success());
     let services = mock_services(mock);
 
@@ -114,6 +119,7 @@ fn test_workflow_with_mock_scanner() {
 
 #[test]
 fn test_workflow_logs_expected_configuration_failure_safely() {
+    let _test_guard = WORKFLOW_TEST_LOCK.blocking_lock();
     let scanner = Arc::new(MockScannerPort::default_success());
     let services = mock_services(scanner);
     let input = ScanWorkflowInput {
@@ -140,6 +146,7 @@ fn test_workflow_logs_expected_configuration_failure_safely() {
 
 #[tokio::test]
 async fn test_workflow_with_compliance_framework() {
+    let _test_guard = WORKFLOW_TEST_LOCK.lock().await;
     let mock = Arc::new(MockScannerPort::default_success());
 
     let input = ScanWorkflowInput {
@@ -168,6 +175,7 @@ async fn test_workflow_with_compliance_framework() {
 
 #[tokio::test]
 async fn test_run_scan_with_injected_scanner() {
+    let _test_guard = WORKFLOW_TEST_LOCK.lock().await;
     let mock = MockScannerPort::default_success();
 
     let request = ScanRequest {
@@ -184,6 +192,7 @@ async fn test_run_scan_with_injected_scanner() {
 
 #[tokio::test]
 async fn test_workflow_rejects_store_without_db_config() {
+    let _test_guard = WORKFLOW_TEST_LOCK.lock().await;
     let calls = Arc::new(AtomicUsize::new(0));
     let scanner = Arc::new(CountingScannerPort {
         calls: calls.clone(),
