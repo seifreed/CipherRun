@@ -901,6 +901,28 @@ async fn test_scan_comparator_compare_latest() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_compare_latest_requires_two_scans() {
+    let db = setup_db().await;
+    let error = ScanComparator::new(db)
+        .compare_latest("missing.test", 443)
+        .await
+        .expect_err("comparison should require two scans");
+
+    assert!(error.to_string().contains("Not enough scans"));
+}
+
+#[tokio::test]
+async fn test_scan_comparator_reports_missing_scan_id() {
+    let db = setup_db().await;
+    let error = ScanComparator::new(db)
+        .compare_scans(-1, -2)
+        .await
+        .expect_err("missing scan should fail before comparing its components");
+
+    assert!(error.to_string().contains("Scan -1 not found"));
+}
+
+#[tokio::test]
 async fn test_scan_comparator_protocol_and_cipher_diffs_are_order_stable() {
     let db = setup_db().await;
     let now = Utc::now();
