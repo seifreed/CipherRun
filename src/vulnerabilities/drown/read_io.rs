@@ -64,3 +64,34 @@ fn is_partial_read_end(kind: ErrorKind) -> bool {
             | ErrorKind::ConnectionReset
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_buffer_has_room_for_the_largest_ssl_v2_record() {
+        let buffer = record_buffer();
+
+        assert_eq!(buffer.len(), SSLV2_MAX_RECORD_WITH_HEADER);
+        assert!(buffer.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn read_error_classification_distinguishes_empty_and_partial_reads() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock] {
+            assert!(is_empty_read_timeout(kind));
+        }
+        assert!(!is_empty_read_timeout(ErrorKind::UnexpectedEof));
+
+        for kind in [
+            ErrorKind::TimedOut,
+            ErrorKind::WouldBlock,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::ConnectionReset,
+        ] {
+            assert!(is_partial_read_end(kind));
+        }
+        assert!(!is_partial_read_end(ErrorKind::InvalidData));
+    }
+}
