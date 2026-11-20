@@ -1,5 +1,4 @@
 use crate::constants::CONTENT_TYPE_HEARTBEAT;
-use crate::utils::byte_parse::read_u16_at;
 
 /// Validate that the response is a proper Heartbeat Response, not a TLS alert
 /// or unrelated record.
@@ -8,9 +7,7 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(content_type) = response.first().copied() else {
-        return false;
-    };
+    let content_type = response[0];
     if content_type != CONTENT_TYPE_HEARTBEAT {
         tracing::debug!(
             event_name = "vulnerability.heartbleed.response_rejected",
@@ -22,12 +19,8 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some((&major, rest)) = response.get(1..).and_then(|tail| tail.split_first()) else {
-        return false;
-    };
-    let Some(&minor) = rest.first() else {
-        return false;
-    };
+    let major = response[1];
+    let minor = response[2];
     if major != 0x03 || !(0x01..=0x03).contains(&minor) {
         tracing::debug!(
             event_name = "vulnerability.heartbleed.response_rejected",
@@ -39,9 +32,7 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(record_len) = read_u16_at(response, 3).map(usize::from) else {
-        return false;
-    };
+    let record_len = u16::from_be_bytes([response[3], response[4]]) as usize;
     if record_len + 5 != response.len() {
         tracing::debug!(
             event_name = "vulnerability.heartbleed.response_rejected",
@@ -53,9 +44,7 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(heartbeat_type) = response.get(5).copied() else {
-        return false;
-    };
+    let heartbeat_type = response[5];
     if heartbeat_type != 0x02 {
         tracing::debug!(
             event_name = "vulnerability.heartbleed.response_rejected",
@@ -67,9 +56,7 @@ pub(super) fn is_valid(response: &[u8]) -> bool {
         return false;
     }
 
-    let Some(heartbeat_len) = read_u16_at(response, 6).map(usize::from) else {
-        return false;
-    };
+    let heartbeat_len = u16::from_be_bytes([response[6], response[7]]) as usize;
     if heartbeat_len + 3 != record_len {
         tracing::debug!(
             event_name = "vulnerability.heartbleed.response_rejected",
