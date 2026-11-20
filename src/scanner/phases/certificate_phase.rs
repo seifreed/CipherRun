@@ -553,6 +553,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn openssl_starttls_normalizes_supported_explicit_protocols() {
+        for (input, expected) in [
+            (" SMTP ", Some("smtp")),
+            ("pop3", Some("pop3")),
+            ("IMAP", Some("imap")),
+            ("ftp", Some("ftp")),
+            ("xmpp", Some("xmpp")),
+            ("xmpp-server", Some("xmpp-server")),
+            ("ldap", Some("ldap")),
+            ("irc", Some("irc")),
+            ("postgres", Some("postgres")),
+            ("postgresql", Some("postgres")),
+            ("psql", Some("postgres")),
+            ("mysql", Some("mysql")),
+            ("nntp", Some("nntp")),
+            ("sieve", Some("sieve")),
+            ("lmtp", Some("lmtp")),
+            ("telnet", Some("telnet")),
+            ("unknown", None),
+        ] {
+            let mut args = ScanRequest::default();
+            args.starttls.protocol = Some(input.to_string());
+            let context =
+                ScanContext::new(example_com_loopback_target(443), Arc::new(args), None, None);
+
+            assert_eq!(
+                CertificatePhase::openssl_starttls(&context).as_deref(),
+                expected,
+                "protocol {input:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_revocation_check_skipped_without_phone_out() {
         let target = example_com_loopback_target(443);
