@@ -373,6 +373,42 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_trust_chain_rejects_known_root_subject_with_different_der() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+        let known_ca = CA_STORES
+            .as_ref()
+            .all_stores()
+            .iter()
+            .find_map(|store| store.certificates.first())
+            .expect("at least one trusted CA should be available");
+        let cert = CertificateInfo {
+            subject: known_ca.subject.clone(),
+            issuer: known_ca.subject.clone(),
+            is_ca: true,
+            der_bytes: vec![0xde, 0xad, 0xbe, 0xef],
+            ..base_cert(
+                "2024-01-01 00:00:00 +0000".to_string(),
+                "2025-01-01 00:00:00 +0000".to_string(),
+            )
+        };
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues.iter().any(|issue| {
+            issue.severity == IssueSeverity::Critical
+                && issue.description.contains("content differs")
+        }));
+    }
+
+    #[test]
     fn test_validate_trust_chain_self_signed_with_missing_der_fails_strict_mode() {
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
@@ -508,6 +544,37 @@ mod tests {
             }),
             "Expected basic-constraints (non-CA issuer) rejection"
         );
+    }
+
+    #[test]
+    fn test_validate_trust_chain_rejects_broken_issuer_subject_link() {
+        let validator = CertificateValidator::new("leaf.example.com".to_string());
+        let mut issues = Vec::new();
+        let mut leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        leaf.subject = "CN=leaf.example.com".to_string();
+        leaf.issuer = "CN=wrong-issuer.example.com".to_string();
+        let mut issuer = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        issuer.subject = "CN=actual-issuer.example.com".to_string();
+        issuer.is_ca = true;
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues.iter().any(|issue| {
+            issue.issue_type == IssueType::UntrustedCA && issue.description.contains("Chain broken")
+        }));
     }
 
     #[test]
