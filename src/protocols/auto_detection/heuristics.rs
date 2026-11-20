@@ -163,10 +163,12 @@ mod tests {
 
     #[test]
     fn test_mysql_detection_accepts_realistic_banner() {
-        let banner = mysql_banner_str("8.0.31");
-        let (proto, conf) = analyze_banner(banner.as_bytes());
-        assert_eq!(proto, ApplicationProtocol::Mysql);
-        assert!(conf >= 0.90);
+        for version in ["8.0.31", "5.7.38-log"] {
+            let banner = mysql_banner_str(version);
+            let (proto, conf) = analyze_banner(banner.as_bytes());
+            assert_eq!(proto, ApplicationProtocol::Mysql, "version {version}");
+            assert!(conf >= 0.90);
+        }
     }
 
     #[test]
@@ -196,6 +198,13 @@ mod tests {
     #[test]
     fn test_mysql_detection_rejects_missing_version_string() {
         let banner = [0x01, 0x00, 0x00, 0x00, 0x0a];
+        let (proto, _conf) = analyze_banner(&banner);
+        assert_eq!(proto, ApplicationProtocol::Unknown);
+    }
+
+    #[test]
+    fn test_mysql_detection_rejects_version_outside_declared_packet_length() {
+        let banner = [0x02, 0x00, 0x00, 0x00, 0x0a, b'8', 0x00];
         let (proto, _conf) = analyze_banner(&banner);
         assert_eq!(proto, ApplicationProtocol::Unknown);
     }
