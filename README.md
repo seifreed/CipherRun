@@ -48,7 +48,7 @@ Compliance reports are TLS posture checks mapped to selected technical controls.
 
 ### From Source
 
-Requires Rust 1.100 or newer. The Python SDK requires Python 3.12 or newer; CI tests the minimum supported Python 3.12 and the latest active Python release (currently 3.15, checked with `eol-cli`). The build matrix pins current GitHub-hosted images: Ubuntu 26.04, Windows Server 2025, and macOS 26.
+Requires Rust 1.100 or newer. The Python SDK requires Python 3.12 or newer; CI tests Python 3.12 and dynamically selects the newest stable Python 3 release (`3.x`, currently 3.15, with `check-latest`). The build matrix pins current GitHub-hosted images: Ubuntu 26.04, Windows Server 2025, and macOS 26.
 
 ```bash
 git clone https://github.com/seifreed/cipherrun.git
