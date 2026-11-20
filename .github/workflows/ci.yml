@@ -54,7 +54,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           key: quality
 
@@ -102,7 +102,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           key: ${{ matrix.toolchain }}
 
@@ -177,7 +177,7 @@ jobs:
           components: clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           key: ${{ matrix.os }}
 
@@ -217,7 +217,7 @@ jobs:
           components: clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           key: ubuntu-26.04-postgres-18
 
