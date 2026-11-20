@@ -1288,6 +1288,8 @@ mod tests {
     struct CancelOnStartQueue {
         job: ScanJob,
         persist_error: bool,
+        cancel_on_progress: bool,
+        persist_calls: AtomicUsize,
     }
 
     #[async_trait::async_trait]
@@ -1311,6 +1313,8 @@ mod tests {
         async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
             if self.persist_error {
                 Err(TlsError::Other("private queue detail".to_string()))
+            } else if self.cancel_on_progress {
+                Ok(self.persist_calls.fetch_add(1, Ordering::SeqCst) == 0)
             } else {
                 Ok(false)
             }
@@ -1342,6 +1346,8 @@ mod tests {
         let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
             job: job.clone(),
             persist_error: false,
+            cancel_on_progress: false,
+            persist_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue.clone(), 1);
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1369,6 +1375,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancellation_during_initial_progress_is_logged_before_scan_starts() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("invalid target".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
+            job: job.clone(),
+            persist_error: false,
+            cancel_on_progress: true,
+            persist_calls: AtomicUsize::new(0),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        executor
+            .execute_scan(queue, job)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.cancelled_during_startup"
+                && event["fields"]["outcome"] == "cancelled"
+        }));
+        assert!(!output.contains("scan_job.finished"));
+    }
+
+    #[tokio::test]
     async fn start_persistence_failure_stops_before_scanning_and_redacts_error() {
         use tracing::instrument::WithSubscriber;
 
@@ -1377,6 +1420,8 @@ mod tests {
         let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
             job: job.clone(),
             persist_error: true,
+            cancel_on_progress: false,
+            persist_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue.clone(), 1);
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1411,6 +1456,8 @@ mod tests {
             let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
                 job: job.clone(),
                 persist_error,
+                cancel_on_progress: false,
+                persist_calls: AtomicUsize::new(0),
             });
             let executor = ScanExecutor::new(queue.clone(), 1);
             let output = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1503,6 +1550,8 @@ mod tests {
         let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
             job: job.clone(),
             persist_error: true,
+            cancel_on_progress: false,
+            persist_calls: AtomicUsize::new(0),
         });
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
@@ -1534,6 +1583,8 @@ mod tests {
         let queue: Arc<dyn JobQueue> = Arc::new(CancelOnStartQueue {
             job,
             persist_error: false,
+            cancel_on_progress: false,
+            persist_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue, 1);
         assert!(!executor.has_webhook_signing_secret());
