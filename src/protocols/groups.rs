@@ -537,4 +537,37 @@ mod tests {
         let tester = GroupTester::new(target).with_test_all_ips(true);
         assert!(tester.test_all_ips);
     }
+
+    #[test]
+    fn test_operational_tls_errors_are_classified_case_insensitively() {
+        for error in [
+            "unexpected EOF",
+            "connection reset",
+            "reset by peer",
+            "connection refused",
+            "timed out",
+            "timeout",
+            "connection closed",
+            "shutdown while in init",
+            "errno=54",
+        ] {
+            assert!(is_operational_tls_error(error), "{error}");
+        }
+
+        assert!(!is_operational_tls_error("no shared cipher"));
+        assert!(!is_operational_tls_error("unsupported protocol"));
+    }
+
+    #[test]
+    fn test_group_details_cover_measured_and_partial_results() {
+        assert!(build_details(false, &[], &[], false).contains("could not be measured"));
+        assert_eq!(
+            build_details(true, &[], &["X25519MLKEM768"], true),
+            "No configured key exchange group was negotiated. Not testable with the local TLS library: X25519MLKEM768. Some group probes were inconclusive due to transport errors."
+        );
+        assert_eq!(
+            build_details(true, &["x25519", "ffdhe2048"], &[], false),
+            "Supported key exchange groups: x25519, ffdhe2048."
+        );
+    }
 }
