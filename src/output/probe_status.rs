@@ -188,4 +188,64 @@ mod tests {
         assert!(simplified.len() <= 60);
         assert!(simplified.is_char_boundary(simplified.len()));
     }
+
+    #[test]
+    fn status_colors_group_recoverable_and_fatal_outcomes() {
+        assert_eq!(ProbeStatus::success(Duration::ZERO).status_color(), "green");
+
+        let cases = [
+            (ErrorType::Timeout, "yellow"),
+            (ErrorType::ConnectionRefused, "red"),
+            (ErrorType::DnsFailure, "red"),
+            (ErrorType::TlsHandshakeFailed, "red"),
+            (ErrorType::CertificateError, "yellow"),
+            (ErrorType::ProtocolNotSupported, "yellow"),
+            (ErrorType::NetworkError, "red"),
+            (ErrorType::Warning, "yellow"),
+            (ErrorType::NotAttempted, "red"),
+            (ErrorType::Unknown, "red"),
+        ];
+        for (error_type, expected_color) in cases {
+            let status = ProbeStatus::failure_string("failure".to_string(), error_type);
+            assert_eq!(status.status_color(), expected_color, "{error_type:?}");
+        }
+    }
+
+    #[test]
+    fn formatting_handles_missing_details_and_simplifies_common_errors() {
+        let mut success = ProbeStatus::success(Duration::ZERO);
+        success.connection_time_ms = None;
+        assert_eq!(success.format_terminal("example.com"), "✓ example.com");
+        assert_eq!(success.format_response_only(), "✓");
+
+        let mut warning = ProbeStatus::partial_success(Duration::ZERO, String::new());
+        warning.connection_time_ms = None;
+        warning.error = None;
+        assert!(warning.format_response_only().contains("warning: warning"));
+
+        let cases = [
+            ("Connection timeout after 2s", "connection timeout"),
+            ("Connection refused by peer", "connection refused"),
+            (
+                "DNS resolution failed for example.test",
+                "DNS resolution failed",
+            ),
+            ("Certificate is self-signed", "certificate error"),
+            ("TLS version not supported", "protocol not supported"),
+        ];
+        for (error, expected) in cases {
+            let status = ProbeStatus::failure_string(error.to_string(), ErrorType::Unknown);
+            assert!(status.format_terminal("example.com").contains(expected));
+        }
+
+        let missing_error = ProbeStatus {
+            error: None,
+            ..ProbeStatus::default()
+        };
+        assert!(
+            missing_error
+                .format_response_only()
+                .contains("unknown error")
+        );
+    }
 }
