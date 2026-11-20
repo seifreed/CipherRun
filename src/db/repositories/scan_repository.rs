@@ -433,4 +433,70 @@ mod tests {
 
         pool.close().await;
     }
+
+    #[tokio::test]
+    async fn scan_repository_maps_sqlite_failures_to_operation_errors() {
+        let pool = test_pool().await;
+        let repo = ScanRepositoryImpl::new(pool.clone());
+        let DatabasePool::Sqlite(sqlite) = &pool else {
+            unreachable!("test pool is SQLite");
+        };
+        sqlx::query("DROP TABLE scans")
+            .execute(sqlite)
+            .await
+            .expect("test should remove the scans table");
+
+        let scan = ScanRecord::new("example.com".to_string(), 443);
+        assert!(
+            repo.create_scan(&scan)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to insert scan")
+        );
+        assert!(
+            repo.get_scan_by_id(1)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scan")
+        );
+        assert!(
+            repo.get_scans_by_hostname("example.com", 443, 10)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scans")
+        );
+        assert!(
+            repo.get_scans_by_hostname_since("example.com", 443, chrono::Utc::now())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to fetch scans")
+        );
+        assert!(
+            repo.delete_old_scans(30)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to delete old scans")
+        );
+        assert!(
+            repo.update_scan_rating(1, "A", 95)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to update scan rating")
+        );
+        assert!(
+            repo.delete_scan(1)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to delete scan")
+        );
+
+        pool.close().await;
+    }
 }
