@@ -52,6 +52,40 @@ fn test_main_help_output_is_successful_functional_output() {
 }
 
 #[test]
+fn test_main_without_arguments_prints_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun"))
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Usage: cipherrun"));
+}
+
+#[test]
+fn test_main_parse_failure_uses_safe_pre_logger_diagnostic() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun"))
+        .arg("--unknown-sensitive-option")
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed before logging was initialized"));
+    assert!(!stderr.contains("unknown-sensitive-option"));
+}
+
+#[test]
+fn test_main_no_color_flag_keeps_version_output_successful() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cipherrun"))
+        .args(["--no-color", "--version"])
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("CipherRun v"));
+}
+
+#[test]
 fn logger_lifecycle_events_stay_on_stderr() {
     let exe = env!("CARGO_BIN_EXE_cipherrun");
     let output = Command::new(exe)
