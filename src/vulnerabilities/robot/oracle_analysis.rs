@@ -131,6 +131,10 @@ fn content_difference_count(left: &[u8], right: &[u8]) -> usize {
 mod tests {
     use super::*;
 
+    fn alert(description: u8) -> Vec<u8> {
+        vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, description]
+    }
+
     #[test]
     fn identical_patterns_are_not_vulnerable() {
         let response = vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46];
@@ -167,6 +171,80 @@ mod tests {
         assert_eq!(
             classify_pattern_divergence(&patterns),
             RobotStatus::WeakOracle
+        );
+    }
+
+    #[test]
+    fn distinct_confirmed_alerts_are_vulnerable() {
+        let alert_46 = alert(0x46);
+        let alert_47 = alert(0x47);
+
+        assert_eq!(
+            classify_responses(
+                &[],
+                &[
+                    vec![alert_46.clone(), alert_46],
+                    vec![alert_47.clone(), alert_47],
+                ],
+                2,
+            ),
+            RobotStatus::Vulnerable
+        );
+    }
+
+    #[test]
+    fn unconfirmed_or_inconsistent_alerts_are_inconclusive() {
+        let alert_46 = alert(0x46);
+        let alert_47 = alert(0x47);
+
+        assert_eq!(
+            classify_responses(&[], &[vec![alert_46.clone()]], 2),
+            RobotStatus::Inconclusive
+        );
+        assert_eq!(
+            classify_responses(&[], &[vec![alert_46, alert_47]], 2),
+            RobotStatus::Inconclusive
+        );
+    }
+
+    #[test]
+    fn fewer_than_two_response_patterns_are_not_vulnerable() {
+        let one = vec![1, 2, 3];
+        assert_eq!(classify_responses(&[], &[], 1), RobotStatus::NotVulnerable);
+        assert_eq!(
+            classify_responses(&[&one, &one], &[], 1),
+            RobotStatus::NotVulnerable
+        );
+    }
+
+    #[test]
+    fn equal_prefixes_and_small_divergence_are_not_vulnerable() {
+        let one = vec![1; PATTERN_PREFIX_LEN + 5];
+        let mut same_prefix = one.clone();
+        same_prefix[PATTERN_PREFIX_LEN] = 2;
+        assert_eq!(
+            classify_responses(&[&one, &same_prefix], &[], 1),
+            RobotStatus::NotVulnerable
+        );
+
+        let mut two_differences = vec![1; PATTERN_PREFIX_LEN];
+        two_differences[0] = 2;
+        two_differences[1] = 2;
+        let mut patterns = std::collections::BTreeSet::new();
+        patterns.insert(vec![1; PATTERN_PREFIX_LEN]);
+        patterns.insert(two_differences);
+        assert_eq!(
+            classify_pattern_divergence(&patterns),
+            RobotStatus::NotVulnerable
+        );
+    }
+
+    #[test]
+    fn no_distinct_patterns_are_inconclusive_for_divergence_analysis() {
+        let patterns = std::collections::BTreeSet::new();
+        assert_eq!(
+            classify_pattern_divergence(&patterns),
+            RobotStatus::Inconclusive
         );
     }
 }
