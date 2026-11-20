@@ -294,6 +294,22 @@ mod tests {
         assert!(err.to_string().contains("Failed to parse job file"));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_load_all_jobs_rejects_non_utf8_job_filename() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let (temp_dir, storage) = temp_storage();
+        let file_name = std::ffi::OsString::from_vec(vec![0xff, b'.', b'j', b's', b'o', b'n']);
+        std::fs::write(temp_dir.path().join(file_name), "{}").expect("fixture should be written");
+
+        let err = storage
+            .load_all_jobs()
+            .expect_err("non-UTF-8 job filename should be rejected");
+
+        assert!(err.to_string().contains("Invalid job file name"));
+    }
+
     #[test]
     fn test_load_job_rejects_oversized_file_before_read() {
         let (temp_dir, storage) = temp_storage();
