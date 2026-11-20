@@ -131,4 +131,33 @@ mod tests {
             .expect_err("missing parent should not be accepted by lexical fallback");
         assert!(err.to_string().contains("Cannot canonicalize path"));
     }
+
+    #[test]
+    fn test_sanitize_path_rejects_unavailable_base_directory() {
+        let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let missing_base = temp_dir.path().join("missing");
+
+        let err = sanitize_path("file.txt", &missing_base)
+            .expect_err("a missing base directory must not be accepted");
+
+        assert!(err.to_string().contains("Cannot canonicalize base dir"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_sanitize_path_rejects_symlink_that_escapes_base() {
+        use std::os::unix::fs::symlink;
+
+        let base_dir = TempDir::new().expect("test assertion should succeed");
+        let outside_dir = TempDir::new().expect("test assertion should succeed");
+        let outside_file = outside_dir.path().join("secret.txt");
+        fs::write(&outside_file, "secret").expect("test assertion should succeed");
+        symlink(&outside_file, base_dir.path().join("linked.txt"))
+            .expect("test symlink should be created");
+
+        let err = sanitize_path("linked.txt", base_dir.path())
+            .expect_err("a symlink target outside the base must be rejected");
+
+        assert!(err.to_string().contains("Path escapes base directory"));
+    }
 }
