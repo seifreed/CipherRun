@@ -352,6 +352,58 @@ mod tests {
     }
 
     #[test]
+    fn test_email_channel_rejects_incomplete_smtp_configuration() {
+        let mut cases = Vec::new();
+
+        let mut config = create_test_config();
+        config.smtp_server.clear();
+        cases.push(config);
+
+        let mut config = create_test_config();
+        config.smtp_port = 0;
+        cases.push(config);
+
+        let mut config = create_test_config();
+        config.from_address.clear();
+        cases.push(config);
+
+        let mut config = create_test_config();
+        config.to_addresses.clear();
+        cases.push(config);
+
+        let mut config = create_test_config();
+        config.to_addresses = vec!["  ".to_string()];
+        cases.push(config);
+
+        let mut config = create_test_config();
+        config.username.clear();
+        cases.push(config);
+
+        for config in cases {
+            assert!(EmailChannel::new(config).is_err());
+        }
+    }
+
+    #[test]
+    fn test_get_transport_builds_tls_and_plain_smtp_transports() {
+        let mut config = create_test_config();
+        assert!(
+            EmailChannel::new(config.clone())
+                .expect("TLS config should be valid")
+                .get_transport()
+                .is_ok()
+        );
+
+        config.use_tls = false;
+        assert!(
+            EmailChannel::new(config)
+                .expect("plain SMTP config should be valid")
+                .get_transport()
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn test_format_text_body() {
         let config = create_test_config();
         let channel = EmailChannel::new(config).expect("test assertion should succeed");
@@ -435,5 +487,53 @@ mod tests {
         let config = create_test_config();
         let channel = EmailChannel::new(config).expect("test assertion should succeed");
         assert_eq!(channel.channel_name(), "email");
+    }
+
+    #[test]
+    fn test_email_bodies_format_every_alert_type() {
+        use crate::monitor::detector::{ChangeEvent, ChangeSeverity, ChangeType};
+
+        let channel = EmailChannel::new(create_test_config()).unwrap();
+        let details = AlertDetails {
+            certificate_serial: Some("serial-1".to_string()),
+            certificate_issuer: None,
+            certificate_expiry: None,
+            previous_serial: None,
+            scan_time: Utc::now(),
+        };
+        let changed = Alert::certificate_change(
+            "example.com".to_string(),
+            vec![ChangeEvent {
+                change_type: ChangeType::Renewal,
+                severity: ChangeSeverity::Info,
+                description: "renewed safely".to_string(),
+                previous_value: None,
+                current_value: None,
+                detected_at: Utc::now(),
+            }],
+            details.clone(),
+        );
+        let expiring = Alert::expiry_warning("example.com".to_string(), 3, details.clone());
+        let invalid =
+            Alert::validation_failure("example.com".to_string(), "expired".to_string(), details);
+        let failed = Alert::scan_failure("example.com".to_string(), "refused".to_string());
+
+        for (alert, html_marker, text_marker) in [
+            (&changed, "Certificate Changes", "Renewal: renewed safely"),
+            (&expiring, "Certificate Expiry Warning", "expires in 3 days"),
+            (
+                &invalid,
+                "Certificate Validation Failed",
+                "Validation failure: expired",
+            ),
+            (&failed, "Scan Failed", "Scan error: refused"),
+        ] {
+            assert!(channel.format_html_body(alert).contains(html_marker));
+            assert!(channel.format_text_body(alert).contains(text_marker));
+        }
+
+        let html = channel.format_html_body(&changed);
+        assert!(html.contains("<strong>Issuer:</strong> Unknown"));
+        assert!(html.contains("<strong>Expiry:</strong> Unknown"));
     }
 }
