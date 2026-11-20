@@ -895,4 +895,57 @@ mod tests {
             rustls_pki_types::ServerName::IpAddress(_)
         ));
     }
+
+    #[tokio::test]
+    async fn get_certificate_chain_rejects_targets_without_addresses() {
+        let mut target = example_com_loopback_target(443);
+        target.ip_addresses.clear();
+
+        let error = CertificateParser::new(target)
+            .get_certificate_chain()
+            .await
+            .expect_err("target without addresses should fail before connecting");
+
+        assert!(matches!(error, crate::TlsError::NoSocketAddresses));
+    }
+
+    #[tokio::test]
+    async fn get_leaf_certificate_parses_a_self_signed_local_tls_chain() {
+        use tokio::net::TcpListener;
+        use tokio_rustls::TlsAcceptor;
+
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(
+            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            acceptor.accept(stream).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let leaf = CertificateParser::new(target)
+            .get_leaf_certificate()
+            .await
+            .expect("the local TLS server should provide its certificate");
+        server.await.unwrap();
+
+        assert!(!leaf.subject.is_empty());
+        assert_eq!(leaf.public_key_algorithm, "id-ecPublicKey");
+        assert!(leaf.san.iter().any(|name| name == "localhost"));
+    }
 }
