@@ -127,3 +127,76 @@ pub(super) fn has_renegotiation_info_extension(response: &[u8]) -> Result<bool> 
     }
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::has_renegotiation_info_extension;
+
+    fn server_hello(extensions: &[u8]) -> Vec<u8> {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.push(0); // Empty session ID.
+        body.extend_from_slice(&[0xc0, 0x2f, 0]); // Cipher suite and compression.
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(extensions);
+
+        let handshake_len = body.len();
+        let record_len = handshake_len + 4;
+        let mut response = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03];
+        response.extend_from_slice(&(record_len as u16).to_be_bytes());
+        response.push(0x02);
+        response.extend_from_slice(&[
+            ((handshake_len >> 16) & 0xff) as u8,
+            ((handshake_len >> 8) & 0xff) as u8,
+            (handshake_len & 0xff) as u8,
+        ]);
+        response.extend_from_slice(&body);
+        response
+    }
+
+    use crate::constants::CONTENT_TYPE_HANDSHAKE;
+
+    #[test]
+    fn finds_renegotiation_extension_and_accepts_other_extensions() {
+        assert!(
+            has_renegotiation_info_extension(&server_hello(&[0xff, 0x01, 0x00, 0x01, 0x00,]))
+                .unwrap()
+        );
+        assert!(
+            !has_renegotiation_info_extension(&server_hello(&[0x00, 0x00, 0x00, 0x01, 0x01,]))
+                .unwrap()
+        );
+        assert!(!has_renegotiation_info_extension(&server_hello(&[])).unwrap());
+    }
+
+    #[test]
+    fn rejects_malformed_server_hello_lengths_and_types() {
+        let response = server_hello(&[]);
+
+        let mut invalid_content_type = response.clone();
+        invalid_content_type[0] = 0x15;
+        assert!(has_renegotiation_info_extension(&invalid_content_type).is_err());
+
+        let mut invalid_handshake_type = response.clone();
+        invalid_handshake_type[5] = 0x01;
+        assert!(has_renegotiation_info_extension(&invalid_handshake_type).is_err());
+
+        assert!(has_renegotiation_info_extension(&response[..43]).is_err());
+
+        let mut oversized_record = response.clone();
+        oversized_record[3..5].copy_from_slice(&u16::MAX.to_be_bytes());
+        assert!(has_renegotiation_info_extension(&oversized_record).is_err());
+
+        let mut oversized_handshake = response.clone();
+        oversized_handshake[6..9].copy_from_slice(&[0xff; 3]);
+        assert!(has_renegotiation_info_extension(&oversized_handshake).is_err());
+
+        let mut short_handshake = response.clone();
+        short_handshake[6..9].copy_from_slice(&[0, 0, 38]);
+        assert!(has_renegotiation_info_extension(&short_handshake).is_err());
+
+        let mut oversized_extensions = response;
+        oversized_extensions[47..49].copy_from_slice(&1u16.to_be_bytes());
+        assert!(has_renegotiation_info_extension(&oversized_extensions).is_err());
+    }
+}
