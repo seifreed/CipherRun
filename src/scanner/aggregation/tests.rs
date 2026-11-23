@@ -11,6 +11,40 @@ use crate::scanner::{AdvancedResults, CertificateAnalysisResult, RatingResults, 
 use std::net::{IpAddr, Ipv4Addr};
 
 #[test]
+fn certificate_signature_falls_back_to_der_bytes() {
+    let certificate = CertificateInfo {
+        der_bytes: vec![0x30, 0x82, 0x01],
+        ..Default::default()
+    };
+
+    assert_eq!(certificate_signature(&certificate), "der:308201");
+}
+
+#[test]
+fn certificate_signature_serializes_metadata_without_fingerprint_or_der() {
+    let certificate = CertificateInfo {
+        subject: "CN=example.test".to_string(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        certificate_signature(&certificate),
+        serde_json::to_string(&certificate).unwrap()
+    );
+}
+
+#[test]
+fn empty_certificate_chain_has_a_stable_signature() {
+    let chain = CertificateChain {
+        certificates: Vec::new(),
+        chain_length: 0,
+        chain_size_bytes: 0,
+    };
+
+    assert_eq!(certificate_chain_signature(&chain), "<empty>");
+}
+
+#[test]
 fn test_empty_aggregation() {
     let aggregator = ConservativeAggregator::new(HashMap::new(), Vec::new());
     let result = aggregator.aggregate();
