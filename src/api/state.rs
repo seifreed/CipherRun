@@ -1152,6 +1152,76 @@ mod tests {
         tasks.shutdown().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn app_state_records_global_and_owner_scoped_metrics() {
+        let state = AppState::new(ApiConfig::default()).unwrap();
+
+        state.record_request().await;
+        state.record_request_for(None).await;
+        state.record_request_for(Some("alice")).await;
+        state.record_request_for_owner(None, Some("tenant-a")).await;
+        state
+            .record_request_for_owner(Some("alice"), Some("tenant-a"))
+            .await;
+
+        state.record_response(1).await;
+        state.record_response_for(None, 2).await;
+        state.record_response_for(Some("alice"), 3).await;
+        state
+            .record_response_for_owner(None, Some("tenant-a"), 4)
+            .await;
+        state
+            .record_response_for_owner(Some("alice"), Some("tenant-a"), 5)
+            .await;
+        state
+            .record_http_response_for_owner(None, Some("tenant-a"), 6, 200)
+            .await;
+        state
+            .record_http_response_for_owner(Some("alice"), Some("tenant-a"), 7, 401)
+            .await;
+
+        state.record_scan().await;
+        state.record_scan_for("alice").await;
+        state.record_scan_for_owner("alice", Some("tenant-a")).await;
+        state.record_completed(10).await;
+        state.record_completed_for("alice", 20).await;
+        state
+            .record_completed_for_owner("alice", Some("tenant-a"), 30)
+            .await;
+        state.record_failed().await;
+        state.record_failed_for("alice").await;
+        state
+            .record_failed_for_owner("alice", Some("tenant-a"))
+            .await;
+
+        let global = state.get_stats().await;
+        assert_eq!(global.total_requests, 5);
+        assert_eq!(global.total_responses, 7);
+        assert_eq!(global.total_response_time_ms, 28);
+        assert_eq!(global.http_responses_4xx, 1);
+        assert_eq!(global.http_auth_failures, 1);
+        assert_eq!(global.total_scans, 3);
+        assert_eq!(global.completed_scans, 3);
+        assert_eq!(global.total_scan_duration_ms, 60);
+        assert_eq!(global.failed_scans, 3);
+
+        let principal = state.get_stats_for("alice").await;
+        assert_eq!(principal.total_requests, 1);
+        assert_eq!(principal.total_responses, 1);
+        assert_eq!(principal.total_scans, 1);
+        assert_eq!(principal.completed_scans, 1);
+        assert_eq!(principal.failed_scans, 1);
+
+        let owner = state.get_stats_for_owner("alice", Some("tenant-a")).await;
+        assert_eq!(owner.total_requests, 1);
+        assert_eq!(owner.total_responses, 2);
+        assert_eq!(owner.total_response_time_ms, 12);
+        assert_eq!(owner.total_scans, 1);
+        assert_eq!(owner.completed_scans, 1);
+        assert_eq!(owner.total_scan_duration_ms, 30);
+        assert_eq!(owner.failed_scans, 1);
+    }
+
     fn owner_only(path: &std::path::Path) {
         #[cfg(unix)]
         {
