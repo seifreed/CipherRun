@@ -672,6 +672,118 @@ mod tests {
         assert_eq!(page.scans.len(), 1);
     }
 
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn postgres_scan_history_filters_owners_and_maps_rows() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test schema should accept connections");
+        sqlx::query(
+            "CREATE TABLE scans (\
+                scan_id BIGSERIAL PRIMARY KEY, target_hostname TEXT NOT NULL, \
+                target_port INTEGER NOT NULL, scan_timestamp TIMESTAMPTZ NOT NULL, \
+                overall_grade TEXT, overall_score INTEGER, scan_duration_ms BIGINT, \
+                principal_id TEXT, tenant_id TEXT\
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scans table should be created");
+
+        let now = chrono::Utc::now();
+        for (principal, tenant, grade, score) in [
+            ("alice", Some("tenant-a"), "A", 95_i32),
+            ("alice", None, "B", 80_i32),
+            ("bob", Some("tenant-a"), "C", 60_i32),
+        ] {
+            sqlx::query(
+                "INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score, scan_duration_ms, principal_id, tenant_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind("Example.com")
+            .bind(443_i32)
+            .bind(now)
+            .bind(grade)
+            .bind(score)
+            .bind(1250_i64)
+            .bind(principal)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .expect("history row should insert");
+        }
+
+        let database = DatabasePool::Postgres(pool.clone());
+        let service = ScanHistoryService::new(&database);
+        let all = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "example.com".to_string(),
+                port: 443,
+                limit: 2,
+                principal_id: None,
+                tenant_id: None,
+            })
+            .await
+            .expect("PostgreSQL history should load");
+        assert_eq!(all.total_scans, 3);
+        assert_eq!(all.scans.len(), 2);
+        assert_eq!(all.scans[0].grade.as_deref(), Some("C"));
+        assert_eq!(all.scans[0].score, Some(60));
+        assert_eq!(all.scans[0].duration_ms, Some(1250));
+
+        let tenant_history = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "example.com".to_string(),
+                port: 443,
+                limit: 10,
+                principal_id: Some("alice".to_string()),
+                tenant_id: Some("tenant-a".to_string()),
+            })
+            .await
+            .expect("tenant-scoped history should load");
+        assert_eq!(tenant_history.total_scans, 1);
+        assert_eq!(tenant_history.scans[0].grade.as_deref(), Some("A"));
+
+        let null_tenant_history = service
+            .get_history(&ScanHistoryQuery {
+                hostname: "example.com".to_string(),
+                port: 443,
+                limit: 10,
+                principal_id: Some("alice".to_string()),
+                tenant_id: None,
+            })
+            .await
+            .expect("principal history with a null tenant should load");
+        assert_eq!(null_tenant_history.total_scans, 1);
+        assert_eq!(null_tenant_history.scans[0].grade.as_deref(), Some("B"));
+
+        pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+        admin.close().await;
+    }
+
     #[test]
     fn scan_history_limit_rejects_i64_overflow() {
         let err = scan_history_limit(usize::MAX).expect_err("overflowing limit should fail loudly");
