@@ -614,8 +614,6 @@ mod tests {
 
     #[test]
     fn phase_span_records_outcome_and_duration_without_raw_error() {
-        use tracing::instrument::WithSubscriber;
-
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
@@ -631,13 +629,10 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let results = runtime
-            .block_on(
-                orchestrator
-                    .execute(test_scan_context(ScanRequest::default()))
-                    .with_subscriber(tracing::Dispatch::new(subscriber)),
-            )
-            .expect("nonfatal phase errors should be recoverable");
+        let results = tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(orchestrator.execute(test_scan_context(ScanRequest::default())))
+        })
+        .expect("nonfatal phase errors should be recoverable");
         assert_eq!(results.scan_metadata.human_warnings.len(), 1);
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
