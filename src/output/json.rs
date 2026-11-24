@@ -39,6 +39,11 @@ fn single_ip_context(results: &ScanResults) -> Option<(std::net::IpAddr, u16, St
 /// Generate JSON output from multi-IP scan report
 pub fn generate_multi_ip_json(report: &MultiIpScanReport, pretty: bool) -> Result<String> {
     let mut value = serde_json::to_value(report)?;
+    enrich_multi_ip_results(&mut value, report);
+    serialize_json(&value, pretty)
+}
+
+fn enrich_multi_ip_results(value: &mut serde_json::Value, report: &MultiIpScanReport) {
     if let Some(per_ip_results) = value
         .get_mut("per_ip_results")
         .and_then(serde_json::Value::as_object_mut)
@@ -59,7 +64,6 @@ pub fn generate_multi_ip_json(report: &MultiIpScanReport, pretty: bool) -> Resul
             enrich_finding_endpoints(scan_result, *ip, report.target.port, sni);
         }
     }
-    serialize_json(&value, pretty)
 }
 
 fn enrich_finding_endpoints(
@@ -169,6 +173,32 @@ mod tests {
             inconsistencies: Vec::new(),
             aggregated: empty_aggregated_result(),
         }
+    }
+
+    #[test]
+    fn multi_ip_json_enrichment_ignores_malformed_serialized_shapes() {
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        let report = MultiIpScanReport {
+            target: single_ip_target(),
+            per_ip_results: HashMap::from([(
+                ip,
+                successful_ip_scan(ip, ScanResults::default(), 10),
+            )]),
+            total_ips: 1,
+            successful_scans: 1,
+            failed_scans: 0,
+            total_duration_ms: 10,
+            inconsistencies: Vec::new(),
+            aggregated: empty_aggregated_result(),
+        };
+
+        let mut missing_map = serde_json::json!({"per_ip_results": null});
+        enrich_multi_ip_results(&mut missing_map, &report);
+        assert_eq!(missing_map["per_ip_results"], serde_json::Value::Null);
+
+        let mut missing_result = serde_json::json!({"per_ip_results": {}});
+        enrich_multi_ip_results(&mut missing_result, &report);
+        assert_eq!(missing_result["per_ip_results"], serde_json::json!({}));
     }
 
     #[test]
