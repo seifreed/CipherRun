@@ -25,34 +25,37 @@ impl TrendAnalyzer {
         let mut strong_counts = Vec::new();
 
         for scan in &scans {
-            if let Some(scan_id) = scan.scan_id {
-                let ciphers = self.get_ciphers(scan_id).await?;
+            let scan_id = scan.scan_id.ok_or_else(|| {
+                crate::TlsError::DatabaseError(
+                    "Scan history row is missing its scan ID".to_string(),
+                )
+            })?;
+            let ciphers = self.get_ciphers(scan_id).await?;
 
-                let weak = ciphers
-                    .iter()
-                    .filter(|c| cipher_strength_category(&c.strength) == "weak")
-                    .count();
-                let medium = ciphers
-                    .iter()
-                    .filter(|c| cipher_strength_category(&c.strength) == "medium")
-                    .count();
-                let strong = ciphers
-                    .iter()
-                    .filter(|c| cipher_strength_category(&c.strength) == "strong")
-                    .count();
+            let weak = ciphers
+                .iter()
+                .filter(|c| cipher_strength_category(&c.strength) == "weak")
+                .count();
+            let medium = ciphers
+                .iter()
+                .filter(|c| cipher_strength_category(&c.strength) == "medium")
+                .count();
+            let strong = ciphers
+                .iter()
+                .filter(|c| cipher_strength_category(&c.strength) == "strong")
+                .count();
 
-                weak_counts.push(weak);
-                strong_counts.push(strong);
+            weak_counts.push(weak);
+            strong_counts.push(strong);
 
-                data_points.push((
-                    scan.scan_timestamp,
-                    CipherStrengthData {
-                        weak,
-                        medium,
-                        strong,
-                    },
-                ));
-            }
+            data_points.push((
+                scan.scan_timestamp,
+                CipherStrengthData {
+                    weak,
+                    medium,
+                    strong,
+                },
+            ));
         }
 
         let weak_trend = Self::determine_usize_trend_direction(
@@ -95,6 +98,42 @@ mod tests {
             .expect_err("empty time range should fail");
 
         assert!(error.to_string().contains("No scans found"));
+    }
+
+    #[tokio::test]
+    async fn missing_scan_id_returns_database_error() {
+        use crate::db::BindValue;
+
+        let db = setup_db("cipher-trend-missing-scan-id").await;
+        db.pool()
+            .execute("DROP TABLE scans", Vec::new())
+            .await
+            .expect("test should replace the scans table");
+        db.pool()
+            .execute(
+                "CREATE TABLE scans (scan_id INTEGER, target_hostname TEXT, target_port INTEGER, scan_timestamp TIMESTAMP, overall_grade TEXT, overall_score INTEGER, scan_duration_ms INTEGER, revocation_json TEXT, scanner_version TEXT, principal_id TEXT, tenant_id TEXT, created_by_key_id TEXT)",
+                Vec::new(),
+            )
+            .await
+            .expect("test scans table should allow a missing ID");
+        db.pool()
+            .execute(
+                "INSERT INTO scans (scan_id, target_hostname, target_port, scan_timestamp) VALUES (NULL, ?, ?, ?)",
+                vec![
+                    BindValue::String("example.com".to_string()),
+                    BindValue::Int32(443),
+                    BindValue::DateTime(Utc::now() - Duration::days(1)),
+                ],
+            )
+            .await
+            .expect("test should insert a row without a scan ID");
+
+        let error = TrendAnalyzer::new(db)
+            .analyze_cipher_strength_trend("example.com", 443, 30)
+            .await
+            .expect_err("a persisted scan without an ID should fail");
+
+        assert!(error.to_string().contains("missing its scan ID"));
     }
 
     #[tokio::test]
