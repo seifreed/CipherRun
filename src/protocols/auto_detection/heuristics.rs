@@ -64,17 +64,10 @@ pub(super) fn analyze_banner(banner: &[u8]) -> (ApplicationProtocol, f64) {
     // (digits, dots, letters, hyphens) — matching real MySQL greetings like
     // "5.7.38-log" or "8.0.31".
     if banner.get(3) == Some(&0x00) && banner.get(4) == Some(&0x0a) {
-        let Some([len_low, len_mid, len_high]) = banner
-            .get(..3)
-            .and_then(|bytes| <[u8; 3]>::try_from(bytes).ok())
-        else {
-            return (ApplicationProtocol::Unknown, 0.0);
-        };
+        let [len_low, len_mid, len_high] = [banner[0], banner[1], banner[2]];
         let pkt_len = u32::from_le_bytes([len_low, len_mid, len_high, 0]) as usize;
         if pkt_len > 0 && pkt_len <= banner.len().saturating_sub(4) && pkt_len < 1024 {
-            let Some(packet) = banner.get(5..) else {
-                return (ApplicationProtocol::Unknown, 0.0);
-            };
+            let packet = &banner[5..];
             let Some(version_end) = packet.iter().position(|&byte| byte == 0x00) else {
                 return (ApplicationProtocol::Unknown, 0.0);
             };
