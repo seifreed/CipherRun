@@ -1027,6 +1027,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1127,6 +1128,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: true,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1176,6 +1178,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: true,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1222,6 +1225,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1255,6 +1259,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1292,6 +1297,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: true,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1329,6 +1335,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1352,6 +1359,60 @@ mod tests {
 
         executor.shutdown().await.unwrap();
         handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn panicked_scan_task_is_logged_and_executor_continues() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job.clone())),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: true,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        let handle = tokio::spawn(
+            Arc::clone(&executor)
+                .start()
+                .with_subscriber(tracing::Dispatch::new(subscriber)),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queue.dequeue_calls.load(Ordering::SeqCst) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("executor should continue dequeuing after a scan task panics");
+        executor.shutdown().await.unwrap();
+        handle.await.unwrap().unwrap();
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.task.join_failed"
+                && event["fields"]["error_type"] == "panic"
+                && event["fields"]["error_code"] == "task_panicked"
+        }));
     }
 
     struct CancelOnStartQueue {
@@ -1572,6 +1633,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: Some(RetryDisposition::Requeued),
             dequeue_calls: AtomicUsize::new(0),
@@ -1597,6 +1659,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1688,6 +1751,7 @@ mod tests {
         release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
         dequeue_error: bool,
         get_job_error: bool,
+        get_job_panics: bool,
         cancel_on_get: bool,
         retry_disposition: Option<RetryDisposition>,
         dequeue_calls: AtomicUsize,
@@ -1710,6 +1774,9 @@ mod tests {
         }
 
         async fn get_job(&self, _id: &str) -> Result<Option<ScanJob>> {
+            if self.get_job_panics {
+                panic!("test queue panic");
+            }
             if self.get_job_error {
                 return Err(TlsError::Other("password=must-not-appear".into()));
             }
@@ -1777,6 +1844,7 @@ mod tests {
             release: tokio::sync::Mutex::new(Some(release_rx)),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1812,6 +1880,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1842,6 +1911,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1908,6 +1978,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -1960,6 +2031,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -2006,6 +2078,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: false,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
@@ -2070,6 +2143,7 @@ mod tests {
             release: tokio::sync::Mutex::new(None),
             dequeue_error: true,
             get_job_error: false,
+            get_job_panics: false,
             cancel_on_get: false,
             retry_disposition: None,
             dequeue_calls: AtomicUsize::new(0),
