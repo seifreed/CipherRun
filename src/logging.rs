@@ -733,7 +733,8 @@ mod tests {
             String::from_utf8(text.stdout).unwrap(),
             String::from_utf8(text.stderr).unwrap()
         );
-        assert!(text_output.contains("Tracing subscriber initialized"));
+        assert!(text_output.contains("INFO cipherrun::logging: Tracing subscriber initialized"));
+        assert!(text_output.contains("format=\"text\""));
         assert!(text_output.contains("logging.subscriber.initialized"));
         assert!(text_output.contains("logging.initialize.child"));
 
