@@ -222,20 +222,19 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let mut line = String::new();
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut reader = BufReader::new(&mut socket);
+            let mut line = String::new();
 
+            let _ = reader.read_line(&mut line).await;
+            let _ = reader.get_mut().write_all(cap_line).await;
+            let _ = reader.get_mut().flush().await;
+
+            if let Some(response) = starttls_response {
+                line.clear();
                 let _ = reader.read_line(&mut line).await;
-                let _ = reader.get_mut().write_all(cap_line).await;
+                let _ = reader.get_mut().write_all(response).await;
                 let _ = reader.get_mut().flush().await;
-
-                if let Some(response) = starttls_response {
-                    line.clear();
-                    let _ = reader.read_line(&mut line).await;
-                    let _ = reader.get_mut().write_all(response).await;
-                    let _ = reader.get_mut().flush().await;
-                }
             }
         });
 
@@ -304,16 +303,15 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut reader = BufReader::new(&mut socket);
-                let mut line = String::new();
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut reader = BufReader::new(&mut socket);
+            let mut line = String::new();
 
-                let _ = reader.read_line(&mut line).await;
-                for _ in 0..50 {
-                    let _ = reader.get_mut().write_all(b"CAP * LS * :tls\r\n").await;
-                }
-                let _ = reader.get_mut().flush().await;
+            let _ = reader.read_line(&mut line).await;
+            for _ in 0..50 {
+                let _ = reader.get_mut().write_all(b"CAP * LS * :tls\r\n").await;
             }
+            let _ = reader.get_mut().flush().await;
         });
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
@@ -328,9 +326,10 @@ mod tests {
         .await
         .expect("negotiation should not wait after CAP line limit");
 
+        let error = result.expect_err("unfinished CAP LS response must not proceed to STARTTLS");
         assert!(
-            result.is_err(),
-            "unfinished CAP LS response must not proceed to STARTTLS"
+            error.to_string().contains("exceeded 50 lines"),
+            "expected CAP LS line-limit error, got: {error}"
         );
 
         let _ = handle.await;
@@ -429,9 +428,8 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
 
         let handle = tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.write_all(b"CAP * LS :tls\r\n").await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let _ = socket.write_all(b"CAP * LS :tls\r\n").await;
         });
 
         let mut stream = TcpStream::connect(("127.0.0.1", port))
