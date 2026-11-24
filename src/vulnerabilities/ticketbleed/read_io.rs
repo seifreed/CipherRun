@@ -16,10 +16,7 @@ pub(super) async fn until_new_session_ticket(
         if total >= buffer.len() {
             break;
         }
-        let Some(read_buffer) = buffer.get_mut(total..) else {
-            break;
-        };
-        let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
+        let n = match timeout(per_read_timeout, stream.read(&mut buffer[total..])).await {
             Ok(Ok(n)) => n,
             _ => break,
         };
@@ -27,10 +24,7 @@ pub(super) async fn until_new_session_ticket(
             break;
         }
         total += n;
-        let Some(accumulated) = buffer.get(..total) else {
-            break;
-        };
-        if let Ok(true) = session_ticket::is_present(accumulated) {
+        if let Ok(true) = session_ticket::is_present(&buffer[..total]) {
             break;
         }
     }
@@ -47,10 +41,7 @@ pub(super) async fn complete_tls_record(
         if total >= buffer.len() {
             break;
         }
-        let Some(read_buffer) = buffer.get_mut(total..) else {
-            break;
-        };
-        let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
+        let n = match timeout(per_read_timeout, stream.read(&mut buffer[total..])).await {
             Ok(Ok(n)) => n,
             _ => break,
         };
@@ -60,14 +51,7 @@ pub(super) async fn complete_tls_record(
         total += n;
         if total >= TLS_RECORD_HEADER_SIZE {
             let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
-            let record_total = TLS_RECORD_HEADER_SIZE
-                .checked_add(record_len)
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Ticketbleed TLS record length overflow",
-                    )
-                })?;
+            let record_total = TLS_RECORD_HEADER_SIZE + record_len;
             if record_total > buffer.len() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,

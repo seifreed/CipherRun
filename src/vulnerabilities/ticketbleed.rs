@@ -212,6 +212,15 @@ mod tests {
         (listener, port)
     }
 
+    async fn local_tcp_pair() -> (tokio::net::TcpStream, tokio::net::TcpStream) {
+        let (listener, port) = local_listener().await;
+        let client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect local client");
+        let (server, _) = listener.accept().await.expect("accept local client");
+        (client, server)
+    }
+
     async fn test_ticketbleed_port(port: u16) -> TicketbleedTestResult {
         TicketbleedTester::new(localhost_target(port))
             .test()
@@ -557,6 +566,87 @@ mod tests {
         assert!(n >= 5);
 
         server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn ticketbleed_reader_stops_when_buffer_is_full_and_times_out() {
+        let (mut client, mut server) = local_tcp_pair().await;
+        server
+            .write_all(&[0x15, 0x03, 0x03, 0x00, 0x01, 0x00])
+            .await
+            .expect("write complete non-ticket record");
+        drop(server);
+        let mut buffer = [0; 6];
+
+        assert_eq!(
+            read_io::until_new_session_ticket(&mut client, &mut buffer, Duration::from_secs(1))
+                .await,
+            buffer.len()
+        );
+
+        let (mut client, _server) = local_tcp_pair().await;
+        let mut buffer = [0; 8];
+        assert_eq!(
+            read_io::until_new_session_ticket(&mut client, &mut buffer, Duration::from_millis(1))
+                .await,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn ticketbleed_record_reader_handles_short_buffers_timeouts_and_eof() {
+        let (mut client, mut server) = local_tcp_pair().await;
+        server
+            .write_all(&[0x16, 0x03, 0x03])
+            .await
+            .expect("write short header");
+        drop(server);
+        let mut buffer = [0; 3];
+        assert_eq!(
+            read_io::complete_tls_record(&mut client, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("short buffer should return bytes read"),
+            buffer.len()
+        );
+
+        let (mut client, _server) = local_tcp_pair().await;
+        let mut buffer = [0; 8];
+        assert_eq!(
+            read_io::complete_tls_record(&mut client, &mut buffer, Duration::from_millis(1))
+                .await
+                .expect("timeout should return bytes read"),
+            0
+        );
+
+        let (mut client, mut server) = local_tcp_pair().await;
+        server
+            .write_all(&[0x16, 0x03, 0x03, 0x00, 0x02, 0x01])
+            .await
+            .expect("write partial record");
+        drop(server);
+        let mut buffer = [0; 8];
+        assert_eq!(
+            read_io::complete_tls_record(&mut client, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("EOF should return bytes read"),
+            6
+        );
+    }
+
+    #[tokio::test]
+    async fn ticketbleed_record_reader_rejects_records_larger_than_buffer() {
+        let (mut client, mut server) = local_tcp_pair().await;
+        server
+            .write_all(&[0x16, 0x03, 0x03, 0x00, 0x02, 0x01])
+            .await
+            .expect("write oversized record header");
+        let mut buffer = [0; 6];
+
+        let error = read_io::complete_tls_record(&mut client, &mut buffer, Duration::from_secs(1))
+            .await
+            .expect_err("oversized record should be rejected");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[tokio::test]
