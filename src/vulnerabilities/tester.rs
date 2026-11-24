@@ -508,7 +508,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_beast_cached_with_tls10() {
+    async fn test_beast_cached_with_tls10_and_ssl3() {
         let scanner = VulnerabilityScanner::new(example_target());
         let mut cache = HashMap::new();
         cache.insert(
@@ -528,6 +528,18 @@ mod tests {
                 },
             ),
         );
+        cache.insert(
+            Protocol::SSLv3,
+            make_summary(
+                Protocol::SSLv3,
+                vec![make_cipher("AES128-CBC")],
+                crate::ciphers::tester::CipherCounts {
+                    total: 1,
+                    medium_strength: 1,
+                    ..Default::default()
+                },
+            ),
+        );
 
         assert!(
             scanner
@@ -536,6 +548,22 @@ mod tests {
                 .expect("ok")
                 .vulnerable
         );
+    }
+
+    #[test]
+    fn test_beast_ssl3_without_cbc_is_not_vulnerable() {
+        let ssl3_summary = make_summary(
+            Protocol::SSLv3,
+            vec![make_cipher("AES128-GCM")],
+            crate::ciphers::tester::CipherCounts {
+                total: 1,
+                ..Default::default()
+            },
+        );
+
+        let result = cipher_checks::evaluate_beast(None, Some(&ssl3_summary));
+
+        assert!(!result.vulnerable);
     }
 
     #[test]
