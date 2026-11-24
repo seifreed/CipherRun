@@ -468,6 +468,80 @@ mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
 
+    fn server_hello_body(extensions: &[u8]) -> Vec<u8> {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.extend_from_slice(&[0x00, 0x00, 0x9c, 0x00]);
+        body.extend_from_slice(&u16::try_from(extensions.len()).unwrap().to_be_bytes());
+        body.extend_from_slice(extensions);
+        body
+    }
+
+    #[test]
+    fn slice_range_rejects_overflow_and_out_of_bounds() {
+        let overflow = RevocationChecker::slice_range(&[], usize::MAX, 1, "fixture")
+            .expect_err("range addition must be checked");
+        assert!(overflow.to_string().contains("length overflow"));
+
+        let out_of_bounds = RevocationChecker::slice_range(&[1, 2], 1, 2, "fixture")
+            .expect_err("ranges past the input must be rejected");
+        assert!(out_of_bounds.to_string().contains("exceeds available data"));
+    }
+
+    #[test]
+    fn must_staple_parses_feature_sequences_and_ignores_other_features() {
+        let checker = RevocationChecker::new(false);
+        let must_staple =
+            cert_with_raw_extension_der("1.3.6.1.5.5.7.1.24", b"\x30\x03\x02\x01\x05");
+        let other_feature =
+            cert_with_raw_extension_der("1.3.6.1.5.5.7.1.24", b"\x30\x03\x02\x01\x0a");
+
+        assert!(checker.check_must_staple(&must_staple).unwrap());
+        assert!(!checker.check_must_staple(&other_feature).unwrap());
+    }
+
+    #[test]
+    fn server_hello_extension_parser_distinguishes_status_request_and_other_extensions() {
+        assert_eq!(
+            RevocationChecker::parse_server_hello_extensions(
+                &server_hello_body(&[0x00, 0x05, 0x00, 0x00]),
+                0x0005,
+            )
+            .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            RevocationChecker::parse_server_hello_extensions(
+                &server_hello_body(&[0x00, 0x0a, 0x00, 0x00]),
+                0x0005,
+            )
+            .unwrap(),
+            Some(false)
+        );
+
+        let error = RevocationChecker::parse_server_hello_extensions(
+            &server_hello_body(&[0x00, 0x05]),
+            0x0005,
+        )
+        .expect_err("partial extension headers must be rejected");
+        assert!(error.to_string().contains("truncated header"));
+    }
+
+    #[test]
+    fn ocsp_stapling_parses_valid_status_and_skips_unknown_handshake_messages() {
+        let checker = RevocationChecker::new(false);
+        let mut record = vec![0x16, 0x03, 0x03, 0x00, 0x0d];
+        record.extend_from_slice(&[0xfe, 0x00, 0x00, 0x00]);
+        record.extend_from_slice(&[0x16, 0x00, 0x00, 0x05]);
+        record.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0xaa]);
+
+        let result = checker.check_ocsp_stapling(&record).unwrap();
+
+        assert!(result.stapled_response_present);
+        assert_eq!(result.stapled_response_valid, Some(true));
+        assert!(result.details.contains("1 bytes"));
+    }
+
     #[test]
     fn test_ocsp_stapling_empty_data() {
         let checker = RevocationChecker::new(true);
