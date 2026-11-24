@@ -176,13 +176,51 @@ mod tests {
 
     #[test]
     fn rejects_unexpected_counts_and_malformed_probe_fields() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
+            .json()
             .with_max_level(tracing::Level::WARN)
-            .with_writer(std::io::sink)
+            .with_writer(Buffer(output.clone()))
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             assert_eq!(raw_hash_to_fuzzy_hash("not-ten-probes"), ZERO_HASH);
         });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "fingerprint.jarm.input.invalid"
+        );
+        assert_eq!(event["fields"]["expected_probe_count"], JARM_PROBE_COUNT);
+        assert_eq!(event["fields"]["actual_probe_count"], 1);
 
         let mut probes = ["c02f|0303|h2|ext"; JARM_PROBE_COUNT];
         probes[4] = "c02f|0303|h2|ext|extra";
