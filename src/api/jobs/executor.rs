@@ -1017,6 +1017,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cloned_executor_shares_progress_and_shutdown_channels() {
+        let executor = ScanExecutor::new(Arc::new(super::super::InMemoryJobQueue::new(1)), 1);
+        let clone = executor.clone();
+        let mut progress = executor.subscribe_progress();
+
+        clone
+            .progress_broadcaster()
+            .send(ProgressMessage::new("scan-1", 25, "certificate"))
+            .expect("clone should broadcast through the shared channel");
+        let message = progress
+            .recv()
+            .await
+            .expect("original executor should receive clone progress");
+        assert_eq!(message.scan_id, "scan-1");
+        assert_eq!(message.progress, 25);
+
+        clone
+            .shutdown_tx
+            .send(true)
+            .expect("clone should retain the shared shutdown sender");
+        assert!(*executor.shutdown_rx.borrow());
+    }
+
+    #[tokio::test]
     async fn shutdown_requeues_job_waiting_for_execution_slot() {
         let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
         job.mark_queued();
