@@ -163,4 +163,78 @@ mod tests {
                 .any(|issue| issue.contains("manual testing"))
         );
     }
+
+    #[test]
+    fn protected_server_without_reported_size_is_described_as_protected() {
+        let info = EarlyDataSizeInfo {
+            max_early_data_size: None,
+            is_estimated: false,
+            ..early_data_info()
+        };
+        let replay = ReplayTestResult {
+            tested: true,
+            vulnerable: false,
+            inconclusive: false,
+            details: "replay rejected".to_string(),
+        };
+
+        let result = supported_early_data_result(&info, &replay);
+
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("anti-replay protection enabled"));
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("anti-replay"))
+        );
+    }
+
+    #[test]
+    fn inconclusive_replay_without_reported_size_uses_unknown_size() {
+        let info = EarlyDataSizeInfo {
+            max_early_data_size: None,
+            ..early_data_info()
+        };
+        let replay = ReplayTestResult {
+            tested: false,
+            vulnerable: false,
+            inconclusive: true,
+            details: "could not replay".to_string(),
+        };
+
+        let result = supported_early_data_result(&info, &replay);
+
+        assert!(result.details.contains("max: unknown"));
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.contains("manual testing"))
+        );
+    }
+
+    #[test]
+    fn known_non_estimated_size_uses_confirmed_size_message() {
+        let info = EarlyDataSizeInfo {
+            is_estimated: false,
+            ..early_data_info()
+        };
+        let replay = ReplayTestResult {
+            tested: false,
+            vulnerable: false,
+            inconclusive: false,
+            details: String::new(),
+        };
+
+        let result = supported_early_data_result(&info, &replay);
+
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| { issue == "Server accepts up to 16384 bytes of early data" })
+        );
+        assert!(result.details.contains("anti-replay protection enabled"));
+    }
 }
