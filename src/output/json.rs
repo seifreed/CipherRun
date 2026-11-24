@@ -119,6 +119,32 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    struct FailingSerialize;
+
+    impl serde::Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom(
+                "intentional serialization failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn serialize_json_propagates_compact_and_pretty_errors() {
+        for pretty in [false, true] {
+            let error = serialize_json(&FailingSerialize, pretty)
+                .expect_err("serializer errors should be propagated");
+            assert!(
+                error
+                    .to_string()
+                    .contains("intentional serialization failure")
+            );
+        }
+    }
+
     fn single_ip_target() -> Target {
         example_com_loopback_target(443)
     }
