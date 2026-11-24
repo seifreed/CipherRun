@@ -37,12 +37,7 @@ pub(super) fn certificate_signature(cert: &CertificateInfo) -> String {
         return format!("der:{}", hex::encode(&cert.der_bytes));
     }
 
-    serde_json::to_string(cert).unwrap_or_else(|_| {
-        format!(
-            "subject={};issuer={};serial={};not_before={};not_after={}",
-            cert.subject, cert.issuer, cert.serial_number, cert.not_before, cert.not_after
-        )
-    })
+    serde_json::to_string(cert).expect("CertificateInfo fields are JSON-serializable")
 }
 
 pub(super) fn certificate_chain_signature(chain: &CertificateChain) -> String {
