@@ -147,6 +147,69 @@ async fn mx_lookup_rejects_invalid_domains_and_malformed_resolver_output() {
     );
 }
 
+#[tokio::test]
+async fn custom_mx_resolver_sorts_local_dns_answers_by_priority() {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind local DNS fixture");
+    let resolver = socket.local_addr().expect("read local DNS address");
+    let server = tokio::spawn(async move {
+        let mut request = [0u8; 2048];
+        let (length, peer) = socket
+            .recv_from(&mut request)
+            .await
+            .expect("receive DNS query");
+        let request = &request[..length];
+        let mut question_end = 12;
+        loop {
+            let label_length = usize::from(request[question_end]);
+            question_end += 1;
+            if label_length == 0 {
+                break;
+            }
+            question_end += label_length;
+        }
+        question_end += 4;
+
+        let mut response = request[..question_end].to_vec();
+        response[2] |= 0x80;
+        response[3] |= 0x80;
+        response[6..8].copy_from_slice(&2u16.to_be_bytes());
+        response[8..12].fill(0);
+        for (priority, hostname) in [(20u16, "mx20.example.com"), (10, "mx10.example.com")] {
+            let mut rdata = priority.to_be_bytes().to_vec();
+            for label in hostname.split('.') {
+                rdata.push(label.len() as u8);
+                rdata.extend_from_slice(label.as_bytes());
+            }
+            rdata.push(0);
+
+            response.extend_from_slice(&[0xc0, 0x0c]);
+            response.extend_from_slice(&15u16.to_be_bytes());
+            response.extend_from_slice(&1u16.to_be_bytes());
+            response.extend_from_slice(&60u32.to_be_bytes());
+            response.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+            response.extend_from_slice(&rdata);
+        }
+        socket
+            .send_to(&response, peer)
+            .await
+            .expect("send DNS response");
+    });
+
+    let tester = MxTester::with_resolvers("example.com".to_string(), vec![resolver.to_string()]);
+    let result = tester.query_mx_records().await;
+    server
+        .await
+        .expect("DNS fixture should receive and answer a query");
+    let records = result.expect("custom resolver should return MX records");
+
+    assert_mx_records(
+        &records,
+        &[(10, "mx10.example.com"), (20, "mx20.example.com")],
+    );
+}
+
 #[test]
 fn test_parse_dig_output() {
     let tester = MxTester::new("example.com".to_string());
