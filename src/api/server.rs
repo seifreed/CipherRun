@@ -107,6 +107,15 @@ fn load_api_tls_config(
         .map_err(|error| crate::error::TlsError::ConfigError {
         message: format!("Failed to load API TLS material: {error}"),
     })?;
+    #[cfg(feature = "rustls")]
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    #[cfg(not(feature = "rustls"))]
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|error| crate::error::TlsError::ConfigError {
+            message: format!("Failed to configure API TLS protocol versions: {error}"),
+        })?;
     let builder = if let Some(ca_file) = client_ca_file {
         let ca_bytes =
             std::fs::read(ca_file).map_err(|error| crate::error::TlsError::ConfigError {
@@ -135,15 +144,15 @@ fn load_api_tls_config(
                 message: "API TLS client CA file contains no certificates".to_string(),
             });
         }
-        rustls::ServerConfig::builder().with_client_cert_verifier(
-            rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+        builder.with_client_cert_verifier(
+            rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
                 .build()
                 .map_err(|error| crate::error::TlsError::ConfigError {
                     message: format!("Invalid API TLS client verifier: {error}"),
                 })?,
         )
     } else {
-        rustls::ServerConfig::builder().with_no_client_auth()
+        builder.with_no_client_auth()
     };
     builder
         .with_single_cert(material.cert_chain, material.private_key)
@@ -501,6 +510,79 @@ mod tests {
         http::{Request, StatusCode},
     };
     use tower::ServiceExt;
+
+    fn write_test_tls_pair(
+        directory: &std::path::Path,
+        name: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf, String) {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("test certificate should be generated");
+        let cert_path = directory.join(format!("{name}.pem"));
+        let key_path = directory.join(format!("{name}-key.pem"));
+        let certificate = certified.cert.pem();
+        std::fs::write(&cert_path, &certificate).expect("test certificate should be written");
+        std::fs::write(&key_path, certified.signing_key.serialize_pem())
+            .expect("test key should be written");
+        (cert_path, key_path, certificate)
+    }
+
+    #[test]
+    fn api_tls_config_validates_server_material_and_client_ca() {
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let (cert_path, key_path, certificate) = write_test_tls_pair(directory.path(), "server");
+        assert!(load_api_tls_config(&cert_path, &key_path, None).is_ok());
+
+        let error =
+            load_api_tls_config(&directory.path().join("missing-cert.pem"), &key_path, None)
+                .expect_err("missing server certificate must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to load API TLS material")
+        );
+
+        let error = load_api_tls_config(
+            &cert_path,
+            &key_path,
+            Some(&directory.path().join("missing-ca.pem")),
+        )
+        .expect_err("missing client CA must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read API TLS client CA")
+        );
+
+        let malformed_ca = directory.path().join("malformed-ca.pem");
+        std::fs::write(
+            &malformed_ca,
+            "-----BEGIN CERTIFICATE-----\n%%%\n-----END CERTIFICATE-----\n",
+        )
+        .expect("malformed CA fixture should be written");
+        let error = load_api_tls_config(&cert_path, &key_path, Some(&malformed_ca))
+            .expect_err("malformed client CA must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse API TLS client CA")
+        );
+
+        let key_as_ca = directory.path().join("key-as-ca.pem");
+        std::fs::write(&key_as_ca, std::fs::read(&key_path).unwrap())
+            .expect("key fixture should be copied");
+        let error = load_api_tls_config(&cert_path, &key_path, Some(&key_as_ca))
+            .expect_err("client CA without certificates must fail");
+        assert!(error.to_string().contains("contains no certificates"));
+
+        let ca_path = directory.path().join("client-ca.pem");
+        std::fs::write(&ca_path, certificate).expect("client CA fixture should be written");
+        assert!(load_api_tls_config(&cert_path, &key_path, Some(&ca_path)).is_ok());
+
+        let (_, other_key_path, _) = write_test_tls_pair(directory.path(), "other");
+        let error = load_api_tls_config(&cert_path, &other_key_path, None)
+            .expect_err("mismatched server certificate and key must fail");
+        assert!(error.to_string().contains("Invalid API TLS material"));
+    }
 
     #[test]
     fn listener_accept_backoff_is_exponential_and_capped() {
