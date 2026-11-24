@@ -214,6 +214,28 @@ mod tests {
     }
 
     #[test]
+    fn json_file_writers_propagate_destination_errors() {
+        let path = temp_file_path(".directory");
+        std::fs::create_dir(&path).expect("test directory should be created");
+        let results = ScanResults::default();
+        let report = MultiIpScanReport {
+            target: single_ip_target(),
+            per_ip_results: HashMap::new(),
+            total_ips: 0,
+            successful_scans: 0,
+            failed_scans: 0,
+            total_duration_ms: 0,
+            inconsistencies: Vec::new(),
+            aggregated: empty_aggregated_result(),
+        };
+
+        assert!(write_json_file(&results, path.to_str().unwrap(), false).is_err());
+        assert!(write_multi_ip_json_file(&report, path.to_str().unwrap(), false).is_err());
+
+        std::fs::remove_dir(path).expect("test directory should be removed");
+    }
+
+    #[test]
     fn test_multi_ip_json_generation_and_write() {
         let target = single_ip_target();
 
