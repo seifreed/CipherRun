@@ -85,4 +85,12 @@ mod tests {
 
         assert!(error.to_string().contains("malformed ticket"));
     }
+
+    #[test]
+    fn oversized_received_ticket_build_error_is_propagated() {
+        let ticket = vec![0; u16::MAX as usize + 1];
+        let result = with_received_ticket(b"server response", |_| Ok(Some(ticket)));
+
+        assert!(result.is_err(), "oversized ticket data must be rejected");
+    }
 }
