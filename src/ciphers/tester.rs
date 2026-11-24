@@ -566,6 +566,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_determine_server_preference_returns_empty_when_server_rejects_ciphers() {
+        let addr = spawn_rejecting_tls_server(2).await;
+        let tester = local_cipher_tester(localhost_target(addr.port()));
+        let ciphers = vec![
+            make_cipher("c030", "TLSv1.2", "AES", 256, false, "RSA"),
+            make_cipher("c02f", "TLSv1.2", "AES", 128, false, "RSA"),
+        ];
+
+        let preference = tester
+            .determine_server_preference(Protocol::TLS12, &ciphers)
+            .await
+            .expect("server rejection should be an inconclusive preference result");
+
+        assert!(preference.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_server_preference_honors_all_ips() {
         let addr = spawn_fake_tls_server(0xc030, 0, 1).await;
         let target = Target::with_ips(
