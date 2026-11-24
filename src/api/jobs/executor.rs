@@ -985,6 +985,21 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[tokio::test]
+    async fn shutdown_reports_a_closed_signal_channel() {
+        let mut executor = ScanExecutor::new(Arc::new(super::super::InMemoryJobQueue::new(1)), 1);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        executor.shutdown_tx = shutdown_tx;
+        drop(shutdown_rx);
+
+        let error = executor
+            .shutdown()
+            .await
+            .expect_err("closed shutdown channel should be observable");
+
+        assert!(error.to_string().contains("Failed to send shutdown signal"));
+    }
+
+    #[tokio::test]
     async fn scan_task_join_errors_have_static_diagnostic_codes() {
         let panic = tokio::spawn(async { panic!("test panic") })
             .await
