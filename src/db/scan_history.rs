@@ -776,6 +776,37 @@ mod tests {
         assert_eq!(null_tenant_history.total_scans, 1);
         assert_eq!(null_tenant_history.scans[0].grade.as_deref(), Some("B"));
 
+        for (row_query, field) in [
+            (
+                "SELECT 'bad'::TEXT AS scan_id, TIMESTAMPTZ '2026-01-01 00:00:00+00' AS scan_timestamp, 'A'::TEXT AS overall_grade, 90::INTEGER AS overall_score, 100::BIGINT AS scan_duration_ms",
+                "scan_id",
+            ),
+            (
+                "SELECT 1::BIGINT AS scan_id, 'bad'::TEXT AS scan_timestamp, 'A'::TEXT AS overall_grade, 90::INTEGER AS overall_score, 100::BIGINT AS scan_duration_ms",
+                "scan_timestamp",
+            ),
+            (
+                "SELECT 1::BIGINT AS scan_id, TIMESTAMPTZ '2026-01-01 00:00:00+00' AS scan_timestamp, 1::INTEGER AS overall_grade, 90::INTEGER AS overall_score, 100::BIGINT AS scan_duration_ms",
+                "overall_grade",
+            ),
+            (
+                "SELECT 1::BIGINT AS scan_id, TIMESTAMPTZ '2026-01-01 00:00:00+00' AS scan_timestamp, 'A'::TEXT AS overall_grade, 'bad'::TEXT AS overall_score, 100::BIGINT AS scan_duration_ms",
+                "overall_score",
+            ),
+            (
+                "SELECT 1::BIGINT AS scan_id, TIMESTAMPTZ '2026-01-01 00:00:00+00' AS scan_timestamp, 'A'::TEXT AS overall_grade, 90::INTEGER AS overall_score, 'bad'::TEXT AS scan_duration_ms",
+                "scan_duration_ms",
+            ),
+        ] {
+            let row = sqlx::query(row_query)
+                .fetch_one(&pool)
+                .await
+                .expect("malformed typed row should be queryable");
+            let error = scan_history_entry_from_pg_row(row)
+                .expect_err("invalid history field type should be rejected");
+            assert!(error.to_string().contains(field), "{error}");
+        }
+
         pool.close().await;
         sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
             .execute(&admin)
