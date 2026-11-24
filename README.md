@@ -103,8 +103,8 @@ The standalone PQC configuration scanners and roadmap are enabled by the
 The reduced feature matrix is checked in CI with `--no-default-features`,
 `monitoring`, `ct,pqc`, both database backends, and `--all-features` builds.
 Linux CI also runs PostgreSQL repository and coverage tests against the latest
-PostgreSQL 19 image (`postgres:19`; currently 19.0), the newest active major
-reported by `eol-cli`. The image tag follows patch updates automatically.
+PostgreSQL image (`postgres:latest`; currently 19.0), matching the newest active
+release reported by `eol-cli` and following future major and patch updates.
 
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.
