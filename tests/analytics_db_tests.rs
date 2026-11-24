@@ -1310,6 +1310,28 @@ async fn test_change_tracker_detect_changes_compares_history_and_needs_two_scans
 }
 
 #[tokio::test]
+async fn test_change_tracker_reports_missing_scan_ids() {
+    let db = setup_db().await;
+    let valid_scan = insert_scan(
+        &db,
+        "missing-change-scan.test",
+        443,
+        Utc::now(),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+
+    let error = tracker
+        .detect_changes_between(valid_scan, -1)
+        .await
+        .expect_err("missing scan should fail change tracking");
+
+    assert!(error.to_string().contains("One or both scans not found"));
+}
+
+#[tokio::test]
 async fn test_change_tracker_rejects_invalid_certificate_row() {
     let db = setup_db().await;
     let now = Utc::now();
