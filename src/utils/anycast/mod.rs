@@ -574,6 +574,18 @@ mod tests {
         assert!(err.to_string().contains("Invalid anycast hostname"));
     }
 
+    #[tokio::test]
+    async fn scan_all_ips_reports_invalid_hostname_resolution_failure() {
+        let scanner = AnycastScanner::new("example.com/path".to_string(), 443, Args::default());
+
+        let error = scanner
+            .scan_all_ips()
+            .await
+            .expect_err("invalid anycast hostname should fail before scanning");
+
+        assert!(error.to_string().contains("Invalid anycast hostname"));
+    }
+
     #[test]
     fn test_anycast_scanner_normalizes_rooted_hostname() {
         let scanner = AnycastScanner::new("example.com.".to_string(), 443, Args::default());
