@@ -432,27 +432,17 @@ fn reorder_ciphers(mut ciphers: Vec<[u8; 2]>, order: CipherOrder) -> Vec<[u8; 2]
             let mut result = Vec::new();
 
             if len % 2 == 1 {
-                if let Some(cipher) = ciphers.get(middle).copied() {
-                    result.push(cipher);
-                }
+                result.push(ciphers[middle]);
                 for i in 1..=middle {
-                    if let Some(cipher) = ciphers.get(middle + i).copied() {
-                        result.push(cipher);
-                    }
-                    if let Some(cipher) = ciphers.get(middle - i).copied() {
-                        result.push(cipher);
-                    }
+                    result.push(ciphers[middle + i]);
+                    result.push(ciphers[middle - i]);
                 }
             } else {
                 // Canonical JARM: interleave outward from the center, taking the
                 // right-of-center element before the left-of-center one each step.
                 for i in 1..=middle {
-                    if let Some(cipher) = ciphers.get(middle - 1 + i).copied() {
-                        result.push(cipher);
-                    }
-                    if let Some(cipher) = ciphers.get(middle - i).copied() {
-                        result.push(cipher);
-                    }
+                    result.push(ciphers[middle - 1 + i]);
+                    result.push(ciphers[middle - i]);
                 }
             }
 
@@ -722,6 +712,8 @@ mod tests {
         // Bottom Half (even length): second half in order.
         let bottom_half = reorder_ciphers(ciphers.clone(), CipherOrder::BottomHalf);
         assert_eq!(bottom_half, vec![[0x05, 0x06], [0x07, 0x08]]);
+
+        assert!(reorder_ciphers(Vec::new(), CipherOrder::MiddleOut).is_empty());
     }
 
     #[test]
@@ -743,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_structure() {
-        let opts = JarmProbeOptions {
+        let mut opts = JarmProbeOptions {
             hostname: "example.com".to_string(),
             port: 443,
             version: TlsVersion::TLS12,
@@ -766,6 +758,18 @@ mod tests {
 
         // Should have reasonable length (> 100 bytes)
         assert!(packet.len() > 100);
+
+        opts.alpn = AlpnMode::NoSupport;
+        assert!(
+            ext_alpn(&opts)
+                .expect("no-support ALPN should build")
+                .is_empty()
+        );
+
+        opts.v13_mode = V13Mode::NoSupport;
+        let versions = ext_supported_versions(&opts).expect("supported versions should build");
+        assert!(versions.windows(2).any(|version| version == [0x03, 0x03]));
+        assert!(!versions.windows(2).any(|version| version == [0x03, 0x04]));
     }
 
     #[test]
