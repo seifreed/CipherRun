@@ -104,6 +104,7 @@ mod tests {
 
         let mut bytes = [0u8; 3];
         assert!(write_u24_at(&mut bytes, 0, 0x0100_0000, "u24").is_err());
+        assert!(write_u24_at(&mut bytes, 0, usize::MAX, "u24").is_err());
         assert_eq!(bytes, [0; 3]);
     }
 }
