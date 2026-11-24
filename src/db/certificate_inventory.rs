@@ -182,7 +182,7 @@ fn build_certificate_list_query_for_dialect(
         let principal_placeholder = dialect.placeholder(params.len() + 1);
         params.push(principal_id.clone());
         let tenant_match = if let Some(tenant_id) = &query.tenant_id {
-            let tenant_placeholder = dialect.placeholder(params.len() + 2);
+            let tenant_placeholder = dialect.placeholder(params.len() + 1);
             params.push(tenant_id.clone());
             match dialect {
                 SqlDialect::Postgres => format!("s.tenant_id = {}", tenant_placeholder),
@@ -665,5 +665,140 @@ mod tests {
 
         let future = service.list_certificates(&query);
         std::mem::drop(future);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
+    async fn postgres_inventory_queries_cover_filters_ordering_and_owner_scope() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test schema should accept connections");
+        let database = DatabasePool::Postgres(pool.clone());
+        sqlx::query(
+            "CREATE TABLE certificates (cert_id BIGINT PRIMARY KEY, fingerprint_sha256 TEXT, subject TEXT, issuer TEXT, not_before TIMESTAMPTZ, not_after TIMESTAMPTZ, san_domains TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .expect("test certificates table should be created");
+        sqlx::query(
+            "CREATE TABLE scans (scan_id BIGINT PRIMARY KEY, target_hostname TEXT, principal_id TEXT, tenant_id TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scans table should be created");
+        sqlx::query("CREATE TABLE scan_certificates (scan_id BIGINT, cert_id BIGINT)")
+            .execute(&pool)
+            .await
+            .expect("test scan certificates table should be created");
+
+        let now = Utc::now();
+        for (id, fingerprint, expiry) in [
+            (1_i64, "AA:BB", now + chrono::Duration::days(10)),
+            (2_i64, "CC:DD", now + chrono::Duration::days(300)),
+        ] {
+            sqlx::query(
+                "INSERT INTO certificates VALUES ($1, $2, 'subject', 'issuer', $3, $4, NULL)",
+            )
+            .bind(id)
+            .bind(fingerprint)
+            .bind(now - chrono::Duration::days(10))
+            .bind(expiry)
+            .execute(&pool)
+            .await
+            .expect("test certificate should insert");
+        }
+        for (scan_id, hostname, principal_id, tenant_id, cert_id) in [
+            (1_i64, "example.com", "alice", Some("tenant-a"), 1_i64),
+            (2_i64, "public.example", "bob", None, 2_i64),
+        ] {
+            sqlx::query("INSERT INTO scans VALUES ($1, $2, $3, $4)")
+                .bind(scan_id)
+                .bind(hostname)
+                .bind(principal_id)
+                .bind(tenant_id)
+                .execute(&pool)
+                .await
+                .expect("test scan should insert");
+            sqlx::query("INSERT INTO scan_certificates VALUES ($1, $2)")
+                .bind(scan_id)
+                .bind(cert_id)
+                .execute(&pool)
+                .await
+                .expect("test certificate association should insert");
+        }
+
+        let page = list_certificates(
+            &database,
+            &CertificateInventoryQuery {
+                limit: 10,
+                offset: 0,
+                sort: CertificateInventorySort::ExpiryAsc,
+                hostname: Some("example.com".to_string()),
+                expiring_within_days: Some(30),
+                principal_id: Some("alice".to_string()),
+                tenant_id: Some("tenant-a".to_string()),
+            },
+        )
+        .await
+        .expect("filtered inventory query should succeed");
+        assert_eq!(page.total, 1);
+        assert_eq!(page.certificates[0].fingerprint, "AA:BB");
+        assert_eq!(page.certificates[0].hostnames, ["example.com"]);
+
+        let tenantless = get_certificate_for_owner(&database, "cc:dd", Some("bob"), None)
+            .await
+            .expect("tenantless owner lookup should succeed");
+        assert_eq!(
+            tenantless
+                .expect("owner should see certificate")
+                .fingerprint,
+            "CC:DD"
+        );
+        assert!(
+            get_certificate_for_owner(&database, "cc:dd", Some("alice"), Some("tenant-a"))
+                .await
+                .expect("non-owner lookup should succeed")
+                .is_none()
+        );
+        assert_eq!(
+            get_certificate(&database, "aa:bb")
+                .await
+                .expect("normalized fingerprint lookup should succeed")
+                .expect("certificate should exist")
+                .hostnames,
+            ["example.com"]
+        );
+        assert!(
+            get_certificate(&database, "missing")
+                .await
+                .expect("missing fingerprint lookup should succeed")
+                .is_none()
+        );
+
+        pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+        admin.close().await;
     }
 }
