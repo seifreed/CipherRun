@@ -365,8 +365,12 @@ mod tests {
     use crate::certificates::revocation::cert_with_raw_extension_der;
 
     fn aia_with_location(tag: u8, location: &str) -> Vec<u8> {
+        aia_with_method(0x01, tag, location)
+    }
+
+    fn aia_with_method(method: u8, tag: u8, location: &str) -> Vec<u8> {
         let location = location.as_bytes();
-        let mut description = vec![0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01];
+        let mut description = vec![0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, method];
         description.extend_from_slice(&[tag, location.len() as u8]);
         description.extend_from_slice(location);
 
@@ -400,6 +404,29 @@ mod tests {
             &aia_with_location(0x82, "ocsp.example.test"),
         );
         assert!(checker.extract_ocsp_url(&non_uri).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_extract_ocsp_url_ignores_non_ocsp_methods_and_non_http_uris() {
+        let checker = RevocationChecker::new(false);
+        let ca_issuer = cert_with_raw_extension_der(
+            "1.3.6.1.5.5.7.1.1",
+            &aia_with_method(0x02, 0x86, "https://ca.example.test/issuer"),
+        );
+        let unsupported_scheme = cert_with_raw_extension_der(
+            "1.3.6.1.5.5.7.1.1",
+            &aia_with_location(0x86, "ldap://ocsp.example.test/status"),
+        );
+        let no_aia = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+
+        assert!(checker.extract_ocsp_url(&ca_issuer).unwrap().is_none());
+        assert!(
+            checker
+                .extract_ocsp_url(&unsupported_scheme)
+                .unwrap()
+                .is_none()
+        );
+        assert!(checker.extract_ocsp_url(&no_aia).unwrap().is_none());
     }
 
     #[test]
@@ -610,5 +637,21 @@ mod tests {
             .expect_err("private OCSP URL should be rejected before request");
 
         assert!(format!("{err}").contains("private/internal IP"));
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_rejects_unsupported_schemes_and_credentials_before_request() {
+        let checker = RevocationChecker::new(false);
+        let cert = CertificateInfo::default();
+
+        for url in [
+            "ftp://ocsp.example.test/status",
+            "https://user:secret@ocsp.example.test/status",
+        ] {
+            assert!(
+                checker.check_ocsp(&cert, None, url).await.is_err(),
+                "unsafe responder URL should be rejected before the HTTP request: {url}"
+            );
+        }
     }
 }
