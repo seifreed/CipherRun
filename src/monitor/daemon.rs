@@ -1176,11 +1176,17 @@ mod tests {
             .with_ansi(false)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
         daemon
             .run_scan_cycle()
-            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .with_subscriber(dispatch.clone())
             .await
             .expect("a closed scan semaphore should skip work without failing the cycle");
+        daemon
+            .run_scan_cycle()
+            .with_subscriber(dispatch)
+            .await
+            .expect("a domain that is not due should be skipped without failing the cycle");
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let events = output
@@ -1196,6 +1202,13 @@ mod tests {
             event["fields"]["event_name"] == "monitor.scan_cycle.completed"
                 && event["fields"]["outcome"] == "complete"
         }));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["fields"]["event_name"] == "monitor.scan_cycle.started")
+                .count(),
+            1
+        );
         assert_eq!(daemon.stats().await.scheduled_scans, 1);
     }
 
