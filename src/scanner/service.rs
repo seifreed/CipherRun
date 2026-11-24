@@ -667,6 +667,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multi_ip_orchestration_preserves_probe_only_results() {
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+            .await
+            .expect("local probe listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should expose its port")
+            .port();
+        let ips = vec![
+            "127.0.0.1".parse().expect("valid loopback IP"),
+            "127.0.0.2".parse().expect("valid loopback IP"),
+        ];
+        let scanner = Scanner::new(ScanRequest {
+            target: Some("multi-ip.example.test".to_string()),
+            connection: crate::application::scan_request::ScanRequestConnection {
+                connect_timeout: Some(1),
+                no_retry: true,
+                ..Default::default()
+            },
+            scan: ScanRequestScan {
+                prefs: crate::application::scan_request::ScanRequestPrefs {
+                    probe_status: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("scanner should build");
+        scanner.set_target(
+            Target::with_ips("multi-ip.example.test".to_string(), port, ips.clone())
+                .expect("loopback targets should build"),
+        );
+
+        let result = scanner
+            .run_multi_ip_scan()
+            .await
+            .expect("probe-only scans should produce a report");
+
+        assert_eq!(result.scan_metadata.scanned_ips.len(), ips.len());
+        assert!(result.scan_metadata.multi_ip_report.is_some());
+    }
+
+    #[tokio::test]
     async fn connectivity_probe_logs_safe_terminal_event() {
         use tracing::instrument::WithSubscriber;
 

@@ -924,6 +924,49 @@ fn test_build_conservative_multi_ip_result() {
 }
 
 #[test]
+fn test_build_conservative_multi_ip_result_rejects_all_failed_scans() {
+    let request = crate::application::ScanRequest {
+        target: Some("example.com".to_string()),
+        scan: crate::application::scan_request::ScanRequestScan {
+            proto: crate::application::scan_request::ScanRequestProto {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let scanner = Scanner::new(request).expect("scanner should build");
+    let ip: std::net::IpAddr = "127.0.0.1".parse().expect("valid loopback IP");
+    let mut per_ip_results = HashMap::new();
+    per_ip_results.insert(
+        ip,
+        crate::scanner::inconsistency::SingleIpScanResult {
+            ip,
+            scan_result: ScanResults::default(),
+            scan_duration_ms: 1,
+            error: Some("connection refused".to_string()),
+        },
+    );
+    let report = crate::scanner::multi_ip::MultiIpScanReport {
+        target: example_target(vec![ip]),
+        per_ip_results,
+        total_ips: 1,
+        successful_scans: 0,
+        failed_scans: 1,
+        total_duration_ms: 1,
+        inconsistencies: Vec::new(),
+        aggregated: empty_aggregated_result(),
+    };
+
+    let error = scanner
+        .build_conservative_multi_ip_result(&report)
+        .expect_err("aggregation should fail when every scan failed");
+
+    assert!(error.to_string().contains("All 1 IP address scans failed"));
+}
+
+#[test]
 fn test_build_conservative_multi_ip_result_missing_cert_yields_grade_unverified() {
     // A full scan that gathered no certificate from any IP must be graded T,
     // matching the single-IP path. Previously the multi-IP path computed the
