@@ -11,15 +11,9 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let _logging_guard = match cipherrun::logging::initialize(&args) {
+    let _logging_guard = match logging_guard_or_exit(cipherrun::logging::initialize(&args)) {
         Ok(guard) => guard,
-        Err(error) => {
-            eprintln!(
-                "Failed to initialize worker logging (error_code={})",
-                error.observability_code()
-            );
-            return ExitCode::from(1);
-        }
+        Err(exit_code) => return exit_code,
     };
 
     let started = std::time::Instant::now();
@@ -42,5 +36,31 @@ async fn main() -> ExitCode {
             );
             ExitCode::from(1)
         }
+    }
+}
+
+fn logging_guard_or_exit(
+    result: cipherrun::Result<cipherrun::logging::LoggingGuard>,
+) -> Result<cipherrun::logging::LoggingGuard, ExitCode> {
+    result.map_err(|error| {
+        eprintln!(
+            "Failed to initialize worker logging (error_code={})",
+            error.observability_code()
+        );
+        ExitCode::from(1)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logging_initialization_failure_returns_nonzero_exit() {
+        let result = logging_guard_or_exit(Err(cipherrun::TlsError::Other(
+            "subscriber setup failed".to_string(),
+        )));
+
+        assert!(matches!(result, Err(code) if code == ExitCode::from(1)));
     }
 }
