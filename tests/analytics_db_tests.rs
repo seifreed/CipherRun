@@ -1276,6 +1276,40 @@ async fn test_change_tracker_detect_changes_and_report() {
 }
 
 #[tokio::test]
+async fn test_change_tracker_detect_changes_compares_history_and_needs_two_scans() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let (older_scan, newer_scan) = insert_default_scan_pair(&db, "change-history.test", now).await;
+    insert_protocol(&db, older_scan, "TLS 1.2", true, true).await;
+    insert_protocol(&db, newer_scan, "TLS 1.3", true, true).await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes("change-history.test", 443, 2)
+        .await
+        .expect("test assertion should succeed");
+
+    assert!(changes.len() >= 2);
+    assert!(
+        changes
+            .iter()
+            .any(|change| { change.description == "Protocol removed: TLS 1.2" })
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|change| { change.description == "Protocol added: TLS 1.3" })
+    );
+    assert!(
+        tracker
+            .detect_changes("change-history.test", 443, 1)
+            .await
+            .expect("one scan should produce no changes")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn test_change_tracker_rejects_invalid_certificate_row() {
     let db = setup_db().await;
     let now = Utc::now();
