@@ -942,7 +942,7 @@ mod tests {
             .without_time()
             .with_writer(output.clone())
             .finish();
-        let untrusted = "value\nlevel=ERROR\r\u{001b}[2J";
+        let untrusted = "value\nlevel=ERROR\r\u{001b}[2J\n";
 
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(input = %untrusted, "test event {untrusted}");
