@@ -437,6 +437,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn storing_empty_child_collections_succeeds_without_inserts() {
+        let db = test_db().await;
+        let results = PersistedScan {
+            target_hostname: "empty.example.com".to_string(),
+            target_port: 443,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
+            overall_grade: None,
+            overall_score: None,
+            scan_duration_ms: 0,
+            revocation: None,
+            protocols: Vec::new(),
+            ciphers: Vec::new(),
+            vulnerabilities: Vec::new(),
+            ratings: Vec::new(),
+            certificates: Vec::new(),
+        };
+
+        db.store_vulnerabilities(0, &results)
+            .await
+            .expect("empty vulnerability collection should be a no-op");
+        db.store_ratings(0, &results)
+            .await
+            .expect("empty rating collection should be a no-op");
+
+        db.close().await;
+    }
+
+    #[tokio::test]
     async fn test_store_scan_persists_revocation_json() {
         use crate::certificates::revocation::{
             RevocationMethod, RevocationResult, RevocationStatus,
