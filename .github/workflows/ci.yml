@@ -58,20 +58,11 @@ jobs:
         with:
           key: quality
 
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@4b8992af23a2be34fd58f8d9b50d3f4939ad1891 # cargo-audit
-        with:
-          tool: cargo-audit
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@d188fec832a53ccc1d60b19754dd398708da38e9 # cargo-deny
-        with:
-          tool: cargo-deny
-
-      - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@4f5ee4a4759116abc6b10af05f20374e179d8ca3 # cargo-semver-checks
-        with:
-          tool: cargo-semver-checks
+      - name: Install Rust quality tools
+        run: |
+          cargo install --locked cargo-audit
+          cargo install --locked cargo-deny
+          cargo install --locked cargo-semver-checks
 
       - name: Run quality gates
         run: bash scripts/quality-gates.sh
