@@ -261,6 +261,69 @@ mod tests {
     }
 
     #[cfg(feature = "otel")]
+    #[tokio::test]
+    async fn rejected_trace_parent_is_logged_without_header_value() {
+        use std::io::Write;
+        use std::sync::Mutex;
+        use tracing::instrument::WithSubscriber;
+
+        #[derive(Clone)]
+        struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+        struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for CapturedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+            type Writer = CapturedWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                CapturedWriter(self.0.clone())
+            }
+        }
+
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route("/trace", get(|| async { axum::http::StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(state, metrics));
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/trace")
+                    .header(
+                        "traceparent",
+                        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "trace_context.rejected");
+        assert!(!output.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    }
+
+    #[cfg(feature = "otel")]
     #[test]
     fn extracts_valid_w3c_traceparent_without_logging_header_values() {
         let headers = axum::http::HeaderMap::from_iter([(
