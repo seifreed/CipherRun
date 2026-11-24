@@ -937,6 +937,33 @@ mod tests {
     }
 
     #[test]
+    fn parser_rejects_truncated_extension_block_and_header() {
+        let mut truncated_block = client_hello_body();
+        truncated_block.extend_from_slice(&[0x00, 0x05, 0x00, 0x00, 0x00, 0x00]);
+        let error = ClientHelloCapture::parse(&tls_record(
+            HANDSHAKE_TYPE_CLIENT_HELLO,
+            truncated_block.len(),
+            &truncated_block,
+        ))
+        .expect_err("declared extension block beyond the record should fail");
+        assert!(error.to_string().contains("Data too short for extensions"));
+
+        let mut truncated_header = client_hello_body();
+        truncated_header.extend_from_slice(&[0x00, 0x03, 0x00, 0x00, 0x00]);
+        let error = ClientHelloCapture::parse(&tls_record(
+            HANDSHAKE_TYPE_CLIENT_HELLO,
+            truncated_header.len(),
+            &truncated_header,
+        ))
+        .expect_err("extension header shorter than four bytes should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Data too short for extension header")
+        );
+    }
+
+    #[test]
     fn test_parse_rejects_body_after_handshake_end() {
         let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![]);
         let mut bytes = capture.to_bytes().expect("ClientHello should serialize");
