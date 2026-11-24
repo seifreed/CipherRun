@@ -1756,6 +1756,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_executor_emits_startup_and_shutdown_events() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: ScanJob::new("unused.example".to_string(), ScanOptions::full(), None),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
+        let handle = tokio::spawn(
+            Arc::clone(&executor)
+                .start()
+                .with_subscriber(dispatch.clone()),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queue.dequeue_calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("executor should poll the empty queue");
+        executor.shutdown().with_subscriber(dispatch).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("executor should stop after shutdown")
+            .expect("executor task should join")
+            .unwrap();
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        for event_name in [
+            "scan_executor.started",
+            "scan_executor.shutdown_requested",
+            "scan_executor.draining",
+            "scan_executor.shutdown",
+        ] {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event["fields"]["event_name"] == event_name),
+                "missing {event_name}: {output}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn shutdown_while_waiting_for_a_slot_requeues_the_job() {
         let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
         job.mark_queued();
