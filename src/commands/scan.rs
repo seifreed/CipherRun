@@ -151,4 +151,45 @@ mod tests {
             CommandExit::DRIFT_FAILURE
         );
     }
+
+    #[test]
+    fn baseline_exit_without_a_path_succeeds() {
+        let command = ScanCommand::new(Args::default());
+
+        assert_eq!(
+            command
+                .baseline_exit(&crate::scanner::ScanResults::default())
+                .unwrap()
+                .code(),
+            0
+        );
+    }
+
+    #[test]
+    fn baseline_exit_for_unchanged_scan_succeeds_and_prints_diff() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("baseline.json");
+        let baseline = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        std::fs::write(&path, baseline.to_json(false).unwrap()).unwrap();
+        let command = ScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                baseline: Some(path),
+                quiet: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(command.baseline_exit(&baseline).unwrap().code(), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_target_before_scanning() {
+        let command = ScanCommand::new(Args::default());
+
+        assert!(command.execute().await.is_err());
+    }
 }
