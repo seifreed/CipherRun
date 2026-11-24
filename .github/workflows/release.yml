@@ -39,7 +39,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
         with:
           components: clippy, rustfmt
 
@@ -64,17 +64,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@4b8992af23a2be34fd58f8d9b50d3f4939ad1891 # cargo-audit
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-audit
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@d188fec832a53ccc1d60b19754dd398708da38e9 # cargo-deny
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-deny
 
       - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@4f5ee4a4759116abc6b10af05f20374e179d8ca3 # cargo-semver-checks
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-semver-checks
 
@@ -121,7 +121,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -190,7 +190,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
 
       - name: Publish to crates.io
         env:
@@ -257,7 +257,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
 
       - name: Download release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -282,7 +282,7 @@ jobs:
           shasum -a 256 dist/*.tar.gz dist/*.zip | sed 's#dist/##' > dist/SHA256SUMS
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@6b92ff5b2cce1787a99198f282dd8a26d1991449 # main
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
         with:
           path: .
           format: cyclonedx-json
@@ -319,14 +319,14 @@ jobs:
           scripts/sign-container.sh "${IMAGE%%:*}@${digest}"
 
       - name: Attest production container
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/seifreed/cipherrun
           subject-digest: ${{ steps.container.outputs.digest }}
           push-to-registry: true
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
 
