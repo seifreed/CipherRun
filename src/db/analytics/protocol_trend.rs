@@ -229,4 +229,15 @@ mod tests {
             vec!["TLSv1.0".to_string(), "sslv3".to_string()]
         );
     }
+
+    #[tokio::test]
+    async fn protocol_trend_rejects_an_empty_scan_range() {
+        let db = setup_db("empty-proto-trend").await;
+        let err = TrendAnalyzer::new(db)
+            .analyze_protocol_trend("empty.example.com", 443, 30)
+            .await
+            .expect_err("an empty scan range should be reported");
+
+        assert!(err.to_string().contains("No scans found"));
+    }
 }

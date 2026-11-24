@@ -156,4 +156,28 @@ mod tests {
 
         assert!(err.to_string().contains("Invalid rating score"));
     }
+
+    #[tokio::test]
+    async fn rating_trend_rejects_an_empty_scan_range() {
+        let db = setup_db("empty-rating-trend").await;
+        let err = TrendAnalyzer::new(db)
+            .analyze_rating_trend("empty.example.com", 443, 30)
+            .await
+            .expect_err("an empty scan range should be reported");
+
+        assert!(err.to_string().contains("No scans found"));
+    }
+
+    #[tokio::test]
+    async fn rating_trend_rejects_scans_without_scores() {
+        let db = setup_db("missing-rating-score").await;
+        insert_scan(&db, "no-score.example.com", 443, Utc::now(), None, None).await;
+
+        let err = TrendAnalyzer::new(db)
+            .analyze_rating_trend("no-score.example.com", 443, 30)
+            .await
+            .expect_err("a range without scores should be reported");
+
+        assert!(err.to_string().contains("No rating scores found"));
+    }
 }
