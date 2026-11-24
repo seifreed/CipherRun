@@ -13,12 +13,12 @@ concurrency:
 jobs:
   python-sdk:
     name: Python SDK (${{ matrix.python-version }})
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Keep the active minimum covered alongside the newest active Python release.
-        python-version: ["3.12", "3.15"]
+        # Keep the active minimum covered alongside the newest stable Python 3 release.
+        python-version: ["3.12", "3.x"]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +43,7 @@ jobs:
 
   quality:
     name: Quality gates
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,7 +75,7 @@ jobs:
 
   rust-channels:
     name: Rust ${{ matrix.toolchain }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       matrix:
@@ -103,7 +103,7 @@ jobs:
 
   validation-lab:
     name: Differential TLS validation lab
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,7 +133,7 @@ jobs:
 
   external-vulnerable-fixture:
     name: External vulnerable TLS fixture
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,7 +160,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025-vs2026, macos-26]
+        os: [windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,11 +186,11 @@ jobs:
         run: cargo test --all --locked
 
   build-test-ubuntu:
-    name: build-test (ubuntu-26.04 + PostgreSQL 19.0)
-    runs-on: ubuntu-26.04
+    name: build-test (ubuntu-latest + PostgreSQL 19)
+    runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:19.0
+        image: postgres:19
         env:
           POSTGRES_DB: cipherrun
           POSTGRES_USER: cipherrun
@@ -215,7 +215,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ubuntu-26.04-postgres-19
+          key: ubuntu-latest-postgres-19
 
       - name: Build
         run: cargo build --all-targets --locked

@@ -48,7 +48,7 @@ Compliance reports are TLS posture checks mapped to selected technical controls.
 
 ### From Source
 
-Requires Rust 1.100 or newer. The Python SDK requires Python 3.12 or newer; CI tests the active minimum (3.12) and the newest active Python release (3.15), updating the matrix when `eol-cli` reports a newer active release. The build matrix pins current GitHub-hosted images: Ubuntu 26.04, Windows Server 2025 with Visual Studio 2026, and macOS 26.
+Requires Rust 1.100 or newer. The Python SDK requires Python 3.12 or newer; CI tests the active minimum (3.12) and follows the newest stable Python 3 release with `3.x`. Rust uses the `stable` channel. CI follows GitHub's `*-latest` runner aliases (currently Ubuntu 26.04, Windows Server 2025 with Visual Studio 2026, and macOS 26); release builds keep explicit OS baselines where compatibility requires them.
 
 ```bash
 git clone https://github.com/seifreed/cipherrun.git
@@ -102,8 +102,9 @@ The standalone PQC configuration scanners and roadmap are enabled by the
 
 The reduced feature matrix is checked in CI with `--no-default-features`,
 `monitoring`, `ct,pqc`, both database backends, and `--all-features` builds.
-Linux CI also runs PostgreSQL repository and coverage tests against PostgreSQL
-19.0, the newest active release reported by `eol-cli`.
+Linux CI also runs PostgreSQL repository and coverage tests against the latest
+PostgreSQL 19 image (`postgres:19`; currently 19.0), the newest active major
+reported by `eol-cli`. The image tag follows patch updates automatically.
 
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.
