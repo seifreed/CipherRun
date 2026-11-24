@@ -697,6 +697,18 @@ mod tests {
             event_name = "logging.initialize.child",
             "Child logger is ready"
         );
+        if mode == "reuse" {
+            let reused_args = crate::Args {
+                output: crate::cli::OutputArgs {
+                    logfile: Some(std::path::PathBuf::from("/")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let reused_guard = super::initialize(&reused_args)
+                .expect("an existing subscriber should be reused without opening a new file");
+            drop(reused_guard);
+        }
         drop(guard);
     }
 
@@ -737,6 +749,25 @@ mod tests {
         assert!(text_output.contains("format=\"text\""));
         assert!(text_output.contains("logging.subscriber.initialized"));
         assert!(text_output.contains("logging.initialize.child"));
+
+        let reused = run_child("reuse", "json");
+        assert!(reused.status.success(), "{:?}", reused);
+        let reused_output = format!(
+            "{}{}",
+            String::from_utf8(reused.stdout).unwrap(),
+            String::from_utf8(reused.stderr).unwrap()
+        );
+        assert!(reused_output.contains("logging.subscriber.initialized"));
+        assert!(reused_output.contains("logging.subscriber.reused"));
+        let reused_event = reused_output
+            .lines()
+            .find_map(|line| {
+                let event: serde_json::Value = serde_json::from_str(line).ok()?;
+                (event["fields"]["event_name"] == "logging.subscriber.reused").then_some(event)
+            })
+            .expect("subscriber reuse should emit a structured event");
+        assert_eq!(reused_event["fields"]["requested_file_destination"], true);
+        assert!(!reused_output.contains("logging.file_destination.failed"));
 
         let fallback = run_child("fallback", "json");
         assert!(fallback.status.success(), "{:?}", fallback);
