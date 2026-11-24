@@ -316,6 +316,54 @@ fn test_generate_mx_summary_without_grades() {
 }
 
 #[test]
+fn mx_summary_reports_certificate_state_and_only_confirmed_vulnerabilities() {
+    let mut invalid_chain = certificate_result(Some(CertificateInfo::default()));
+    invalid_chain.validation.valid = false;
+    let results = vec![
+        (
+            mx(10, "mx1.example.com"),
+            Ok(ScanResults {
+                certificate_chain: Some(certificate_result(Some(CertificateInfo::default()))),
+                vulnerabilities: vec![
+                    crate::vulnerabilities::VulnerabilityResult {
+                        vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                        vulnerable: true,
+                        inconclusive: false,
+                        details: "confirmed".to_string(),
+                        cve: None,
+                        cwe: None,
+                        severity: crate::vulnerabilities::Severity::High,
+                    },
+                    crate::vulnerabilities::VulnerabilityResult {
+                        vuln_type: crate::vulnerabilities::VulnerabilityType::POODLE,
+                        vulnerable: true,
+                        inconclusive: true,
+                        details: "inconclusive".to_string(),
+                        cve: None,
+                        cwe: None,
+                        severity: crate::vulnerabilities::Severity::High,
+                    },
+                ],
+                ..Default::default()
+            }),
+        ),
+        (
+            mx(20, "mx2.example.com"),
+            Ok(ScanResults {
+                certificate_chain: Some(invalid_chain),
+                ..Default::default()
+            }),
+        ),
+    ];
+
+    let summary = MxTester::generate_mx_summary(&results);
+
+    assert!(summary.contains("Cert:"));
+    assert!(summary.contains("Vulns: 1"));
+    assert!(summary.contains("Vulns: 0"));
+}
+
+#[test]
 fn test_generate_mx_summary_error_line() {
     let mx = mx(5, "mx.example.com");
     let results: Vec<(MxRecord, Result<ScanResults>)> =
