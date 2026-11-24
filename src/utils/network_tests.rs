@@ -263,6 +263,12 @@ fn test_canonical_target_brackets_ipv6() {
 }
 
 #[test]
+fn test_display_target_host_brackets_only_ipv6() {
+    assert_eq!(display_target_host("2001:db8::1"), "[2001:db8::1]");
+    assert_eq!(display_target_host("example.com"), "example.com");
+}
+
+#[test]
 fn test_canonical_target_strips_existing_brackets() {
     assert_eq!(canonical_target("[2001:db8::1]", 443), "[2001:db8::1]:443");
 }
