@@ -51,6 +51,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable, latest active Rust (eol-cli: 1.100.0)
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Rust cache
@@ -139,6 +140,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with:
+          toolchain: stable
 
       - name: Validate pinned vulnerable and patched implementations
         run: make external-fixture
@@ -165,6 +168,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
         with:
+          toolchain: stable
           components: clippy
 
       - name: Rust cache
@@ -205,6 +209,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
         with:
+          toolchain: stable
           components: clippy
 
       - name: Rust cache
