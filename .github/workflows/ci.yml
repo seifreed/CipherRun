@@ -191,11 +191,11 @@ jobs:
         run: cargo test --all --locked
 
   build-test-ubuntu:
-    name: build-test (ubuntu-26.04 + PostgreSQL 18.7)
+    name: build-test (ubuntu-26.04 + PostgreSQL 19.0)
     runs-on: ubuntu-26.04
     services:
       postgres:
-        image: postgres:18.7
+        image: postgres:19.0
         env:
           POSTGRES_DB: cipherrun
           POSTGRES_USER: cipherrun
@@ -219,7 +219,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          key: ubuntu-26.04-postgres-18
+          key: ubuntu-26.04-postgres-19
 
       - name: Build
         run: cargo build --all-targets --locked
