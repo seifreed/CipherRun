@@ -228,7 +228,7 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello WITHOUT renegotiation_info extension
-                let client_hello = client_hello::without_renegotiation_info()?;
+                let client_hello = client_hello::without_renegotiation_info();
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
@@ -307,7 +307,7 @@ impl<'a> RenegotiationTester<'a> {
         match self.starttls_connect(addr, DEFAULT_READ_TIMEOUT).await {
             Ok(mut stream) => {
                 // Send ClientHello
-                let client_hello = client_hello::with_renegotiation_info()?;
+                let client_hello = client_hello::with_renegotiation_info();
                 stream.write_all(&client_hello).await?;
 
                 // Read ServerHello as a complete TLS record before parsing.
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_with_renegotiation_info() {
-        let hello = client_hello::with_renegotiation_info().expect("ClientHello should build");
+        let hello = client_hello::with_renegotiation_info();
 
         assert!(hello.len() > 50);
         // Check for renegotiation_info extension (0xff01)
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_client_hello_record_length_matches() {
-        let hello = client_hello::with_renegotiation_info().expect("ClientHello should build");
+        let hello = client_hello::with_renegotiation_info();
         assert!(hello.len() > 10);
 
         let rec_len = bytes::read_u16_at(&hello, 3, "ClientHello record length").unwrap() as usize;
