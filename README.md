@@ -105,6 +105,8 @@ The reduced feature matrix is checked in CI with `--no-default-features`,
 Linux CI also runs PostgreSQL repository and coverage tests against the latest
 PostgreSQL image (`postgres:latest`; currently 19.0), matching the newest active
 release reported by `eol-cli` and following future major and patch updates.
+The same CI workflow runs weekly so moving Rust, Python, PostgreSQL, and runner
+aliases are revalidated even when the repository has no new commits.
 
 Database backends are explicit features: `db-sqlite` and `db-postgres` are
 enabled by default, and a disabled backend is rejected before opening a pool.
