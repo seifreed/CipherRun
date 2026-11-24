@@ -60,9 +60,9 @@ jobs:
 
       - name: Install Rust quality tools
         run: |
-          cargo install --locked cargo-audit
-          cargo install --locked cargo-deny
-          cargo install --locked cargo-semver-checks
+          cargo install --locked --force cargo-audit
+          cargo install --locked --force cargo-deny
+          cargo install --locked --force cargo-semver-checks
 
       - name: Run quality gates
         run: bash scripts/quality-gates.sh
