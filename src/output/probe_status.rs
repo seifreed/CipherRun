@@ -181,6 +181,8 @@ mod tests {
 
     #[test]
     fn test_probe_status_simplify_error_truncates_utf8_safely() {
+        assert_eq!(truncate_to_boundary("short error", 57), "short error");
+
         let long_error = "错误".repeat(40);
         let simplified = simplify_error(&long_error);
 
