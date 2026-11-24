@@ -278,6 +278,18 @@ mod tests {
     }
 
     #[test]
+    fn code_scanner_rejects_unsupported_file_types() {
+        let file = tempfile::Builder::new()
+            .suffix(".txt")
+            .tempfile()
+            .expect("create temp file");
+
+        let error = CodeScanner::scan(file.path()).expect_err("text files are not source input");
+
+        assert!(error.to_string().contains("not a supported source file"));
+    }
+
+    #[test]
     fn test_code_scanner_rejects_oversized_source_file_before_read() {
         let file = tempfile::Builder::new()
             .suffix(".rs")
