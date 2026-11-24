@@ -1136,7 +1136,21 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "# Domains\nexample.com\nexample.org:8443 5m")?;
 
-        daemon.load_domains(temp_file.path()).await?;
+        let output = Arc::new(StdMutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        daemon
+            .load_domains(temp_file.path())
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await?;
+
+        let output = String::from_utf8(output.lock().unwrap().clone())?;
+        let event: serde_json::Value = serde_json::from_str(output.lines().next().unwrap())?;
+        assert_eq!(event["fields"]["event_name"], "monitor.inventory.loaded");
+        assert_eq!(event["fields"]["domains"], 2);
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 2);
