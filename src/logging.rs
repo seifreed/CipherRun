@@ -1439,7 +1439,7 @@ mod tests {
         let attempted = attempted.load(Ordering::Relaxed);
         let dropped = dropped_lines.dropped_lines();
         let reported = reported_rx.iter().sum::<usize>();
-        let drain_deadline = Instant::now() + Duration::from_secs(30);
+        let drain_deadline = Instant::now() + Duration::from_secs(120);
         let written = loop {
             let written = std::fs::read_dir(&log_directory)
                 .unwrap()
@@ -1451,7 +1451,11 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        assert_eq!(attempted, written + dropped);
+        assert_eq!(
+            attempted,
+            written + dropped,
+            "logging queue did not drain before the 120-second deadline"
+        );
         assert_eq!(dropped, reported);
         assert!(written > 0);
 

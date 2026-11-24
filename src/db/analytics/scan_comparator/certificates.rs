@@ -354,6 +354,55 @@ mod tests {
         assert!(!both_missing.fingerprint_changed);
     }
 
+    #[tokio::test]
+    async fn sqlite_comparison_maps_invalid_certificate_field_types() {
+        let db = setup_db("scan-comparator-invalid-certificate-field").await;
+        let DatabasePool::Sqlite(pool) = db.pool() else {
+            panic!("test database should use SQLite");
+        };
+        for (index, (field, invalid_value)) in [
+            ("fingerprint_sha256", "X'00'"),
+            ("subject", "X'00'"),
+            ("issuer", "X'00'"),
+            ("not_before", "X'00'"),
+            ("not_after", "X'00'"),
+            ("is_ca", "X'00'"),
+            ("created_at", "X'00'"),
+            ("san_domains", "X'00'"),
+            ("key_usage", "X'00'"),
+            ("extended_key_usage", "X'00'"),
+            ("serial_number", "X'00'"),
+            ("signature_algorithm", "X'00'"),
+            ("public_key_algorithm", "X'00'"),
+            ("public_key_size", "X'00'"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let scan_id = insert_scan(&db, "example.test", 443, Utc::now(), None, None).await;
+            let fingerprint = format!("invalid-{field}-{index}");
+            insert_certificate(&db, scan_id, &fingerprint).await;
+            sqlx::query(&format!(
+                "UPDATE certificates SET {field} = {invalid_value} WHERE fingerprint_sha256 = ?"
+            ))
+            .bind(&fingerprint)
+            .execute(pool)
+            .await
+            .expect("test should store an invalid SQLite value");
+
+            let error = ScanComparator::new(db.clone())
+                .compare_certificates(scan_id, scan_id)
+                .await
+                .expect_err("invalid certificate field type should be rejected");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("Invalid certificate field {field}")),
+                "unexpected error for {field}: {error}"
+            );
+        }
+    }
+
     #[cfg(feature = "db-postgres")]
     #[tokio::test]
     async fn postgres_comparison_reads_leaf_certificates_and_maps_query_errors() {
