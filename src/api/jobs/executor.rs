@@ -1000,6 +1000,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn executor_start_stops_immediately_when_shutdown_is_requested() {
+        let executor = Arc::new(ScanExecutor::new(
+            Arc::new(super::super::InMemoryJobQueue::new(1)),
+            1,
+        ));
+        executor
+            .shutdown_tx
+            .send(true)
+            .expect("executor retains the shutdown receiver");
+
+        executor
+            .start()
+            .await
+            .expect("shutdown before startup should stop cleanly");
+    }
+
+    #[tokio::test]
     async fn scan_task_join_errors_have_static_diagnostic_codes() {
         let panic = tokio::spawn(async { panic!("test panic") })
             .await
