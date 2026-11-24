@@ -719,10 +719,34 @@ mod tests {
     use crate::monitor::detector::ChangeSeverity;
     use async_trait::async_trait;
     use std::io::Write;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::NamedTempFile;
     use tokio::sync::Mutex as TokioMutex;
     use tracing::instrument::WithSubscriber;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<StdMutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<StdMutex<Vec<u8>>>);
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
 
     #[derive(Clone, Default)]
     struct RecordingChannel {
@@ -801,6 +825,35 @@ mod tests {
         };
 
         assert!(err.to_string().contains("max_concurrent_scans"));
+    }
+
+    #[tokio::test]
+    async fn test_alert_manager_initialization_failure_is_logged_safely() {
+        let output = CapturedOutput(Arc::new(StdMutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+        let mut config = MonitorConfig::default();
+        config.monitor.deduplication.window_hours = u64::MAX;
+
+        let result = MonitorDaemon::new(config)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        assert!(result.is_err());
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "monitor.initialization.failed"
+        );
+        assert_eq!(event["fields"]["stage"], "alert_manager");
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(event["fields"]["error_code"].is_string());
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("18446744073709551615"));
     }
 
     #[tokio::test]
