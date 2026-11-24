@@ -458,4 +458,150 @@ mod tests {
 
         pool.close().await;
     }
+
+    #[tokio::test]
+    async fn sqlite_migration_runner_orders_skips_down_and_records_success() {
+        let pool = sqlite_pool().await;
+        let directory = tempfile::tempdir().expect("migration directory should be created");
+        std::fs::write(
+            directory.path().join("20260101_002_add_value.sql"),
+            "ALTER TABLE migration_records ADD COLUMN value TEXT;",
+        )
+        .expect("second migration should be written");
+        std::fs::write(
+            directory.path().join("20260101_002_add_value.down.sql"),
+            "ALTER TABLE migration_records DROP COLUMN value;",
+        )
+        .expect("second down migration should be written");
+        std::fs::write(
+            directory.path().join("20260101_001_create_table.sql"),
+            "CREATE TABLE migration_records (id INTEGER PRIMARY KEY);",
+        )
+        .expect("first migration should be written");
+        std::fs::write(
+            directory.path().join("20260101_001_create_table.down.sql"),
+            "DROP TABLE migration_records;",
+        )
+        .expect("down migration should be written");
+
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        run_sqlite_migrations_manual(sqlite_pool, directory.path())
+            .await
+            .expect("ordered migrations should succeed");
+        run_sqlite_migrations_manual(sqlite_pool, directory.path())
+            .await
+            .expect("applied migrations should be skipped");
+
+        let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(sqlite_pool)
+            .await
+            .expect("migration records should be queryable");
+        assert_eq!(applied, 2);
+        let columns = sqlx::query("PRAGMA table_info(migration_records)")
+            .fetch_all(sqlite_pool)
+            .await
+            .expect("migration table should exist");
+        assert!(
+            columns
+                .iter()
+                .any(|row| { row.try_get::<String, _>("name").ok().as_deref() == Some("value") })
+        );
+
+        revert_sqlite_migration_manual(sqlite_pool, directory.path())
+            .await
+            .expect("down migration should run");
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(sqlite_pool)
+            .await
+            .expect("remaining migration records should be queryable");
+        assert_eq!(remaining, 1);
+        let columns = sqlx::query("PRAGMA table_info(migration_records)")
+            .fetch_all(sqlite_pool)
+            .await
+            .expect("migration table should remain");
+        assert!(
+            !columns
+                .iter()
+                .any(|row| { row.try_get::<String, _>("name").ok().as_deref() == Some("value") })
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_migration_runner_reports_invalid_paths_names_versions_and_sql() {
+        let pool = sqlite_pool().await;
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        let missing = tempfile::tempdir().expect("temporary parent should exist");
+        let missing_path = missing.path().join("missing");
+        let error = run_sqlite_migrations_manual(sqlite_pool, &missing_path)
+            .await
+            .expect_err("missing migration directory should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read migrations directory")
+        );
+
+        let invalid_name = tempfile::tempdir().expect("migration directory should exist");
+        std::fs::write(invalid_name.path().join("invalid.sql"), "SELECT 1;")
+            .expect("invalid migration should be written");
+        let error = run_sqlite_migrations_manual(sqlite_pool, invalid_name.path())
+            .await
+            .expect_err("non-numeric migration name should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("does not start with a numeric version")
+        );
+
+        let invalid_version = tempfile::tempdir().expect("migration directory should exist");
+        std::fs::write(
+            invalid_version
+                .path()
+                .join("999999999999999999999999_create.sql"),
+            "SELECT 1;",
+        )
+        .expect("overflowing migration should be written");
+        let error = run_sqlite_migrations_manual(sqlite_pool, invalid_version.path())
+            .await
+            .expect_err("out-of-range migration version should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse migration version")
+        );
+
+        let invalid_sql = tempfile::tempdir().expect("migration directory should exist");
+        std::fs::write(
+            invalid_sql.path().join("20260101_broken.sql"),
+            "CREATE TABL;",
+        )
+        .expect("invalid SQL migration should be written");
+        let error = run_sqlite_migrations_manual(sqlite_pool, invalid_sql.path())
+            .await
+            .expect_err("invalid migration SQL should fail");
+        assert!(error.to_string().contains("Failed to execute migration"));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_migration_revert_requires_an_applied_migration() {
+        let pool = sqlite_pool().await;
+        let directory = tempfile::tempdir().expect("migration directory should be created");
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        run_sqlite_migrations_manual(sqlite_pool, directory.path())
+            .await
+            .expect("empty migration directory should initialize tracking");
+        let error = revert_sqlite_migration_manual(sqlite_pool, directory.path())
+            .await
+            .expect_err("empty migration history should not revert");
+        assert!(error.to_string().contains("No migrations to revert"));
+        pool.close().await;
+    }
 }
