@@ -1159,6 +1159,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closed_scan_semaphore_logs_skip_and_completes_cycle() {
+        let daemon = MonitorDaemon::new(MonitorConfig::default())
+            .await
+            .expect("daemon should initialize");
+        daemon
+            .add_domain(MonitoredDomain::new("example.com".to_string(), 443))
+            .await
+            .expect("inventory should accept the configured domain");
+        daemon.scan_semaphore.close();
+
+        let output = Arc::new(StdMutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        daemon
+            .run_scan_cycle()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .expect("a closed scan semaphore should skip work without failing the cycle");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "monitor.scan.skipped"
+                && event["fields"]["error_type"] == "semaphore_closed"
+                && event["fields"]["outcome"] == "skipped"
+        }));
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "monitor.scan_cycle.completed"
+                && event["fields"]["outcome"] == "complete"
+        }));
+        assert_eq!(daemon.stats().await.scheduled_scans, 1);
+    }
+
+    #[tokio::test]
     async fn test_scan_cycle_releases_invalid_domain_for_a_future_scan() {
         let daemon = MonitorDaemon::new(MonitorConfig::default())
             .await
