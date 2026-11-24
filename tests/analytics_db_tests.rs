@@ -1715,6 +1715,22 @@ async fn test_change_tracker_report_is_deterministic() {
             current_value: Some("disabled".to_string()),
             timestamp,
         },
+        ChangeEvent {
+            change_type: ChangeType::Certificate,
+            severity: ChangeSeverity::Critical,
+            description: "Certificate replaced".to_string(),
+            previous_value: Some("old certificate".to_string()),
+            current_value: None,
+            timestamp,
+        },
+        ChangeEvent {
+            change_type: ChangeType::Vulnerability,
+            severity: ChangeSeverity::Info,
+            description: "Vulnerability added".to_string(),
+            previous_value: None,
+            current_value: Some("new finding".to_string()),
+            timestamp,
+        },
     ];
 
     let mut reversed = changes.clone();
@@ -1724,6 +1740,12 @@ async fn test_change_tracker_report_is_deterministic() {
         tracker.generate_change_report(&changes),
         tracker.generate_change_report(&reversed)
     );
+    let report = tracker.generate_change_report(&changes);
+    assert!(report.contains("[CRITICAL]"));
+    assert!(report.contains("[INFO]"));
+    assert!(report.contains("Previous: old certificate"));
+    assert!(report.contains("Current:  new finding"));
+    assert_eq!(tracker.generate_change_report(&[]), "No changes detected.");
 }
 
 #[tokio::test]
