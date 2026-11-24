@@ -133,6 +133,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_policy_check_with_defaults_maps_invalid_input_to_bad_request() {
+        let error = run_policy_check_with_defaults(&stub_policy(), stub_request())
+            .await
+            .expect_err("default scanner should reject an empty target");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
     async fn run_policy_check_maps_unexpected_scanner_errors_to_internal() {
         struct UnexpectedFailureScanner;
 
