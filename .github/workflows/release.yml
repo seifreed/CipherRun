@@ -105,7 +105,7 @@ jobs:
             # review when the minimum supported Linux baseline changes.
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
           - target: x86_64-pc-windows-msvc
             runner: windows-2025-vs2026
           - target: aarch64-pc-windows-msvc

@@ -124,6 +124,8 @@ cargo install cipherrun
 Pushing a tag matching the package version, such as `v0.5.0`, runs the release
 workflow. It builds platform packages for Linux, Windows, and macOS on x64 and
 ARM64, together with SHA-256 checksums, package-manager manifests, and an SBOM.
+The x86_64 Linux artifact is built on Ubuntu 24.04 to retain its glibc baseline;
+the ARM64 Linux artifact uses the current Ubuntu 26.04 ARM runner.
 The workflow requires the repository Actions secret `CARGO_REGISTRY_TOKEN` for
 crates.io publication. The production container and provenance attestations are
 separate release outputs and must be verified on the individual GitHub release
