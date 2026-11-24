@@ -297,6 +297,20 @@ mod tests {
         assert!(CodeScanner::scan(&missing).is_err());
     }
 
+    #[test]
+    fn code_scanner_ignores_a_directory_that_is_no_longer_a_directory() {
+        let root = tempfile::tempdir().expect("create root directory");
+        let file = root.path().join("source.rs");
+        std::fs::write(&file, "let digest = MD5::new();").expect("write source file");
+        let mut findings = Vec::new();
+        let mut count = 0;
+
+        scan_dir(&file, &mut findings, &mut count).expect("non-directory should be ignored");
+
+        assert!(findings.is_empty());
+        assert_eq!(count, 0);
+    }
+
     #[cfg(unix)]
     #[test]
     fn code_scanner_propagates_unreadable_directory_errors() {
