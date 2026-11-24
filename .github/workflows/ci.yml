@@ -243,7 +243,7 @@ jobs:
           OTEL_SERVICE_NAME: cipherrun-coverage
           OTEL_RESOURCE_ATTRIBUTES: service.name=cipherrun-sdk-test
           RUST_TEST_THREADS: "1"
-        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 88.1 --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 88.2 --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v5
