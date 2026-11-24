@@ -14,13 +14,8 @@ fn packet_header(length: u32, sequence: u8) -> [u8; 4] {
 }
 
 /// MySQL STARTTLS negotiator
+#[derive(Default)]
 pub struct MysqlNegotiator;
-
-impl Default for MysqlNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl MysqlNegotiator {
     pub fn new() -> Self {

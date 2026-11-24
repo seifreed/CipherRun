@@ -25,6 +25,7 @@ const CONFIG: TextProtocolConfig = TextProtocolConfig {
 };
 
 /// POP3 STARTTLS negotiator
+#[derive(Default)]
 pub struct Pop3Negotiator;
 
 impl Pop3Negotiator {
@@ -45,12 +46,6 @@ impl StarttlsNegotiator for Pop3Negotiator {
 
     fn expected_greeting(&self) -> Option<&str> {
         Some("+OK")
-    }
-}
-
-impl Default for Pop3Negotiator {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

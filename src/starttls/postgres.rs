@@ -7,13 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// PostgreSQL STARTTLS negotiator
+#[derive(Default)]
 pub struct PostgresNegotiator;
-
-impl Default for PostgresNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl PostgresNegotiator {
     pub fn new() -> Self {

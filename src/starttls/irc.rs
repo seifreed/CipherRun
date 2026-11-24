@@ -9,13 +9,8 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 /// IRC STARTTLS negotiator
+#[derive(Default)]
 pub struct IrcNegotiator;
-
-impl Default for IrcNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl IrcNegotiator {
     pub fn new() -> Self {
@@ -164,13 +159,8 @@ fn has_irc_capability(response: &str, capability: &str) -> bool {
 
 /// IRCS is IRC with implicit TLS (not STARTTLS)
 /// This is just a marker implementation
+#[derive(Default)]
 pub struct IrcsNegotiator;
-
-impl Default for IrcsNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl IrcsNegotiator {
     pub fn new() -> Self {

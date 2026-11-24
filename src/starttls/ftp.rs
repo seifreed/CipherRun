@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncWriteExt, BufReader};
 
 /// FTP STARTTLS negotiator
+#[derive(Default)]
 pub struct FtpNegotiator;
 
 impl FtpNegotiator {
@@ -67,12 +68,6 @@ impl StarttlsNegotiator for FtpNegotiator {
 
     fn expected_greeting(&self) -> Option<&str> {
         Some("220")
-    }
-}
-
-impl Default for FtpNegotiator {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

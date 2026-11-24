@@ -7,13 +7,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// LDAP STARTTLS negotiator
+#[derive(Default)]
 pub struct LdapNegotiator;
-
-impl Default for LdapNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl LdapNegotiator {
     pub fn new() -> Self {

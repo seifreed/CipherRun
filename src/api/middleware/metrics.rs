@@ -278,4 +278,38 @@ mod tests {
         );
         assert_eq!(span_context.span_id().to_string(), "00f067aa0ba902b7");
     }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn header_extractor_rejects_non_utf8_values_and_exposes_names_only() {
+        let headers = axum::http::HeaderMap::from_iter([
+            (
+                axum::http::header::HeaderName::from_static("traceparent"),
+                axum::http::HeaderValue::from_static(
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                ),
+            ),
+            (
+                axum::http::header::HeaderName::from_static("x-untrusted"),
+                axum::http::HeaderValue::from_bytes(&[0xff]).unwrap(),
+            ),
+        ]);
+        let extractor = super::HeaderExtractor(&headers);
+
+        assert_eq!(
+            opentelemetry::propagation::Extractor::get(&extractor, "traceparent"),
+            Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+        );
+        assert_eq!(
+            opentelemetry::propagation::Extractor::get(&extractor, "x-untrusted"),
+            None
+        );
+        assert_eq!(
+            opentelemetry::propagation::Extractor::get(&extractor, "missing"),
+            None
+        );
+        let keys = opentelemetry::propagation::Extractor::keys(&extractor);
+        assert!(keys.contains(&"traceparent"));
+        assert!(keys.contains(&"x-untrusted"));
+    }
 }

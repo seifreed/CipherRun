@@ -8,13 +8,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// Telnet STARTTLS negotiator
+#[derive(Default)]
 pub struct TelnetNegotiator;
-
-impl Default for TelnetNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl TelnetNegotiator {
     pub fn new() -> Self {

@@ -25,6 +25,7 @@ const CONFIG: TextProtocolConfig = TextProtocolConfig {
 };
 
 /// IMAP STARTTLS negotiator
+#[derive(Default)]
 pub struct ImapNegotiator;
 
 impl ImapNegotiator {
@@ -45,12 +46,6 @@ impl StarttlsNegotiator for ImapNegotiator {
 
     fn expected_greeting(&self) -> Option<&str> {
         Some("* OK")
-    }
-}
-
-impl Default for ImapNegotiator {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

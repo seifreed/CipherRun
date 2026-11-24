@@ -27,13 +27,8 @@ const CONFIG: TextProtocolConfig = TextProtocolConfig {
 };
 
 /// NNTP STARTTLS negotiator
+#[derive(Default)]
 pub struct NntpNegotiator;
-
-impl Default for NntpNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl NntpNegotiator {
     pub fn new() -> Self {
