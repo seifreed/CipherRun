@@ -815,6 +815,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_alerts_reports_each_channel_result() {
+        let mut daemon = MonitorDaemon::new(MonitorConfig::default())
+            .await
+            .expect("daemon should initialize");
+        let alerts = Arc::get_mut(&mut daemon.alert_manager).expect("manager should be unique");
+        alerts.add_channel(Box::new(RecordingChannel::default()));
+        alerts.add_channel(Box::new(FailingChannel));
+
+        let results = daemon.test_alerts().await;
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "recording");
+        assert!(results[0].1.is_ok());
+        assert_eq!(results[1].0, "failing");
+        assert!(results[1].1.is_err());
+    }
+
+    #[tokio::test]
     async fn test_daemon_rejects_invalid_direct_config() {
         let mut config = MonitorConfig::default();
         config.monitor.max_concurrent_scans = 0;
