@@ -386,6 +386,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn child_insert_failures_keep_operation_context() {
+        use crate::application::persistence::{PersistedRating, PersistedVulnerability};
+
+        let db = test_db().await;
+        let results = PersistedScan {
+            target_hostname: "example.com".to_string(),
+            target_port: 443,
+            principal_id: None,
+            tenant_id: None,
+            created_by_key_id: None,
+            overall_grade: None,
+            overall_score: None,
+            scan_duration_ms: 0,
+            revocation: None,
+            protocols: Vec::new(),
+            ciphers: Vec::new(),
+            vulnerabilities: vec![PersistedVulnerability {
+                vulnerability_type: "test".to_string(),
+                severity: "low".to_string(),
+                description: None,
+                cve_id: None,
+            }],
+            ratings: vec![PersistedRating {
+                category: "protocol".to_string(),
+                score: 0,
+                grade: None,
+                rationale: None,
+            }],
+            certificates: Vec::new(),
+        };
+
+        let vulnerability_error = db
+            .store_vulnerabilities(0, &results)
+            .await
+            .expect_err("missing parent scan must reject vulnerability insert");
+        assert!(
+            vulnerability_error
+                .to_string()
+                .contains("Failed to insert vulnerability")
+        );
+
+        let rating_error = db
+            .store_ratings(0, &results)
+            .await
+            .expect_err("missing parent scan must reject rating insert");
+        assert!(rating_error.to_string().contains("Failed to insert rating"));
+
+        db.close().await;
+    }
+
+    #[tokio::test]
     async fn test_store_scan_persists_revocation_json() {
         use crate::certificates::revocation::{
             RevocationMethod, RevocationResult, RevocationStatus,
