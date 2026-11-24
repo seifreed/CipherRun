@@ -1778,24 +1778,25 @@ mod tests {
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
-        let handle = tokio::spawn(
+        let mut start = Box::pin(
             Arc::clone(&executor)
                 .start()
                 .with_subscriber(dispatch.clone()),
         );
+        let first_poll =
+            std::future::poll_fn(|context| std::task::Poll::Ready(start.as_mut().poll(context)))
+                .await;
+        assert!(first_poll.is_pending(), "executor should wait for work");
+        assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 1);
 
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while queue.dequeue_calls.load(Ordering::SeqCst) == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("executor should poll the empty queue");
-        executor.shutdown().with_subscriber(dispatch).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(1), handle)
+        executor
+            .shutdown()
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), start)
             .await
             .expect("executor should stop after shutdown")
-            .expect("executor task should join")
             .unwrap();
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
