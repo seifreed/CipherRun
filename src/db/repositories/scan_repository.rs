@@ -369,15 +369,16 @@ impl ScanRepository for ScanRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::config::DatabaseConfig;
     use crate::db::migrations::run_migrations;
+    use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn test_pool() -> DatabasePool {
-        let config = DatabaseConfig::sqlite(std::path::PathBuf::from(":memory:"));
-        let pool = DatabasePool::new(&config)
+    async fn test_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
             .await
             .expect("test assertion should succeed");
-        run_migrations(&pool)
+        run_migrations(&DatabasePool::Sqlite(pool.clone()))
             .await
             .expect("test assertion should succeed");
         pool
@@ -388,7 +389,7 @@ mod tests {
         let pool = test_pool().await;
 
         // Create repository
-        let repo = ScanRepositoryImpl::new(pool.clone());
+        let repo = ScanRepositoryImpl::new(DatabasePool::Sqlite(pool.clone()));
 
         // Create scan
         let scan = ScanRecord::new("example.com".to_string(), 443);
@@ -413,7 +414,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_repository_matches_hostname_case_insensitively() {
         let pool = test_pool().await;
-        let repo = ScanRepositoryImpl::new(pool.clone());
+        let repo = ScanRepositoryImpl::new(DatabasePool::Sqlite(pool.clone()));
 
         let scan = ScanRecord::new("EXAMPLE.COM".to_string(), 443);
         let scan_id = repo
@@ -437,12 +438,9 @@ mod tests {
     #[tokio::test]
     async fn scan_repository_maps_sqlite_failures_to_operation_errors() {
         let pool = test_pool().await;
-        let repo = ScanRepositoryImpl::new(pool.clone());
-        let DatabasePool::Sqlite(sqlite) = &pool else {
-            unreachable!("test pool is SQLite");
-        };
+        let repo = ScanRepositoryImpl::new(DatabasePool::Sqlite(pool.clone()));
         sqlx::query("DROP TABLE scans")
-            .execute(sqlite)
+            .execute(&pool)
             .await
             .expect("test should remove the scans table");
 
@@ -526,10 +524,7 @@ mod tests {
             .connect_with(options)
             .await
             .expect("test PostgreSQL schema should accept connections");
-        let pool = DatabasePool::Postgres(postgres);
-        let DatabasePool::Postgres(postgres) = &pool else {
-            unreachable!("test pool is PostgreSQL");
-        };
+        let pool = DatabasePool::Postgres(postgres.clone());
         sqlx::query(
             "CREATE TABLE scans (\
                 scan_id BIGSERIAL PRIMARY KEY, \
@@ -542,7 +537,7 @@ mod tests {
                 tenant_id TEXT, created_by_key_id TEXT\
             )",
         )
-        .execute(postgres)
+        .execute(&postgres)
         .await
         .expect("test scans table should be created");
         let repo = ScanRepositoryImpl::new(pool.clone());
@@ -595,10 +590,7 @@ mod tests {
         let scan = ScanRecord::new("example.com".to_string(), 443);
         let _ = repo.create_scan(&scan).await.unwrap();
         sqlx::query("DROP TABLE scans CASCADE")
-            .execute(match &pool {
-                DatabasePool::Postgres(pool) => pool,
-                DatabasePool::Sqlite(_) => unreachable!(),
-            })
+            .execute(&postgres)
             .await
             .expect("test should remove the scans table");
         assert!(
