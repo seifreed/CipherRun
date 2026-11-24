@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn logger_initializes_in_isolated_process_and_falls_back_on_invalid_file_path() {
-        let run_child = |mode| {
+        let run_child = |mode, format| {
             std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -710,13 +710,13 @@ mod tests {
                     "--nocapture",
                 ])
                 .env("CIPHERRUN_INITIALIZE_CHILD", mode)
-                .env("CIPHERRUN_LOG_FORMAT", "json")
+                .env("CIPHERRUN_LOG_FORMAT", format)
                 .env("RUST_LOG", "info")
                 .output()
                 .unwrap()
         };
 
-        let initialized = run_child("json");
+        let initialized = run_child("json", "json");
         assert!(initialized.status.success(), "{:?}", initialized);
         let initialized_output = format!(
             "{}{}",
@@ -726,7 +726,18 @@ mod tests {
         assert!(initialized_output.contains("logging.subscriber.initialized"));
         assert!(initialized_output.contains("logging.initialize.child"));
 
-        let fallback = run_child("fallback");
+        let text = run_child("text", "text");
+        assert!(text.status.success(), "{:?}", text);
+        let text_output = format!(
+            "{}{}",
+            String::from_utf8(text.stdout).unwrap(),
+            String::from_utf8(text.stderr).unwrap()
+        );
+        assert!(text_output.contains("Tracing subscriber initialized"));
+        assert!(text_output.contains("logging.subscriber.initialized"));
+        assert!(text_output.contains("logging.initialize.child"));
+
+        let fallback = run_child("fallback", "json");
         assert!(fallback.status.success(), "{:?}", fallback);
         let fallback_output = format!(
             "{}{}",
