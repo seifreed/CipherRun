@@ -1755,17 +1755,15 @@ mod tests {
         assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 0);
     }
 
-    #[tokio::test]
-    async fn empty_executor_emits_startup_and_shutdown_events() {
-        use tracing::instrument::WithSubscriber;
-
+    #[test]
+    fn empty_executor_emits_startup_and_shutdown_events() {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .json()
             .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
-        let dispatch = tracing::Dispatch::new(subscriber);
         let queue = Arc::new(GatedJobQueue {
             job: tokio::sync::Mutex::new(None),
             cancelled_job: ScanJob::new("unused.example".to_string(), ScanOptions::full(), None),
@@ -1778,26 +1776,28 @@ mod tests {
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
-        let mut start = Box::pin(
-            Arc::clone(&executor)
-                .start()
-                .with_subscriber(dispatch.clone()),
-        );
-        let first_poll =
-            std::future::poll_fn(|context| std::task::Poll::Ready(start.as_mut().poll(context)))
-                .await;
-        assert!(first_poll.is_pending(), "executor should wait for work");
-        assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 1);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
-        executor
-            .shutdown()
-            .with_subscriber(dispatch.clone())
-            .await
-            .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), start)
-            .await
-            .expect("executor should stop after shutdown")
-            .unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(async {
+                let mut start = Box::pin(Arc::clone(&executor).start());
+                let first_poll = std::future::poll_fn(|context| {
+                    std::task::Poll::Ready(start.as_mut().poll(context))
+                })
+                .await;
+                assert!(first_poll.is_pending(), "executor should wait for work");
+                assert_eq!(queue.dequeue_calls.load(Ordering::SeqCst), 1);
+
+                executor.shutdown().await.unwrap();
+                tokio::time::timeout(Duration::from_secs(1), start)
+                    .await
+                    .expect("executor should stop after shutdown")
+                    .unwrap();
+            });
+        });
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let events = output
