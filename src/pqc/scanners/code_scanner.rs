@@ -290,6 +290,46 @@ mod tests {
     }
 
     #[test]
+    fn code_scanner_propagates_missing_root_errors() {
+        let root = tempfile::tempdir().expect("create root directory");
+        let missing = root.path().join("missing.rs");
+
+        assert!(CodeScanner::scan(&missing).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_scanner_propagates_unreadable_directory_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("create root directory");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o000))
+            .expect("make directory unreadable");
+        let result = CodeScanner::scan(root.path());
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("restore directory permissions");
+
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_scanner_propagates_unreadable_source_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("create root directory");
+        let source = root.path().join("secret.rs");
+        std::fs::write(&source, "let digest = MD5::new();").expect("write source file");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
+            .expect("make source unreadable");
+        let result = CodeScanner::scan(&source);
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600))
+            .expect("restore source permissions");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn code_scanner_recurses_into_source_dirs_and_skips_vendor_dirs() {
         let root = tempfile::tempdir().expect("create root directory");
         let source_dir = root.path().join("src");
