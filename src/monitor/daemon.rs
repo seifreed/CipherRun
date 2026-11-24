@@ -1113,6 +1113,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ct_discovery_is_disabled_without_suffix_allowlist() {
+        let daemon = MonitorDaemon::new(MonitorConfig::default())
+            .await
+            .expect("daemon should initialize");
+        let entry = ct_entry(Some("example.com"), &[]);
+
+        crate::ct_logs::CtEntrySink::handle_entry(&daemon, &entry)
+            .await
+            .expect("disabled CT discovery should be a successful no-op");
+
+        assert_eq!(daemon.stats().await.total_domains, 0);
+    }
+
+    #[tokio::test]
     async fn test_load_domains_updates_stats() -> Result<()> {
         let config = MonitorConfig::default();
         let daemon = MonitorDaemon::new(config)
