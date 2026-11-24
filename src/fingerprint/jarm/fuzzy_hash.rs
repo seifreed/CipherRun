@@ -10,12 +10,11 @@ pub(super) fn raw_hash_to_fuzzy_hash(raw: &str) -> String {
 
     let handshakes: Vec<&str> = raw.split(',').collect();
     if handshakes.len() != JARM_PROBE_COUNT {
-        tracing::warn!(
-            event_name = "fingerprint.jarm.input.invalid",
-            expected_probe_count = JARM_PROBE_COUNT,
-            actual_probe_count = handshakes.len(),
-            "JARM input has an unexpected probe response count"
-        );
+        let event_name = "fingerprint.jarm.input.invalid";
+        let expected_probe_count = JARM_PROBE_COUNT;
+        let actual_probe_count = handshakes.len();
+        let message = "JARM input has an unexpected probe response count";
+        tracing::warn!(event_name, expected_probe_count, actual_probe_count, message = %message);
         return ZERO_HASH.to_string();
     }
 
@@ -225,6 +224,10 @@ mod tests {
         );
         assert_eq!(event["fields"]["expected_probe_count"], JARM_PROBE_COUNT);
         assert_eq!(event["fields"]["actual_probe_count"], 1);
+        assert_eq!(
+            event["fields"]["message"],
+            "JARM input has an unexpected probe response count"
+        );
 
         let mut probes = ["c02f|0303|h2|ext"; JARM_PROBE_COUNT];
         probes[4] = "c02f|0303|h2|ext|extra";
