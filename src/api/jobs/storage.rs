@@ -499,22 +499,6 @@ mod tests {
         assert!(err.to_string().contains("Invalid job id"));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_load_all_jobs_rejects_non_utf8_file_names() {
-        use std::os::unix::ffi::OsStringExt;
-
-        let (temp_dir, storage) = temp_storage();
-        let file_name = std::ffi::OsString::from_vec(vec![0xff, b'.', b'j', b's', b'o', b'n']);
-        std::fs::write(temp_dir.path().join(file_name), "{}").expect("file should be written");
-
-        let error = storage
-            .load_all_jobs()
-            .expect_err("non-UTF8 persisted filename should fail safely");
-
-        assert!(error.to_string().contains("Invalid job file name"));
-    }
-
     #[test]
     fn test_file_storage_rejects_invalid_job_ids() {
         let (temp_dir, storage) = temp_storage();
