@@ -27,10 +27,9 @@ pub struct ServerHelloCapture {
 }
 
 impl ServerHelloCapture {
-    fn cursor_position(cursor: &Cursor<&[u8]>, context: &str) -> Result<usize> {
-        usize::try_from(cursor.position()).map_err(|_| TlsError::ParseError {
-            message: format!("{context} position is too large"),
-        })
+    fn cursor_position(cursor: &Cursor<&[u8]>) -> usize {
+        // Reads stay within the slice, and the only explicit seek is to a validated offset.
+        cursor.position() as usize
     }
 
     /// Parse ServerHello from raw TLS record bytes
@@ -52,11 +51,8 @@ impl ServerHelloCapture {
 
         let content_type = record_header[0];
         let record_len = u16::from_be_bytes([record_header[3], record_header[4]]) as usize;
-        let record_end = 5usize
-            .checked_add(record_len)
-            .ok_or_else(|| TlsError::ParseError {
-                message: "ServerHello record length overflow".to_string(),
-            })?;
+        // The record length is a u16, so this addition fits all supported Rust targets.
+        let record_end = 5 + record_len;
         if record_end > data.len() {
             return Err(TlsError::ParseError {
                 message: "ServerHello record length exceeds available data".to_string(),
@@ -114,12 +110,8 @@ impl ServerHelloCapture {
         let handshake_len = ((handshake_header[1] as usize) << 16)
             | ((handshake_header[2] as usize) << 8)
             | handshake_header[3] as usize;
-        let handshake_end =
-            9usize
-                .checked_add(handshake_len)
-                .ok_or_else(|| TlsError::ParseError {
-                    message: "ServerHello handshake length overflow".to_string(),
-                })?;
+        // The handshake length is a 24-bit field and is bounded by the u16 record length.
+        let handshake_end = 9 + handshake_len;
         if handshake_end > record_end {
             return Err(TlsError::ParseError {
                 message: "ServerHello handshake length exceeds record length".to_string(),
@@ -130,11 +122,8 @@ impl ServerHelloCapture {
                 message: "ServerHello record contains trailing bytes after handshake".to_string(),
             });
         }
-        let data = data
-            .get(..handshake_end)
-            .ok_or_else(|| TlsError::ParseError {
-                message: "ServerHello handshake length exceeds available data".to_string(),
-            })?;
+        // handshake_end <= record_end <= data.len() was established above.
+        let data = &data[..handshake_end];
         cursor = Cursor::new(data);
         cursor.set_position(9);
 
@@ -195,7 +184,7 @@ impl ServerHelloCapture {
         let mut extensions = Vec::new();
 
         // Check if there are extensions (need at least 2 bytes for extensions length)
-        let position = Self::cursor_position(&cursor, "ServerHello")?;
+        let position = Self::cursor_position(&cursor);
         let remaining = data.len().saturating_sub(position);
         if remaining == 1 {
             return Err(TlsError::ParseError {
@@ -207,17 +196,10 @@ impl ServerHelloCapture {
             let mut ext_len_bytes = [0u8; 2];
             cursor
                 .read_exact(&mut ext_len_bytes)
-                .map_err(|e| TlsError::ParseError {
-                    message: format!("Failed to read extensions length: {}", e),
-                })?;
+                .expect("two extension-length bytes were checked above");
             let extensions_length = usize::from(u16::from_be_bytes(ext_len_bytes));
-            let ext_start = Self::cursor_position(&cursor, "Extensions")?;
-            let ext_end =
-                ext_start
-                    .checked_add(extensions_length)
-                    .ok_or_else(|| TlsError::ParseError {
-                        message: "Extensions length overflow".to_string(),
-                    })?;
+            let ext_start = Self::cursor_position(&cursor);
+            let ext_end = ext_start + extensions_length;
 
             if ext_end > data.len() {
                 return Err(TlsError::ParseError {
@@ -231,7 +213,7 @@ impl ServerHelloCapture {
             }
 
             if extensions_length > 0 {
-                while Self::cursor_position(&cursor, "Extension")? < ext_end {
+                while Self::cursor_position(&cursor) < ext_end {
                     // Parse extension type (2 bytes)
                     let mut ext_type_bytes = [0u8; 2];
                     cursor
@@ -251,24 +233,15 @@ impl ServerHelloCapture {
                     let ext_data_len = usize::from(u16::from_be_bytes(ext_data_len_bytes));
 
                     // Parse extension data
-                    let ext_data_end = Self::cursor_position(&cursor, "Extension data")?
-                        .checked_add(ext_data_len)
-                        .ok_or_else(|| TlsError::ParseError {
-                            message: "Extension data length overflow".to_string(),
-                        })?;
+                    let ext_data_start = Self::cursor_position(&cursor);
+                    let ext_data_end = ext_data_start + ext_data_len;
                     if ext_data_end > ext_end {
                         return Err(TlsError::ParseError {
                             message: "Failed to read extension data".to_string(),
                         });
                     }
-                    let mut ext_data = vec![0u8; ext_data_len];
-                    if ext_data_len > 0 {
-                        cursor
-                            .read_exact(&mut ext_data)
-                            .map_err(|e| TlsError::ParseError {
-                                message: format!("Failed to read extension data: {}", e),
-                            })?;
-                    }
+                    let ext_data = data[ext_data_start..ext_data_end].to_vec();
+                    cursor.set_position(ext_data_end as u64);
 
                     extensions.push(Extension {
                         extension_type: ext_type,
@@ -379,6 +352,32 @@ impl ServerHelloCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn record_with_fragment(content_type: u8, fragment: &[u8]) -> Vec<u8> {
+        let mut record = vec![content_type, 0x03, 0x03];
+        record.extend_from_slice(&(fragment.len() as u16).to_be_bytes());
+        record.extend_from_slice(fragment);
+        record
+    }
+
+    fn server_hello_body() -> Vec<u8> {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.push(0);
+        body.extend_from_slice(&[0x00, 0x2f, 0]);
+        body
+    }
+
+    fn server_hello_record(body: &[u8]) -> Vec<u8> {
+        let mut fragment = vec![0x02];
+        fragment.extend_from_slice(&[
+            ((body.len() >> 16) & 0xff) as u8,
+            ((body.len() >> 8) & 0xff) as u8,
+            (body.len() & 0xff) as u8,
+        ]);
+        fragment.extend_from_slice(body);
+        record_with_fragment(0x16, &fragment)
+    }
 
     #[test]
     fn test_parse_serverhello_basic() {
@@ -572,5 +571,224 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().unwrap().to_string();
         assert!(err.contains("Invalid content type"));
+    }
+
+    #[test]
+    fn parse_rejects_truncated_records_and_invalid_handshakes() {
+        for (data, expected) in [
+            (Vec::new(), "Failed to read record header"),
+            (
+                record_with_fragment(0x16, &[0x02, 0, 0]),
+                "Failed to read handshake header",
+            ),
+            (
+                record_with_fragment(0x16, &[0x01, 0, 0, 0]),
+                "Invalid handshake type",
+            ),
+            (
+                record_with_fragment(0x16, &[0x02, 0, 0, 1]),
+                "handshake length exceeds record length",
+            ),
+            (
+                record_with_fragment(0x16, &[0x02, 0, 0, 0, 0xff]),
+                "trailing bytes after handshake",
+            ),
+            (
+                record_with_fragment(0x15, &[]),
+                "TLS Alert received from server",
+            ),
+        ] {
+            let error = ServerHelloCapture::parse(&data).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{error}: expected {expected}"
+            );
+        }
+
+        let mut short_record = record_with_fragment(0x16, &[]);
+        short_record[3..5].copy_from_slice(&1u16.to_be_bytes());
+        assert!(
+            ServerHelloCapture::parse(&short_record)
+                .unwrap_err()
+                .to_string()
+                .contains("record length exceeds available data")
+        );
+    }
+
+    #[test]
+    fn parse_rejects_truncated_server_hello_fields_and_extensions() {
+        let mut body = server_hello_body();
+        for (truncated, expected) in [
+            (vec![0x03], "Failed to read version"),
+            (
+                {
+                    let mut bytes = vec![0x03, 0x03];
+                    bytes.extend_from_slice(&[0; 31]);
+                    bytes
+                },
+                "Failed to read random",
+            ),
+            (
+                {
+                    let mut bytes = vec![0x03, 0x03];
+                    bytes.extend_from_slice(&[0; 32]);
+                    bytes
+                },
+                "Failed to read session ID length",
+            ),
+            (
+                {
+                    let mut bytes = vec![0x03, 0x03];
+                    bytes.extend_from_slice(&[0; 32]);
+                    bytes.push(1);
+                    bytes
+                },
+                "Failed to read session ID",
+            ),
+            (body[..35].to_vec(), "Failed to read cipher suite"),
+            (body[..37].to_vec(), "Failed to read compression"),
+        ] {
+            let error = ServerHelloCapture::parse(&server_hello_record(&truncated)).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{error}: expected {expected}"
+            );
+        }
+
+        body.push(0);
+        let error = ServerHelloCapture::parse(&server_hello_record(&body)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("truncated before extensions length")
+        );
+
+        for (extensions, expected) in [
+            (vec![0, 4, 0, 0], "Extensions exceed ServerHello length"),
+            (vec![0, 0, 0], "extension block contains trailing bytes"),
+            (vec![0, 1, 0], "Failed to read extension type"),
+            (vec![0, 2, 0, 1], "Failed to read extension length"),
+            (vec![0, 5, 0, 1, 0, 2, 0], "Failed to read extension data"),
+        ] {
+            let mut body = server_hello_body();
+            body.extend_from_slice(&extensions);
+            let error = ServerHelloCapture::parse(&server_hello_record(&body)).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{error}: expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_accepts_an_explicit_empty_extension_block() {
+        let mut body = server_hello_body();
+        body.extend_from_slice(&[0, 0]);
+
+        let parsed = ServerHelloCapture::parse(&server_hello_record(&body)).unwrap();
+
+        assert!(parsed.extensions.is_empty());
+    }
+
+    #[test]
+    fn server_hello_serialization_round_trips_and_checks_encoded_lengths() {
+        let capture = ServerHelloCapture {
+            version: 0x0303,
+            random: [0x5a; 32],
+            session_id: vec![1, 2, 3],
+            cipher_suite: 0xc02f,
+            compression_method: 0,
+            extensions: vec![
+                Extension {
+                    extension_type: 0xff01,
+                    data: vec![0],
+                },
+                Extension {
+                    extension_type: 0x002b,
+                    data: vec![0x03, 0x04],
+                },
+            ],
+        };
+        let decoded =
+            ServerHelloCapture::parse(&server_hello_record(&capture.to_bytes().unwrap())).unwrap();
+        assert_eq!(decoded.version, capture.version);
+        assert_eq!(decoded.random, capture.random);
+        assert_eq!(decoded.session_id, capture.session_id);
+        assert_eq!(decoded.cipher_suite, capture.cipher_suite);
+        assert_eq!(decoded.compression_method, capture.compression_method);
+        assert_eq!(decoded.get_extension_ids(), vec![0xff01, 0x002b]);
+
+        let without_extensions = ServerHelloCapture {
+            extensions: Vec::new(),
+            ..capture.clone()
+        };
+        let decoded = ServerHelloCapture::parse(&server_hello_record(
+            &without_extensions.to_bytes().unwrap(),
+        ))
+        .unwrap();
+        assert!(decoded.extensions.is_empty());
+
+        let mut oversized_session = capture.clone();
+        oversized_session.session_id = vec![0; 256];
+        assert!(oversized_session.to_bytes().is_err());
+
+        let mut oversized_extension = capture.clone();
+        oversized_extension.extensions = vec![Extension {
+            extension_type: 1,
+            data: vec![0; usize::from(u16::MAX) + 1],
+        }];
+        assert!(oversized_extension.to_bytes().is_err());
+
+        let mut oversized_extension_block = capture;
+        oversized_extension_block.extensions = (0..16)
+            .map(|extension_type| Extension {
+                extension_type,
+                data: vec![0; 4096],
+            })
+            .collect();
+        assert!(oversized_extension_block.to_bytes().is_err());
+    }
+
+    #[test]
+    fn alert_descriptions_have_stable_names() {
+        for (code, name) in [
+            (0, "close_notify"),
+            (10, "unexpected_message"),
+            (20, "bad_record_mac"),
+            (21, "decryption_failed"),
+            (22, "record_overflow"),
+            (30, "decompression_failure"),
+            (40, "handshake_failure"),
+            (41, "no_certificate"),
+            (42, "bad_certificate"),
+            (43, "unsupported_certificate"),
+            (44, "certificate_revoked"),
+            (45, "certificate_expired"),
+            (46, "certificate_unknown"),
+            (47, "illegal_parameter"),
+            (48, "unknown_ca"),
+            (49, "access_denied"),
+            (50, "decode_error"),
+            (51, "decrypt_error"),
+            (60, "export_restriction"),
+            (70, "protocol_version"),
+            (71, "insufficient_security"),
+            (80, "internal_error"),
+            (86, "inappropriate_fallback"),
+            (90, "user_canceled"),
+            (100, "no_renegotiation"),
+            (109, "missing_extension"),
+            (110, "unsupported_extension"),
+            (111, "certificate_unobtainable"),
+            (112, "unrecognized_name"),
+            (113, "bad_certificate_status_response"),
+            (114, "bad_certificate_hash_value"),
+            (115, "unknown_psk_identity"),
+            (116, "certificate_required"),
+            (120, "no_application_protocol"),
+            (255, "unknown_alert"),
+        ] {
+            assert_eq!(ServerHelloCapture::get_alert_description(code), name);
+        }
     }
 }
