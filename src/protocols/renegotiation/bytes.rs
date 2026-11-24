@@ -15,15 +15,13 @@ pub(super) fn read_u8_at(data: &[u8], offset: usize, context: &str) -> Result<u8
 pub(super) fn read_u16_at(data: &[u8], offset: usize, context: &str) -> Result<u16> {
     let end = offset.checked_add(2).ok_or_else(|| parse_error(context))?;
     let bytes = data.get(offset..end).ok_or_else(|| parse_error(context))?;
-    let bytes: [u8; 2] = bytes.try_into().map_err(|_| parse_error(context))?;
-    Ok(u16::from_be_bytes(bytes))
+    Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
 }
 
 pub(super) fn read_u24_at(data: &[u8], offset: usize, context: &str) -> Result<usize> {
     let end = offset.checked_add(3).ok_or_else(|| parse_error(context))?;
     let bytes = data.get(offset..end).ok_or_else(|| parse_error(context))?;
-    let bytes: [u8; 3] = bytes.try_into().map_err(|_| parse_error(context))?;
-    let [high, mid, low] = bytes;
+    let [high, mid, low] = [bytes[0], bytes[1], bytes[2]];
     Ok(u32::from_be_bytes([0, high, mid, low]) as usize)
 }
 
