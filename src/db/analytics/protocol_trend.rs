@@ -26,32 +26,31 @@ impl TrendAnalyzer {
         let mut legacy_protocols = Vec::new();
 
         for scan in &scans {
-            if let Some(scan_id) = scan.scan_id {
-                let protocols = self.get_protocols(scan_id).await?;
+            let scan_id = Self::required_scan_id(scan)?;
+            let protocols = self.get_protocols(scan_id).await?;
 
-                let has_tls13 = protocols
-                    .iter()
-                    .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.3"));
-                let has_tls12 = protocols
-                    .iter()
-                    .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.2"));
+            let has_tls13 = protocols
+                .iter()
+                .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.3"));
+            let has_tls12 = protocols
+                .iter()
+                .any(|p| p.enabled && is_tls_version(&p.protocol_name, "1.2"));
 
-                tls13_adoption.push((scan.scan_timestamp, has_tls13));
-                tls12_usage.push((scan.scan_timestamp, has_tls12));
+            tls13_adoption.push((scan.scan_timestamp, has_tls13));
+            tls12_usage.push((scan.scan_timestamp, has_tls12));
 
-                let legacy: Vec<String> = protocols
-                    .iter()
-                    .filter(|p| {
-                        p.enabled
-                            && (is_ssl_protocol(&p.protocol_name)
-                                || is_tls_version(&p.protocol_name, "1.0")
-                                || is_tls_version(&p.protocol_name, "1.1"))
-                    })
-                    .map(|p| p.protocol_name.clone())
-                    .collect();
+            let legacy: Vec<String> = protocols
+                .iter()
+                .filter(|p| {
+                    p.enabled
+                        && (is_ssl_protocol(&p.protocol_name)
+                            || is_tls_version(&p.protocol_name, "1.0")
+                            || is_tls_version(&p.protocol_name, "1.1"))
+                })
+                .map(|p| p.protocol_name.clone())
+                .collect();
 
-                legacy_protocols.push((scan.scan_timestamp, legacy));
-            }
+            legacy_protocols.push((scan.scan_timestamp, legacy));
         }
 
         let summary =

@@ -25,11 +25,7 @@ impl TrendAnalyzer {
         let mut strong_counts = Vec::new();
 
         for scan in &scans {
-            let scan_id = scan.scan_id.ok_or_else(|| {
-                crate::TlsError::DatabaseError(
-                    "Scan history row is missing its scan ID".to_string(),
-                )
-            })?;
+            let scan_id = Self::required_scan_id(scan)?;
             let ciphers = self.get_ciphers(scan_id).await?;
 
             let weak = ciphers

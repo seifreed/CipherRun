@@ -82,6 +82,12 @@ impl TrendAnalyzer {
         self.db.get_scan_history_since(hostname, port, cutoff).await
     }
 
+    pub(super) fn required_scan_id(scan: &crate::db::ScanRecord) -> crate::Result<i64> {
+        scan.scan_id.ok_or_else(|| {
+            crate::TlsError::DatabaseError("Scan history row is missing its scan ID".to_string())
+        })
+    }
+
     /// Generate comprehensive trend report
     #[tracing::instrument(
         level = "debug",

@@ -13,6 +13,21 @@ fn test_cutoff_days_ago_rejects_invalid_days() {
 }
 
 #[test]
+fn required_scan_id_validates_persisted_history_rows() {
+    let unpersisted = crate::db::ScanRecord::new("example.com".to_string(), 443);
+    assert!(
+        TrendAnalyzer::required_scan_id(&unpersisted)
+            .unwrap_err()
+            .to_string()
+            .contains("missing its scan ID")
+    );
+
+    let mut persisted = unpersisted;
+    persisted.scan_id = Some(42);
+    assert_eq!(TrendAnalyzer::required_scan_id(&persisted).unwrap(), 42);
+}
+
+#[test]
 fn test_calculate_mean() {
     let values = vec![80, 85, 90, 95, 100];
     let mean = TrendAnalyzer::calculate_mean(&values);
