@@ -319,6 +319,16 @@ jq -e '.vulnerabilities[] | select(.finding_id == "CR-TLS-LOGJAM-001" and .statu
 jq -e 'all(.vulnerabilities[]; ((.finding_id == "CR-TLS-RC4-001" or .finding_id == "CR-TLS-NULL-CIPHER-001" or .finding_id == "CR-TLS-FREAK-001" or .finding_id == "CR-TLS-LOGJAM-001") | not) or (.status != "confirmed_vulnerable"))' \
     "$results/modern-tls-weak-ciphers.cipherrun.json" >/dev/null
 
+# Pin the client protocol because current OpenSSL defaults do not negotiate TLS 1.0/1.1.
+echo | openssl s_client -connect legacy-tls:443 -tls1 -cipher 'AES128-SHA:@SECLEVEL=0' \
+    >"$results/legacy-tls.openssl.txt" 2>&1 || true
+echo | openssl s_client -connect legacy11-tls:443 -tls1_1 -cipher 'AES128-SHA:@SECLEVEL=0' \
+    >"$results/legacy11-tls.openssl.txt" 2>&1 || true
+echo | openssl s_client -connect weak-tls:443 -tls1_2 \
+    >"$results/weak-tls.openssl.txt" 2>&1 || true
+echo | openssl s_client -connect modern-tls:443 -tls1_3 \
+    >"$results/modern-tls.openssl.txt" 2>&1 || true
+
 awk '$1 == "TLSv1.0" && $2 == "enabled" { found=1 } END { exit !found }' \
     "$results/legacy-tls.sslscan.txt"
 awk '$1 == "TLSv1.1" && $2 == "enabled" { found=1 } END { exit !found }' \

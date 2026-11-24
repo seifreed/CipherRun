@@ -24,13 +24,8 @@ const CONFIG: TextProtocolConfig = TextProtocolConfig {
 };
 
 /// Sieve STARTTLS negotiator
+#[derive(Default)]
 pub struct SieveNegotiator;
-
-impl Default for SieveNegotiator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl SieveNegotiator {
     pub fn new() -> Self {
