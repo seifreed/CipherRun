@@ -361,6 +361,7 @@ mod tests {
 
     #[test]
     fn test_irc_reply_numeric_matches_positional_field_only() {
+        assert!(!irc_reply_is_numeric("", "670"));
         // Success: 670 is the reply numeric after the :source prefix.
         assert!(irc_reply_is_numeric(
             ":irc.example.net 670 nick :Proceed with TLS\r\n",
@@ -380,6 +381,7 @@ mod tests {
 
     #[test]
     fn test_final_cap_ls_response_matches_positional_command_only() {
+        assert!(!is_final_cap_ls_response(""));
         assert!(is_final_cap_ls_response("CAP * LS :multi-prefix tls\r\n"));
         assert!(is_final_cap_ls_response(
             ":irc.example.net CAP * LS :multi-prefix tls\r\n"
@@ -388,6 +390,7 @@ mod tests {
         assert!(!is_final_cap_ls_response(
             ":irc.example.net NOTICE * :cap docs include ls examples\r\n"
         ));
+        assert!(is_final_cap_ls_response("CAP * LS"));
     }
 
     #[tokio::test]
