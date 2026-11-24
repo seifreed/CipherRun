@@ -1086,6 +1086,161 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "db-postgres")]
+    async fn postgres_operations_cover_queries_and_typed_bindings() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test schema should accept connections");
+        let database = DatabasePool::Postgres(pool.clone());
+        sqlx::query("CREATE TABLE items (id BIGSERIAL PRIMARY KEY, name TEXT UNIQUE)")
+            .execute(&pool)
+            .await
+            .expect("test items table should be created");
+        sqlx::query(
+            "CREATE TABLE scans (target_hostname TEXT, scan_timestamp TIMESTAMPTZ, principal_id TEXT, tenant_id TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scans table should be created");
+
+        assert_eq!(database.db_type(), DatabaseType::Postgres);
+        database
+            .health_check()
+            .await
+            .expect("health check should pass");
+        let first_id = database
+            .execute_insert_returning(
+                "INSERT INTO items (name) VALUES ($1) RETURNING id",
+                vec![BindValue::String("first".to_string())],
+            )
+            .await
+            .expect("returning insert should succeed");
+        assert_eq!(first_id, 1);
+        assert_eq!(
+            database
+                .execute_insert_on_conflict_returning(
+                    "INSERT INTO items (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id",
+                    vec![BindValue::String("second".to_string())],
+                )
+                .await
+                .expect("new conflict-safe insert should succeed"),
+            Some(2)
+        );
+        assert_eq!(
+            database
+                .execute_insert_on_conflict_returning(
+                    "INSERT INTO items (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id",
+                    vec![BindValue::String("second".to_string())],
+                )
+                .await
+                .expect("duplicate conflict-safe insert should succeed"),
+            None
+        );
+        assert_eq!(
+            database
+                .fetch_optional_id(
+                    "SELECT id FROM items WHERE name = $1",
+                    vec![BindValue::String("first".to_string())],
+                )
+                .await
+                .expect("existing ID query should succeed"),
+            Some(1)
+        );
+        assert_eq!(
+            database
+                .fetch_optional_id(
+                    "SELECT id FROM items WHERE name = $1",
+                    vec![BindValue::String("missing".to_string())],
+                )
+                .await
+                .expect("missing ID query should succeed"),
+            None
+        );
+
+        let now = chrono::Utc::now();
+        for (hostname, principal, tenant) in [
+            ("owned.example", "alice", Some("tenant-a")),
+            ("owned.example", "alice", Some("tenant-a")),
+            ("public.example", "bob", None),
+        ] {
+            sqlx::query(
+                "INSERT INTO scans (target_hostname, scan_timestamp, principal_id, tenant_id) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(hostname)
+            .bind(now)
+            .bind(principal)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .expect("scan row should insert");
+        }
+        let global = database
+            .get_top_domains(10)
+            .await
+            .expect("global top domains query should succeed");
+        assert_eq!(global.len(), 2);
+        assert_eq!((global[0].0.as_str(), global[0].1), ("owned.example", 2));
+        let owned = database
+            .get_top_domains_for_owner(10, "alice", Some("tenant-a"))
+            .await
+            .expect("owned top domains query should succeed");
+        assert_eq!(owned.len(), 1);
+        assert_eq!((owned[0].0.as_str(), owned[0].1), ("owned.example", 2));
+        let tenantless = database
+            .get_top_domains_for_owner(10, "bob", None)
+            .await
+            .expect("tenantless owner query should succeed");
+        assert_eq!(tenantless[0].0, "public.example");
+
+        database
+            .execute(
+                "SELECT $1::BIGINT, $2::INTEGER, $3::SMALLINT, $4::TEXT, $5::BOOLEAN, $6::INTEGER, $7::INTEGER, $8::TEXT, $9::TEXT, $10::BYTEA, $11::BYTEA, $12::TIMESTAMPTZ",
+                vec![
+                    BindValue::Int64(1),
+                    BindValue::Int32(2),
+                    BindValue::Int16(3),
+                    BindValue::String("value".to_string()),
+                    BindValue::Bool(true),
+                    BindValue::OptInt32(Some(4)),
+                    BindValue::OptInt32(None),
+                    BindValue::OptString(Some("optional".to_string())),
+                    BindValue::OptString(None),
+                    BindValue::OptBytes(Some(vec![5, 6])),
+                    BindValue::OptBytes(None),
+                    BindValue::DateTime(now),
+                ],
+            )
+            .await
+            .expect("all PostgreSQL bind values should be supported");
+
+        database.close().await;
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+        admin.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
     async fn test_postgres_pool_rejects_zero_max_connections_before_connecting() {
         let mut config = DatabaseConfig::postgres(
             "127.0.0.1".to_string(),
