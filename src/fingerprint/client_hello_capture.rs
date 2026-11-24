@@ -589,6 +589,262 @@ impl ClientHelloCapture {
 mod tests {
     use super::*;
 
+    fn tls_record(handshake_type: u8, handshake_length: usize, body: &[u8]) -> Vec<u8> {
+        let record_length = 4 + body.len();
+        let mut record = vec![CONTENT_TYPE_HANDSHAKE, 0x03, 0x03];
+        record.extend_from_slice(&(record_length as u16).to_be_bytes());
+        record.push(handshake_type);
+        record.extend_from_slice(&[
+            (handshake_length >> 16) as u8,
+            (handshake_length >> 8) as u8,
+            handshake_length as u8,
+        ]);
+        record.extend_from_slice(body);
+        record
+    }
+
+    fn client_hello_body() -> Vec<u8> {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; RANDOM_BYTES_SIZE]);
+        body.extend_from_slice(&[0, 0, 2, 0x13, 0x01, 1, 0]);
+        body
+    }
+
+    #[test]
+    fn bounded_read_helpers_report_short_input_and_overflow() {
+        assert!(
+            ClientHelloCapture::read_u8_at(&[], 0, "u8")
+                .unwrap_err()
+                .to_string()
+                .contains("u8 too short")
+        );
+        assert!(
+            ClientHelloCapture::read_u16_at(&[], usize::MAX, "u16")
+                .unwrap_err()
+                .to_string()
+                .contains("u16 length overflow")
+        );
+        assert!(
+            ClientHelloCapture::read_u16_at(&[], 0, "u16")
+                .unwrap_err()
+                .to_string()
+                .contains("u16 too short")
+        );
+        assert!(
+            ClientHelloCapture::read_u24_at(&[], usize::MAX, "u24")
+                .unwrap_err()
+                .to_string()
+                .contains("u24 length overflow")
+        );
+        assert!(
+            ClientHelloCapture::read_u24_at(&[], 0, "u24")
+                .unwrap_err()
+                .to_string()
+                .contains("u24 too short")
+        );
+        assert!(
+            ClientHelloCapture::slice_range(&[], usize::MAX, 1, "slice")
+                .unwrap_err()
+                .to_string()
+                .contains("slice length overflow")
+        );
+        assert!(
+            ClientHelloCapture::slice_range(&[], 0, 1, "slice")
+                .unwrap_err()
+                .to_string()
+                .contains("slice too short")
+        );
+    }
+
+    #[test]
+    fn parser_rejects_truncated_record_and_client_hello_fields() {
+        let complete_body = client_hello_body();
+        let mut wrong_record_type = tls_record(
+            HANDSHAKE_TYPE_CLIENT_HELLO,
+            complete_body.len(),
+            &complete_body,
+        );
+        wrong_record_type[0] = 0x15;
+
+        let mut excessive_record_length = tls_record(
+            HANDSHAKE_TYPE_CLIENT_HELLO,
+            complete_body.len(),
+            &complete_body,
+        );
+        excessive_record_length[3..5].copy_from_slice(&u16::MAX.to_be_bytes());
+
+        let mut odd_cipher_suites = complete_body.clone();
+        odd_cipher_suites.truncate(35);
+        odd_cipher_suites.extend_from_slice(&[0, 1]);
+
+        let mut truncated_cipher_suite = complete_body.clone();
+        truncated_cipher_suite.truncate(35);
+        truncated_cipher_suite.extend_from_slice(&[0, 2, 0x13]);
+
+        let mut truncated_compression_length = complete_body.clone();
+        truncated_compression_length.truncate(39);
+
+        let mut truncated_compression = complete_body.clone();
+        truncated_compression.truncate(40);
+
+        let short_handshake_header = vec![
+            CONTENT_TYPE_HANDSHAKE,
+            0x03,
+            0x03,
+            0x00,
+            0x03,
+            HANDSHAKE_TYPE_CLIENT_HELLO,
+            0,
+            0,
+        ];
+
+        let mut missing_extensions_length = complete_body.clone();
+        missing_extensions_length.push(0);
+
+        let cases = [
+            (Vec::new(), "Data too short for TLS record header"),
+            (wrong_record_type, "Not a handshake record"),
+            (
+                excessive_record_length,
+                "TLS record length exceeds available data",
+            ),
+            (
+                short_handshake_header,
+                "Data too short for handshake header",
+            ),
+            (tls_record(2, 0, &[]), "Not a ClientHello"),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 1, &[]),
+                "Handshake length exceeds record length",
+            ),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 0, &[0]),
+                "trailing bytes after handshake",
+            ),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 0, &[]),
+                "Data too short for ClientHello version",
+            ),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 2, &[0x03, 0x03]),
+                "Data too short for random",
+            ),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 34, &complete_body[..34]),
+                "Data too short for session ID length",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    35,
+                    &complete_body[..34]
+                        .iter()
+                        .copied()
+                        .chain([1])
+                        .collect::<Vec<_>>(),
+                ),
+                "Data too short for session ID",
+            ),
+            (
+                tls_record(HANDSHAKE_TYPE_CLIENT_HELLO, 35, &complete_body[..35]),
+                "Data too short for cipher suites length",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    odd_cipher_suites.len(),
+                    &odd_cipher_suites,
+                ),
+                "must be even",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    truncated_cipher_suite.len(),
+                    &truncated_cipher_suite,
+                ),
+                "Data too short for cipher suites",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    truncated_compression_length.len(),
+                    &truncated_compression_length,
+                ),
+                "Data too short for compression methods length",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    truncated_compression.len(),
+                    &truncated_compression,
+                ),
+                "Data too short for compression methods",
+            ),
+            (
+                tls_record(
+                    HANDSHAKE_TYPE_CLIENT_HELLO,
+                    missing_extensions_length.len(),
+                    &missing_extensions_length,
+                ),
+                "Data too short for extensions length",
+            ),
+        ];
+
+        for (record, expected) in cases {
+            let error = ClientHelloCapture::parse(&record)
+                .expect_err("malformed ClientHello input should be rejected");
+            assert!(
+                error.to_string().contains(expected),
+                "{error}: expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_extensions_return_empty_values() {
+        let capture = ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![]);
+
+        assert!(capture.get_supported_groups().unwrap().is_empty());
+        assert!(capture.get_point_formats().unwrap().is_empty());
+        assert_eq!(capture.get_sni().unwrap(), None);
+    }
+
+    #[test]
+    fn supported_group_point_format_and_sni_lengths_are_validated() {
+        assert!(
+            ClientHelloCapture::parse_supported_groups(&[])
+                .unwrap_err()
+                .to_string()
+                .contains("Supported groups length too short")
+        );
+        assert!(
+            ClientHelloCapture::parse_supported_groups(&[0, 1, 0x17])
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid supported groups length")
+        );
+        assert!(
+            ClientHelloCapture::parse_point_formats(&[])
+                .unwrap_err()
+                .to_string()
+                .contains("EC point formats length too short")
+        );
+
+        let capture = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![],
+            vec![(EXTENSION_SERVER_NAME, vec![0, 0, 0, 0])],
+        );
+        assert!(
+            capture
+                .get_sni()
+                .unwrap_err()
+                .to_string()
+                .contains("SNI extension too short")
+        );
+    }
+
     #[test]
     fn test_synthetic_client_hello() {
         let client_hello = ClientHelloCapture::synthetic(
@@ -712,6 +968,59 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Cipher suites length is too large")
+        );
+    }
+
+    #[test]
+    fn test_to_bytes_rejects_oversized_session_compression_and_extension_lengths() {
+        let oversized_session_id = ClientHelloCapture {
+            session_id: vec![0; 256],
+            ..ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![])
+        };
+        assert!(
+            oversized_session_id
+                .to_bytes()
+                .unwrap_err()
+                .to_string()
+                .contains("Session ID length is too large")
+        );
+
+        let oversized_compression = ClientHelloCapture {
+            compression_methods: vec![0; 256],
+            ..ClientHelloCapture::synthetic(0x0303, vec![0x1301], vec![])
+        };
+        assert!(
+            oversized_compression
+                .to_bytes()
+                .unwrap_err()
+                .to_string()
+                .contains("Compression methods length is too large")
+        );
+
+        let oversized_extension_data = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(0x1234, vec![0; usize::from(u16::MAX) + 1])],
+        );
+        assert!(
+            oversized_extension_data
+                .to_bytes()
+                .unwrap_err()
+                .to_string()
+                .contains("Extension data length is too large")
+        );
+
+        let oversized_extension_block = ClientHelloCapture::synthetic(
+            0x0303,
+            vec![0x1301],
+            vec![(0x1234, vec![0; 32_763]), (0x5678, vec![0; 32_764])],
+        );
+        assert!(
+            oversized_extension_block
+                .to_bytes()
+                .unwrap_err()
+                .to_string()
+                .contains("TLS record length is too large")
         );
     }
 
