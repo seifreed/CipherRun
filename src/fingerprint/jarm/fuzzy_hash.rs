@@ -211,6 +211,10 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             assert_eq!(raw_hash_to_fuzzy_hash("not-ten-probes"), ZERO_HASH);
         });
+        Buffer(output.clone())
+            .make_writer()
+            .flush()
+            .expect("test writer should flush");
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
