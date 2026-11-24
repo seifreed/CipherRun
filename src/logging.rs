@@ -1489,6 +1489,29 @@ mod tests {
     }
 
     #[test]
+    fn logging_guard_flush_is_observable_during_shutdown() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .finish(BufferWriter(output.0.clone()));
+        let dropped_log_lines = writer.error_counter();
+        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+        let guard = super::LoggingGuard {
+            writer_guard: Some(writer_guard),
+            dropped_log_lines: Some(dropped_log_lines),
+            json: false,
+            drop_monitor: None,
+            #[cfg(feature = "otel")]
+            tracer_provider: None,
+        };
+
+        tracing::subscriber::with_default(subscriber, || drop(guard));
+
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("logging.subscriber.shutdown"), "{output}");
+        assert!(output.contains("outcome=\"flush_requested\""), "{output}");
+    }
+
+    #[test]
     fn daily_rotation_writes_current_utc_bucket_separately_from_previous_day() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cipherrun.jsonl");
