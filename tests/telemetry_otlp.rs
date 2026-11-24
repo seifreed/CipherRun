@@ -90,6 +90,8 @@ struct EndpointEnvironment {
     previous_endpoint: Option<std::ffi::OsString>,
     previous_trace_endpoint: Option<std::ffi::OsString>,
     previous_batch_size: Option<std::ffi::OsString>,
+    previous_service_name: Option<std::ffi::OsString>,
+    previous_resource_attributes: Option<std::ffi::OsString>,
 }
 
 impl EndpointEnvironment {
@@ -97,15 +99,24 @@ impl EndpointEnvironment {
         let previous_endpoint = std::env::var_os("OTEL_EXPORTER_OTLP_ENDPOINT");
         let previous_trace_endpoint = std::env::var_os("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
         let previous_batch_size = std::env::var_os("OTEL_BSP_MAX_EXPORT_BATCH_SIZE");
+        let previous_service_name = std::env::var_os("OTEL_SERVICE_NAME");
+        let previous_resource_attributes = std::env::var_os("OTEL_RESOURCE_ATTRIBUTES");
         unsafe {
             std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
             std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
             std::env::set_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1");
+            std::env::remove_var("OTEL_SERVICE_NAME");
+            std::env::set_var(
+                "OTEL_RESOURCE_ATTRIBUTES",
+                "service.name=cipherrun-otlp-test",
+            );
         }
         Self {
             previous_endpoint,
             previous_trace_endpoint,
             previous_batch_size,
+            previous_service_name,
+            previous_resource_attributes,
         }
     }
 }
@@ -124,6 +135,14 @@ impl Drop for EndpointEnvironment {
             match &self.previous_batch_size {
                 Some(value) => std::env::set_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", value),
                 None => std::env::remove_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE"),
+            }
+            match &self.previous_service_name {
+                Some(value) => std::env::set_var("OTEL_SERVICE_NAME", value),
+                None => std::env::remove_var("OTEL_SERVICE_NAME"),
+            }
+            match &self.previous_resource_attributes {
+                Some(value) => std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", value),
+                None => std::env::remove_var("OTEL_RESOURCE_ATTRIBUTES"),
             }
         }
     }
@@ -232,6 +251,7 @@ async fn otlp_http_export_reaches_a_local_collector() {
     let payload = String::from_utf8_lossy(&payload);
     assert!(payload.contains("otlp.test"), "{payload}");
     assert!(payload.contains("database.debug.test"), "{payload}");
+    assert!(payload.contains("cipherrun-otlp-test"), "{payload}");
     assert!(!payload.contains("otlp-query-secret"), "{payload}");
     collector.abort();
 }
