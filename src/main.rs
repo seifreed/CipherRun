@@ -399,7 +399,8 @@ fn apply_output_preferences(args: &Args) {
 
 #[cfg(test)]
 mod tests {
-    use super::color_output_enabled;
+    use super::{color_output_enabled, run_starttls_only};
+    use cipherrun::Args;
 
     #[test]
     fn test_color_output_enabled() {
@@ -407,5 +408,27 @@ mod tests {
         assert!(color_output_enabled(1));
         assert!(color_output_enabled(2));
         assert!(color_output_enabled(3));
+    }
+
+    #[tokio::test]
+    async fn starttls_only_rejects_missing_protocol_target_and_invalid_ip() {
+        let error = run_starttls_only(&Args::default())
+            .await
+            .expect_err("STARTTLS-only mode requires a protocol");
+        assert!(error.to_string().contains("requires a STARTTLS protocol"));
+
+        let mut args = Args::default();
+        args.starttls.smtp = true;
+        let error = run_starttls_only(&args)
+            .await
+            .expect_err("STARTTLS-only mode requires a target");
+        assert!(error.to_string().contains("requires a target"));
+
+        args.target = Some("example.com".to_string());
+        args.ip = Some("invalid-ip".to_string());
+        let error = run_starttls_only(&args)
+            .await
+            .expect_err("invalid IP override should be rejected before connecting");
+        assert!(error.to_string().contains("Invalid IP override"));
     }
 }
