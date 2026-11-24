@@ -543,6 +543,8 @@ CI measures line coverage across every Rust workspace crate, feature, and target
 
 Cipher strength trend analysis reports a database error for persisted scan history rows without an ID instead of silently omitting them.
 
+The webhook retry integration test exercises the production URL validation and pinned HTTP client before verifying signed delivery, retry count, and redacted structured success logging against a local loopback server.
+
 CI artifact upload and release download use the Node 24-compatible, SHA-pinned `upload-artifact` 7.0.2 and `download-artifact` 8.0.2 actions.
 
 The differential TLS lab pins each OpenSSL probe to the fixture's expected protocol; TLS 1.0/1.1 probes lower the client cipher security level because current OpenSSL defaults no longer negotiate those legacy protocols.

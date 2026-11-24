@@ -2079,17 +2079,10 @@ mod tests {
         let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
         job.mark_completed(ScanResults::default());
 
-        ScanExecutor::send_webhook_attempts(
-            &reqwest::Client::new(),
-            &format!("http://{address}/hook"),
-            &job,
-            &state.secret,
-            3,
-            Duration::from_millis(1),
-        )
-        .with_subscriber(tracing::Dispatch::new(subscriber))
-        .await
-        .unwrap();
+        ScanExecutor::send_webhook(&format!("http://{address}/hook"), &job, &state.secret)
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .unwrap();
 
         assert_eq!(state.attempts.load(Ordering::SeqCst), 3);
         assert!(state.signature_valid.load(Ordering::SeqCst));
