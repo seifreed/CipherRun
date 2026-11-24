@@ -290,6 +290,29 @@ mod tests {
     }
 
     #[test]
+    fn code_scanner_recurses_into_source_dirs_and_skips_vendor_dirs() {
+        let root = tempfile::tempdir().expect("create root directory");
+        let source_dir = root.path().join("src");
+        let vendor_dir = root.path().join("vendor");
+        std::fs::create_dir(&source_dir).expect("create source directory");
+        std::fs::create_dir(&vendor_dir).expect("create vendor directory");
+        std::fs::write(source_dir.join("lib.rs"), "let digest = MD5::new();")
+            .expect("write source file");
+        std::fs::write(
+            vendor_dir.join("third_party.rs"),
+            "let digest = SHA1::new();",
+        )
+        .expect("write vendor file");
+
+        let result = CodeScanner::scan(root.path()).expect("directory scan should succeed");
+
+        assert_eq!(result.files_scanned, 1);
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.findings[0].algorithm, "MD5");
+        assert!(result.findings[0].file.ends_with("src/lib.rs"));
+    }
+
+    #[test]
     fn test_code_scanner_rejects_oversized_source_file_before_read() {
         let file = tempfile::Builder::new()
             .suffix(".rs")
