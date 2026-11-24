@@ -1757,6 +1757,8 @@ mod tests {
 
     #[test]
     fn empty_executor_emits_startup_and_shutdown_events() {
+        use tracing::instrument::WithSubscriber;
+
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .json()
@@ -1781,9 +1783,15 @@ mod tests {
             .build()
             .unwrap();
 
-        tracing::subscriber::with_default(subscriber, || {
-            runtime.block_on(async {
-                let mut start = Box::pin(Arc::clone(&executor).start());
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _default_subscriber = tracing::dispatcher::set_default(&dispatch);
+        runtime.block_on(
+            async {
+                let mut start = Box::pin(
+                    Arc::clone(&executor)
+                        .start()
+                        .with_subscriber(dispatch.clone()),
+                );
                 let first_poll = std::future::poll_fn(|context| {
                     std::task::Poll::Ready(start.as_mut().poll(context))
                 })
@@ -1796,8 +1804,9 @@ mod tests {
                     .await
                     .expect("executor should stop after shutdown")
                     .unwrap();
-            });
-        });
+            }
+            .with_subscriber(dispatch.clone()),
+        );
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let events = output

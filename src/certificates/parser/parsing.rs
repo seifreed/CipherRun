@@ -491,6 +491,37 @@ mod tests {
         assert_eq!(parser.starttls_hostname(), "example.com");
     }
 
+    #[test]
+    fn test_starttls_builder_configures_protocol_host_and_server_mode() {
+        let parser = CertificateParser::new(example_com_loopback_target(443))
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::SMTP),
+                Some("smtp.example.com".to_string()),
+            )
+            .with_starttls_server_mode(true);
+
+        assert_eq!(
+            parser.starttls,
+            Some(crate::starttls::StarttlsProtocol::SMTP)
+        );
+        assert_eq!(parser.starttls_hostname(), "smtp.example.com");
+        assert!(parser.starttls_server_mode);
+    }
+
+    #[test]
+    fn test_mtls_constructor_retains_client_configuration() {
+        let config = MtlsConfig {
+            cert_chain: Vec::new(),
+            private_key: rustls_pki_types::PrivateKeyDer::Pkcs8(
+                rustls_pki_types::PrivatePkcs8KeyDer::from(vec![0]),
+            ),
+        };
+
+        let parser = CertificateParser::with_mtls(example_com_loopback_target(443), config);
+
+        assert!(parser.mtls_config.is_some());
+    }
+
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_get_certificate_chain() {

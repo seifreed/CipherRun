@@ -548,10 +548,11 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 
-    #[test]
-    fn retry_events_are_structured_and_exclude_raw_errors() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn retry_events_are_structured_and_exclude_raw_errors() {
         use std::io::Write;
         use std::sync::Mutex;
+        use tracing::instrument::WithSubscriber;
         use tracing_subscriber::fmt::MakeWriter;
 
         struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -582,29 +583,21 @@ mod tests {
             .with_max_level(tracing::Level::TRACE)
             .with_writer(Buffer(output.clone()))
             .finish();
-        let config = RetryConfig::new(1, Duration::ZERO, Duration::ZERO);
+        let config = RetryConfig::new(1, Duration::from_millis(1), Duration::from_millis(1));
         let attempts = std::sync::atomic::AtomicUsize::new(0);
 
         let dispatch = tracing::Dispatch::new(subscriber);
-        let result = tracing::dispatcher::with_default(&dispatch, || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()
-                .unwrap();
-            runtime.block_on(async {
-                retry_with_backoff(&config, || async {
-                    if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                        Err(TlsError::Other(
-                            "Connection timed out for private.example secret=do-not-log"
-                                .to_string(),
-                        ))
-                    } else {
-                        Ok::<_, TlsError>(())
-                    }
-                })
-                .await
-            })
-        });
+        let result = retry_with_backoff(&config, || async {
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                Err(TlsError::Other(
+                    "Connection timed out for private.example secret=do-not-log".to_string(),
+                ))
+            } else {
+                Ok::<_, TlsError>(())
+            }
+        })
+        .with_subscriber(dispatch)
+        .await;
 
         assert!(result.is_ok());
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
@@ -615,7 +608,7 @@ mod tests {
         let retry = events
             .iter()
             .find(|event| event["fields"]["event_name"] == "retry.attempt")
-            .expect("retry attempt event");
+            .unwrap_or_else(|| panic!("retry attempt event missing; output: {output}"));
         assert_eq!(retry["level"], "WARN");
         assert_eq!(retry["fields"]["attempt"], 1);
         assert_eq!(retry["fields"]["error_type"], "TlsError");
