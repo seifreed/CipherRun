@@ -1017,6 +1017,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_requeues_job_waiting_for_execution_slot() {
+        let mut job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(Some(job.clone())),
+            cancelled_job: job,
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            cancel_on_get: false,
+            retry_disposition: None,
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(ScanExecutor::new(queue.clone(), 0));
+        let worker = tokio::spawn(Arc::clone(&executor).start());
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queue.dequeue_calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("executor should dequeue the job before waiting for a slot");
+        executor.shutdown().await.unwrap();
+        worker.await.unwrap().unwrap();
+
+        let requeued_job = queue
+            .job
+            .lock()
+            .await
+            .take()
+            .expect("job should be returned to the queue during shutdown");
+        assert!(matches!(requeued_job.status, ScanStatus::Queued));
+    }
+
+    #[tokio::test]
     async fn scan_task_join_errors_have_static_diagnostic_codes() {
         let panic = tokio::spawn(async { panic!("test panic") })
             .await
