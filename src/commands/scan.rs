@@ -27,18 +27,28 @@ pub struct ScanCommand {
     args: Args,
 }
 
-struct ScanCommandOutcome {
-    exit: CommandExit,
-}
-
 impl ScanCommand {
     /// Create a new ScanCommand with the given arguments
     pub fn new(args: Args) -> Self {
         Self { args }
     }
 
-    fn finalize_outcome(&self, exit: CommandExit) -> ScanCommandOutcome {
-        ScanCommandOutcome { exit }
+    fn apply_fail_on_threshold(
+        &self,
+        exit: CommandExit,
+        results: &crate::scanner::ScanResults,
+    ) -> CommandExit {
+        if exit.is_success()
+            && self
+                .args
+                .output
+                .fail_on
+                .is_some_and(|threshold| threshold.is_met_by(results))
+        {
+            CommandExit::findings_failure()
+        } else {
+            exit
+        }
     }
 
     fn baseline_exit(&self, current: &crate::scanner::ScanResults) -> Result<CommandExit> {
@@ -80,20 +90,12 @@ impl Command for ScanCommand {
         let presenter = ScanPresenter::new(&self.args);
         let mut exit = presenter.present(&workflow_result)?;
         let baseline_exit = self.baseline_exit(workflow_result.results())?;
-        if exit.is_success()
-            && self
-                .args
-                .output
-                .fail_on
-                .is_some_and(|threshold| threshold.is_met_by(workflow_result.results()))
-        {
-            exit = CommandExit::findings_failure();
-        }
+        exit = self.apply_fail_on_threshold(exit, workflow_result.results());
         if exit.is_success() && !baseline_exit.is_success() {
             exit = baseline_exit;
         }
 
-        Ok(self.finalize_outcome(exit).exit)
+        Ok(exit)
     }
 
     fn name(&self) -> &'static str {
@@ -184,6 +186,74 @@ mod tests {
         });
 
         assert_eq!(command.baseline_exit(&baseline).unwrap().code(), 0);
+    }
+
+    #[test]
+    fn baseline_exit_propagates_file_and_target_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("baseline.json");
+        let command = ScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                baseline: Some(path.clone()),
+                quiet: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert!(
+            command
+                .baseline_exit(&crate::scanner::ScanResults::default())
+                .is_err()
+        );
+        let baseline = crate::scanner::ScanResults {
+            target: "baseline.example.com:443".to_string(),
+            ..Default::default()
+        };
+        std::fs::write(&path, baseline.to_json(false).unwrap()).unwrap();
+        let current = crate::scanner::ScanResults {
+            target: "current.example.com:443".to_string(),
+            ..Default::default()
+        };
+
+        assert!(command.baseline_exit(&current).is_err());
+    }
+
+    #[test]
+    fn fail_on_threshold_changes_only_successful_matching_results() {
+        let finding = crate::vulnerabilities::VulnerabilityResult {
+            vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+            vulnerable: true,
+            inconclusive: false,
+            details: "confirmed test finding".to_string(),
+            cve: None,
+            cwe: None,
+            severity: crate::vulnerabilities::Severity::High,
+        };
+        let results = crate::scanner::ScanResults {
+            vulnerabilities: vec![finding],
+            ..Default::default()
+        };
+        let command = ScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                fail_on: Some(crate::cli::FailOnSeverity::High),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            command
+                .apply_fail_on_threshold(CommandExit::success(), &results)
+                .code(),
+            CommandExit::FINDINGS_FAILURE
+        );
+        assert_eq!(
+            command
+                .apply_fail_on_threshold(CommandExit::failure(7), &results)
+                .code(),
+            7
+        );
     }
 
     #[tokio::test]
