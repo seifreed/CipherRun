@@ -499,6 +499,26 @@ mod tests {
     }
 
     #[cfg(feature = "db-postgres")]
+    #[test]
+    fn postgres_repository_test_skips_without_database_configuration() {
+        let status = std::process::Command::new(
+            std::env::current_exe().expect("test executable path should be available"),
+        )
+        .args([
+            "--exact",
+            "db::repositories::scan_repository::tests::postgres_scan_repository_covers_success_and_error_paths",
+        ])
+        .env_remove("CIPHERRUN_TEST_POSTGRES_URL")
+        .status()
+        .expect("test subprocess should start");
+
+        assert!(
+            status.success(),
+            "PostgreSQL test should skip without its URL"
+        );
+    }
+
+    #[cfg(feature = "db-postgres")]
     #[tokio::test]
     async fn postgres_scan_repository_covers_success_and_error_paths() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
