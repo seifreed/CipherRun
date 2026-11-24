@@ -37,18 +37,13 @@ use async_trait::async_trait;
 /// - Group enumeration flag (--show-groups)
 /// - Group exclusion flag (--no-groups)
 /// - Target information (hostname, port, resolved IPs)
+#[derive(Default)]
 pub struct GroupsPhase;
 
 impl GroupsPhase {
     /// Create a new key exchange groups enumeration phase
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for GroupsPhase {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -152,11 +147,6 @@ mod tests {
     fn test_groups_phase_name() {
         let phase = GroupsPhase::new();
         assert_eq!(phase.name(), "Enumerating Key Exchange Groups");
-    }
-
-    #[test]
-    fn test_groups_phase_default() {
-        assert_eq!(GroupsPhase.name(), "Enumerating Key Exchange Groups");
     }
 
     #[tokio::test]

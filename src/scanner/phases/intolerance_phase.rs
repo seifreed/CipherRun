@@ -38,18 +38,13 @@ use async_trait::async_trait;
 /// Configuration sources (from ScanRequest):
 /// - Baseline scan policy enables intolerance testing
 /// - Target information (hostname, port, resolved IPs)
+#[derive(Default)]
 pub struct IntolerancePhase;
 
 impl IntolerancePhase {
     /// Create a new TLS intolerance testing phase
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for IntolerancePhase {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -121,11 +116,6 @@ mod tests {
     fn test_intolerance_phase_name() {
         let phase = IntolerancePhase::new();
         assert_eq!(phase.name(), "Testing TLS Intolerance");
-    }
-
-    #[test]
-    fn test_intolerance_phase_default() {
-        assert_eq!(IntolerancePhase.name(), "Testing TLS Intolerance");
     }
 
     #[tokio::test]

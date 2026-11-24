@@ -38,18 +38,13 @@ use async_trait::async_trait;
 /// Configuration sources (from ScanRequest):
 /// - Baseline scan policy enables ALPN testing
 /// - Target information (hostname, port, resolved IPs)
+#[derive(Default)]
 pub struct AlpnPhase;
 
 impl AlpnPhase {
     /// Create a new ALPN protocol negotiation phase
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for AlpnPhase {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -127,12 +122,6 @@ mod tests {
     #[test]
     fn test_alpn_phase_name() {
         let phase = AlpnPhase::new();
-        assert_eq!(phase.name(), "Testing ALPN Protocol Negotiation");
-    }
-
-    #[test]
-    fn test_alpn_phase_default() {
-        let phase = AlpnPhase;
         assert_eq!(phase.name(), "Testing ALPN Protocol Negotiation");
     }
 

@@ -6,17 +6,12 @@ use crate::application::ScanRequest;
 use crate::pqc::PqcReadinessScorer;
 use async_trait::async_trait;
 
+#[derive(Default)]
 pub struct PqcReadinessPhase;
 
 impl PqcReadinessPhase {
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for PqcReadinessPhase {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

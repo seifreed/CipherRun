@@ -86,5 +86,24 @@ mod tests {
         assert!(read_u16_at(&data, usize::MAX, "u16").is_err());
         assert!(read_u24_at(&data, 1, "u24").is_err());
         assert!(read_u24_at(&data, usize::MAX, "u24").is_err());
+
+        let mut writable = [0u8; 3];
+        assert!(write_u16_at(&mut writable, usize::MAX, 1, "u16").is_err());
+        assert!(write_u24_at(&mut writable, usize::MAX, 1, "u24").is_err());
+    }
+
+    #[test]
+    fn rejects_truncated_and_oversized_writes() {
+        let mut short_u16 = [0u8; 1];
+        assert!(write_u16_at(&mut short_u16, 0, 1, "u16").is_err());
+        assert_eq!(short_u16, [0]);
+
+        let mut short_u24 = [0u8; 2];
+        assert!(write_u24_at(&mut short_u24, 0, 1, "u24").is_err());
+        assert_eq!(short_u24, [0; 2]);
+
+        let mut bytes = [0u8; 3];
+        assert!(write_u24_at(&mut bytes, 0, 0x0100_0000, "u24").is_err());
+        assert_eq!(bytes, [0; 3]);
     }
 }

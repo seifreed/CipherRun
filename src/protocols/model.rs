@@ -151,6 +151,33 @@ impl ProtocolTestResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn protocol_contracts_cover_names_versions_and_deprecation() {
@@ -209,7 +236,22 @@ mod tests {
 
     #[test]
     fn unknown_numeric_protocol_versions_fall_back_to_tls12() {
-        assert_eq!(Protocol::from(0xffff), Protocol::TLS12);
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+
+        let protocol = tracing::subscriber::with_default(subscriber, || Protocol::from(0xffff));
+
+        assert_eq!(protocol, Protocol::TLS12);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(event["fields"]["event_name"], "protocol.version.unknown");
+        assert_eq!(event["fields"]["protocol_version"], 0xffff);
+        assert_eq!(event["fields"]["fallback"], "tls1.2");
     }
 
     #[test]

@@ -210,4 +210,17 @@ mod tests {
             assert!(args.validate().is_err());
         }
     }
+
+    #[test]
+    fn test_minimum_severity_rejects_unknown_value() {
+        let args = ComplianceArgs {
+            severity: Some("info".to_string()),
+            ..Default::default()
+        };
+
+        let error = args
+            .minimum_severity()
+            .expect_err("unsupported severity should fail directly");
+        assert!(error.to_string().contains("Invalid compliance severity"));
+    }
 }
