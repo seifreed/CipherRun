@@ -313,6 +313,20 @@ mod tests {
     }
 
     #[test]
+    fn code_scanner_enforces_the_directory_file_limit() {
+        let root = tempfile::tempdir().expect("create root directory");
+        for index in 0..=MAX_CODE_SCAN_FILES {
+            std::fs::write(root.path().join(format!("{index}.rs")), "")
+                .expect("create source file");
+        }
+
+        let error = CodeScanner::scan(root.path()).expect_err("file limit should be enforced");
+
+        assert!(error.to_string().contains("file limit exceeded"));
+        assert!(error.to_string().contains("10000"));
+    }
+
+    #[test]
     fn test_code_scanner_rejects_oversized_source_file_before_read() {
         let file = tempfile::Builder::new()
             .suffix(".rs")
