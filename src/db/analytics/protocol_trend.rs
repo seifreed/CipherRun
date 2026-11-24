@@ -136,6 +136,15 @@ mod tests {
     }
 
     #[test]
+    fn generate_protocol_summary_reports_zero_samples() {
+        let summary = TrendAnalyzer::generate_protocol_summary(&[], &[], &[]);
+
+        assert!(summary.contains("TLS 1.3 adoption: 0.0% (0/0 scans)"));
+        assert!(summary.contains("TLS 1.2 usage: 0.0% (0/0 scans)"));
+        assert!(summary.contains("No legacy protocols detected"));
+    }
+
+    #[test]
     fn test_tls_version_matching_is_exact_after_normalization() {
         assert!(super::is_tls_version("TLS 1.3", "1.3"));
         assert!(super::is_tls_version("TLSv1.3", "1.3"));

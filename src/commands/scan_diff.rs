@@ -87,6 +87,22 @@ mod tests {
     }
 
     #[test]
+    fn scan_diff_command_has_stable_name() {
+        let command = ScanDiffCommand::new("previous.json".into(), "current.json".into(), false);
+        assert_eq!(command.name(), "ScanDiffCommand");
+    }
+
+    #[test]
+    fn rejects_scan_json_that_does_not_match_the_schema() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("invalid-schema.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        let error = ScanDiffCommand::read_scan(&path).unwrap_err();
+        assert!(error.to_string().contains("Invalid CipherRun scan result"));
+    }
+
+    #[test]
     fn rejects_oversized_scan_before_reading() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("oversized.json");
