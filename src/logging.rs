@@ -1494,7 +1494,10 @@ mod tests {
         let (writer, writer_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
             .finish(BufferWriter(output.0.clone()));
         let dropped_log_lines = writer.error_counter();
-        let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(writer)
+            .finish();
         let guard = super::LoggingGuard {
             writer_guard: Some(writer_guard),
             dropped_log_lines: Some(dropped_log_lines),
