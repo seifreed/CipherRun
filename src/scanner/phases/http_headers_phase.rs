@@ -248,6 +248,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::default_constructed_unit_structs)]
     fn test_http_headers_phase_default() {
         assert_eq!(
             HttpHeadersPhase::default().name(),

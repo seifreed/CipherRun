@@ -120,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::default_constructed_unit_structs)]
     fn test_client_cas_phase_default() {
         let phase = ClientCasPhase::default();
         assert_eq!(phase.name(), "Extracting Client CAs List");

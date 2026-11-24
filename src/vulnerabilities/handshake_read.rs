@@ -19,17 +19,11 @@ use tokio::time::timeout;
 pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
     let mut offset = 0usize;
     while let Some(header_end) = offset.checked_add(5).filter(|&end| end <= buf.len()) {
-        let Some(record_header) = buf
-            .get(offset..header_end)
-            .and_then(|header| <&[u8; 5]>::try_from(header).ok())
-        else {
-            break;
-        };
+        let record_header = &buf[offset..header_end];
         let content_type = record_header[0];
         let record_len = u16::from_be_bytes([record_header[3], record_header[4]]) as usize;
-        let Some(record_end) = header_end.checked_add(record_len) else {
-            break;
-        };
+        // Slice lengths fit in isize; both wire lengths are strictly smaller than usize.
+        let record_end = header_end + record_len;
         if record_end > buf.len() {
             break;
         }
@@ -38,15 +32,11 @@ pub(super) fn has_server_hello_done(buf: &[u8]) -> bool {
             while let Some(hs_header_end) = hs_start.checked_add(4).filter(|&end| end <= record_end)
             {
                 let is_server_hello_done = buf.get(hs_start) == Some(&0x0e);
-                let Some(len_bytes) = buf.get(hs_start + 1..hs_header_end) else {
-                    break;
-                };
+                let len_bytes = &buf[hs_start + 1..hs_header_end];
                 let hs_len = ((len_bytes[0] as usize) << 16)
                     | ((len_bytes[1] as usize) << 8)
                     | len_bytes[2] as usize;
-                let Some(hs_end) = hs_header_end.checked_add(hs_len) else {
-                    break;
-                };
+                let hs_end = hs_header_end + hs_len;
                 if hs_end > record_end {
                     break;
                 }
@@ -78,9 +68,7 @@ pub(crate) async fn read_until_server_hello_done(
         if total >= buffer.len() {
             break;
         }
-        let Some(read_buffer) = buffer.get_mut(total..) else {
-            break;
-        };
+        let read_buffer = &mut buffer[total..];
         let n = match timeout(per_read_timeout, stream.read(read_buffer)).await {
             Ok(Ok(n)) => n,
             _ => break,
@@ -89,9 +77,7 @@ pub(crate) async fn read_until_server_hello_done(
             break;
         }
         total += n;
-        let Some(accumulated) = buffer.get(..total) else {
-            break;
-        };
+        let accumulated = &buffer[..total];
         if has_server_hello_done(accumulated) {
             break;
         }
@@ -180,6 +166,14 @@ mod tests {
             full.get(..6)
                 .expect("test record should have partial prefix")
         ));
+    }
+
+    #[test]
+    fn ignores_non_handshake_records() {
+        let mut record = handshake_record(0x0e, &[]);
+        record[0] = 0x17;
+
+        assert!(!has_server_hello_done(&record));
     }
 
     #[test]
