@@ -27,6 +27,7 @@ pub struct CodeScanResult {
 /// Patterns that refer to algorithm names (RC4, MD5, SHA1, DES) use `\b` word
 /// boundaries to avoid matching substrings like `SHA128`, `ADES`, or `rc4_legacy_ok`.
 /// API-shaped patterns (e.g. `RSA.new`, `crypto.createECDH`) keep literal matching.
+#[derive(Debug)]
 struct PqcCodePattern {
     display: &'static str,
     regex: Regex,
@@ -34,21 +35,24 @@ struct PqcCodePattern {
     severity: &'static str,
 }
 
+fn make_pattern(
+    display: &'static str,
+    re: &str,
+    algorithm: &'static str,
+    severity: &'static str,
+) -> Result<PqcCodePattern> {
+    Ok(PqcCodePattern {
+        display,
+        regex: Regex::new(re).map_err(|e| {
+            crate::TlsError::Other(format!("Invalid PQC code pattern {display}: {e}"))
+        })?,
+        algorithm,
+        severity,
+    })
+}
+
 static PATTERNS: LazyLock<Result<Vec<PqcCodePattern>>> = LazyLock::new(|| {
-    let mk = |display: &'static str,
-              re: &str,
-              algorithm: &'static str,
-              severity: &'static str|
-     -> Result<PqcCodePattern> {
-        Ok(PqcCodePattern {
-            display,
-            regex: Regex::new(re).map_err(|e| {
-                crate::TlsError::Other(format!("Invalid PQC code pattern {display}: {e}"))
-            })?,
-            algorithm,
-            severity,
-        })
-    };
+    let mk = make_pattern;
     [
         mk("RSA.new", r"RSA\.new\b", "RSA", "High"),
         mk(
@@ -87,7 +91,11 @@ static PATTERNS: LazyLock<Result<Vec<PqcCodePattern>>> = LazyLock::new(|| {
 });
 
 fn patterns() -> Result<&'static [PqcCodePattern]> {
-    PATTERNS
+    patterns_from(&PATTERNS)
+}
+
+fn patterns_from(patterns: &Result<Vec<PqcCodePattern>>) -> Result<&[PqcCodePattern]> {
+    patterns
         .as_ref()
         .map(|patterns| patterns.as_slice())
         .map_err(|e| crate::TlsError::Other(e.to_string()))
@@ -193,6 +201,30 @@ fn is_source_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_patterns_preserve_the_pattern_name_in_the_error() {
+        let error = make_pattern("broken pattern", "(", "RSA", "High")
+            .expect_err("an invalid regular expression should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid PQC code pattern broken pattern")
+        );
+    }
+
+    #[test]
+    fn pattern_table_errors_are_propagated() {
+        let invalid = Err(crate::TlsError::Other("invalid pattern table".to_string()));
+
+        assert!(
+            patterns_from(&invalid)
+                .expect_err("pattern table errors should be returned")
+                .to_string()
+                .contains("invalid pattern table")
+        );
+    }
 
     fn algorithms_matched(line: &str) -> Vec<&'static str> {
         patterns()
