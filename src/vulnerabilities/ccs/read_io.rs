@@ -9,11 +9,7 @@ pub(super) async fn read_complete_tls_record(
     stream.read_exact(&mut header).await?;
 
     let record_len = u16::from_be_bytes([header[3], header[4]]) as usize;
-    let total_len = 5usize
-        .checked_add(record_len)
-        .ok_or_else(|| crate::TlsError::ParseError {
-            message: "CCS TLS record length overflow".to_string(),
-        })?;
+    let total_len = 5 + record_len;
     if total_len > buffer.len() {
         return Err(crate::TlsError::ParseError {
             message: "CCS TLS record length exceeds buffer".to_string(),
@@ -73,7 +69,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_record_larger_than_destination_buffer() {
-        let response = [0x16, 0x03, 0x03, 0x00, 0x03];
+        let response = [0x16, 0x03, 0x03, 0xff, 0xff];
         let (mut client, writer) = stream_with_response(response.to_vec()).await;
         let mut buffer = [0; 7];
 
