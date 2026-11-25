@@ -223,3 +223,74 @@ pub(crate) fn evaluate_beast(
         severity: severity_if_vulnerable(vulnerable, Severity::Medium),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{cipher_uses_cbc, summary_has_cipher_evidence};
+    use crate::ciphers::{
+        CipherSuite,
+        tester::{CipherCounts, ProtocolCipherSummary},
+    };
+    use crate::protocols::Protocol;
+
+    fn summary() -> ProtocolCipherSummary {
+        ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: CipherCounts::default(),
+            avg_handshake_time_ms: None,
+        }
+    }
+
+    fn cipher(encryption: &str, openssl_name: &str, iana_name: &str) -> CipherSuite {
+        CipherSuite {
+            hexcode: "0x002f".to_string(),
+            openssl_name: openssl_name.to_string(),
+            iana_name: iana_name.to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "RSA".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: encryption.to_string(),
+            mac: "SHA256".to_string(),
+            bits: 128,
+            export: false,
+        }
+    }
+
+    #[test]
+    fn cipher_summary_evidence_recognizes_each_source() {
+        let mut item = summary();
+        assert!(!summary_has_cipher_evidence(&item));
+
+        item.counts.total = 1;
+        assert!(summary_has_cipher_evidence(&item));
+
+        item.counts.total = 0;
+        item.supported_ciphers.push(cipher("AES", "", ""));
+        assert!(summary_has_cipher_evidence(&item));
+
+        item.supported_ciphers.clear();
+        item.preferred_cipher = Some(cipher("AES", "", ""));
+        assert!(summary_has_cipher_evidence(&item));
+
+        item.preferred_cipher = None;
+        item.server_preference
+            .push("TLS_RSA_WITH_AES_128_CBC_SHA".to_string());
+        assert!(summary_has_cipher_evidence(&item));
+    }
+
+    #[test]
+    fn cbc_cipher_detection_checks_all_display_names_case_insensitively() {
+        assert!(cipher_uses_cbc(&cipher("aes_128_cbc", "", "")));
+        assert!(cipher_uses_cbc(&cipher("AES", "AES128-CBC", "")));
+        assert!(cipher_uses_cbc(&cipher("AES", "", "TLS_AES_128_CBC_SHA")));
+        assert!(!cipher_uses_cbc(&cipher(
+            "AES-GCM",
+            "",
+            "TLS_AES_128_GCM_SHA256"
+        )));
+    }
+}
