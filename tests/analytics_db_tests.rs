@@ -1503,6 +1503,40 @@ async fn test_change_tracker_includes_vulnerability_metadata_in_change_details()
 }
 
 #[tokio::test]
+async fn test_change_tracker_pairs_duplicate_vulnerabilities_deterministically() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "change-tracker-duplicate-vulns.test", now).await;
+
+    for scan_id in [scan1, scan1, scan2, scan2] {
+        insert_vulnerability_with_details(
+            &db,
+            scan_id,
+            "DuplicateIssue",
+            "high",
+            Some("unchanged description"),
+            Some("CVE-2025-0001"),
+            Some("TLS handshake"),
+        )
+        .await;
+    }
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("duplicate vulnerability records should be matched");
+
+    assert!(
+        changes
+            .iter()
+            .all(|change| !matches!(change.change_type, ChangeType::Vulnerability)),
+        "unchanged duplicate records must not create false vulnerability changes: {changes:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_change_tracker_normalizes_vulnerability_severity_labels() {
     let db = setup_db().await;
     let now = Utc::now();
