@@ -222,6 +222,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_validate_webhook_url_rejects_malformed_url_and_hostname() {
+        let malformed = validate_webhook_url("not a URL")
+            .await
+            .expect_err("malformed URLs should fail");
+        assert!(malformed.to_string().contains("Invalid webhook URL"));
+
+        let invalid_hostname = validate_webhook_url("https://exa_mple.com/callback")
+            .await
+            .expect_err("hostnames with invalid characters should fail");
+        assert!(invalid_hostname.to_string().contains("Invalid webhook URL"));
+    }
+
+    #[tokio::test]
     async fn test_validate_webhook_url_rejects_zero_port() {
         let err = validate_webhook_url("https://example.com:0/callback")
             .await
