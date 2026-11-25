@@ -622,4 +622,20 @@ mod tests {
         ));
         assert!(!has_pem_certificates("poll error\n"));
     }
+
+    #[test]
+    fn test_parse_pem_certificate_chain_parses_generated_certificate() {
+        let generated = rcgen::generate_simple_self_signed(vec!["example.com".to_string()])
+            .expect("test certificate should be generated");
+
+        let chain = CertificatePhase::parse_pem_certificate_chain(&generated.cert.pem())
+            .expect("valid PEM certificate should parse");
+
+        assert_eq!(chain.chain_length, 1);
+        assert_eq!(chain.certificates.len(), 1);
+        assert_eq!(
+            chain.chain_size_bytes,
+            chain.certificates[0].der_bytes.len()
+        );
+    }
 }

@@ -218,6 +218,7 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     // Spawn task to send progress updates for this specific scan
     let scan_id_clone = scan_id.clone();
     let mut send_task = spawn_with_current_span(async move {
+        let mut wait_for_close = false;
         let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_seconds));
         ping_interval.tick().await;
 
@@ -266,7 +267,8 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                     progress_type = %progress.msg_type,
                                     "Closing completed scan progress stream"
                                 );
-                                if sender.send(Message::Close(None)).await.is_err() {
+                                wait_for_close = sender.send(Message::Close(None)).await.is_ok();
+                                if !wait_for_close {
                                     debug!(
                                         event_name = "websocket.scan.connection.closed",
                                         scan_id = %scan_id_clone,
@@ -311,7 +313,8 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                                 );
                                 break;
                             }
-                            if sender.send(Message::Close(None)).await.is_err() {
+                            wait_for_close = sender.send(Message::Close(None)).await.is_ok();
+                            if !wait_for_close {
                                 debug!(
                                     event_name = "websocket.scan.connection.closed",
                                     scan_id = %scan_id_clone,
@@ -337,6 +340,7 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
                 }
             }
         }
+        wait_for_close
     });
 
     // Spawn task to receive messages from client
@@ -381,16 +385,43 @@ pub async fn scan_websocket_handler(socket: WebSocket, scan_id: String, state: A
     // Wait for either task to complete
     tokio::select! {
         result = (&mut send_task) => {
-            if let Err(error) = result {
-                error!(
-                    event_name = "websocket.scan.send_task.failed",
-                    scan_id = %scan_id,
-                    error_type = "join_error",
-                    error_code = if error.is_panic() { "panic" } else { "other" },
-                    "Scan WebSocket send task failed"
-                );
+            let wait_for_close = match result {
+                Ok(wait_for_close) => wait_for_close,
+                Err(error) => {
+                    error!(
+                        event_name = "websocket.scan.send_task.failed",
+                        scan_id = %scan_id,
+                        error_type = "join_error",
+                        error_code = if error.is_panic() { "panic" } else { "other" },
+                        "Scan WebSocket send task failed"
+                    );
+                    false
+                }
+            };
+            if wait_for_close {
+                match tokio::time::timeout(Duration::from_secs(1), &mut recv_task).await {
+                    Ok(Err(error)) => error!(
+                        event_name = "websocket.scan.receive_task.failed",
+                        scan_id = %scan_id,
+                        error_type = "join_error",
+                        error_code = if error.is_panic() { "panic" } else { "other" },
+                        "Scan WebSocket receive task failed"
+                    ),
+                    Err(_) => {
+                        warn!(
+                            event_name = "websocket.scan.close.timeout",
+                            scan_id = %scan_id,
+                            timeout_ms = 1000,
+                            outcome = "closed",
+                            "Scan WebSocket peer did not complete the close handshake"
+                        );
+                        recv_task.abort();
+                    }
+                    Ok(Ok(())) => {}
+                }
+            } else {
+                recv_task.abort();
             }
-            recv_task.abort();
         }
         result = (&mut recv_task) => {
             if let Err(error) = result {
