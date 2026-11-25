@@ -189,6 +189,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_builder_configures_starttls_and_all_target_addresses() {
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            25,
+            vec![
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                "127.0.0.2".parse().expect("test IP should parse"),
+            ],
+        )
+        .expect("loopback target should be valid");
+        let tester = Lucky13Tester::new(target)
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::SMTP),
+                Some("mail.example.com".to_string()),
+                true,
+            )
+            .with_test_all_ips(true);
+
+        assert_eq!(
+            tester.starttls,
+            Some(crate::starttls::StarttlsProtocol::SMTP)
+        );
+        assert_eq!(
+            tester.starttls_hostname.as_deref(),
+            Some("mail.example.com")
+        );
+        assert!(tester.starttls_server_mode);
+        assert_eq!(
+            tester
+                .probe_addrs()
+                .expect("addresses should resolve")
+                .len(),
+            2
+        );
+    }
+
     #[tokio::test]
     async fn test_lucky13_inactive_target_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
