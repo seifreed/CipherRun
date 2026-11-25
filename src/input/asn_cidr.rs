@@ -521,6 +521,11 @@ mod tests {
             InputType::Hostname(hostname) => assert_eq!(hostname, "example.com"),
             _ => panic!("Expected Hostname input type"),
         }
+
+        assert!(matches!(
+            AsnCidrParser::parse_input("not-a-network/invalid"),
+            InputType::Hostname(_)
+        ));
     }
 
     #[test]
@@ -668,6 +673,16 @@ mod tests {
             }
             _ => panic!("Expected FullList for /32"),
         }
+    }
+
+    #[test]
+    fn test_expand_cidr_ipv6_single_host() {
+        let expansion = expand_cidr("2001:db8::1/128");
+        assert_eq!(expansion.total_ips(), 1);
+        assert_eq!(
+            expansion.iter().next(),
+            Some("2001:db8::1".parse().unwrap())
+        );
     }
 
     #[test]
