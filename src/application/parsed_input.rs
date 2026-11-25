@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_compare_scan_ids() {
-        for input in ["1", "1:2:3", "0:2", "1:0", "-1:2", "1:-2"] {
+        for input in ["1", "1:2:3", "abc:2", "1:abc", "0:2", "1:0", "-1:2", "1:-2"] {
             assert!(CompareScanIds::parse(input).is_err(), "{input}");
         }
     }
@@ -208,6 +208,7 @@ mod tests {
         for input in [
             "example.com:443:0",
             "example.com:443:-7",
+            "example.com:443:invalid",
             &format!("example.com:443:{}", i64::MAX),
             "example.com:0:7",
             "::1:443:7",
