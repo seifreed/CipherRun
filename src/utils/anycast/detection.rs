@@ -156,23 +156,26 @@ impl super::AnycastScanner {
 impl AnycastScanResults {
     /// Display results summary
     pub fn display_summary(&self) {
+        self.write_summary(&mut std::io::stdout().lock())
+            .expect("failed to write Anycast scan summary");
+    }
+
+    pub(super) fn write_summary(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
         use colored::Colorize;
-        println!("\n{}", "=".repeat(60).cyan());
-        println!("{}", "Anycast Scan Results".cyan().bold());
-        println!("{}", "=".repeat(60).cyan());
+        writeln!(output, "\n{}", "=".repeat(60).cyan())?;
+        writeln!(output, "{}", "Anycast Scan Results".cyan().bold())?;
+        writeln!(output, "{}", "=".repeat(60).cyan())?;
 
-        println!("Hostname:         {}", self.hostname.green());
-        println!("Port:             {}", self.port);
-        println!("Total IPs:        {}", self.total_ips);
-        println!(
-            "Successful Scans: {}/{}",
-            self.successful_scans, self.total_ips
-        );
+        writeln!(output, "Hostname:         {}", self.hostname.green())?;
+        writeln!(output, "Port:             {}", self.port)?;
+        writeln!(output, "Total IPs:        {}", self.total_ips)?;
+        let (successful, total) = (self.successful_scans, self.total_ips);
+        writeln!(output, "Successful Scans: {successful}/{total}")?;
 
-        println!("\n{}", "Per-IP Results:".cyan().bold());
+        writeln!(output, "\n{}", "Per-IP Results:".cyan().bold())?;
         for result in &self.ip_results {
             if let Some(error) = &result.error {
-                println!("  {} {} - {}", "✗".red(), result.ip, error.red());
+                writeln!(output, "  {} {} - {}", "✗".red(), result.ip, error.red())?;
             } else {
                 let cert_status = if let Some(cert) = &result.results.certificate_chain {
                     if cert.validation.valid {
@@ -191,17 +194,18 @@ impl AnycastScanResults {
                     .filter(|p| p.supported)
                     .count();
 
-                println!(
-                    "  {} {} - {} - {} protocols",
+                let ip_summary = format!(
+                    "{} {} - {} - {} protocols",
                     "✓".green(),
                     result.ip,
                     cert_status,
                     protocol_count
                 );
+                writeln!(output, "  {ip_summary}")?;
             }
         }
 
-        println!("\n{}", "Anycast Detection:".cyan().bold());
+        writeln!(output, "\n{}", "Anycast Detection:".cyan().bold())?;
         let detection_status = if self.anycast_detection.is_anycast {
             format!(
                 "YES (confidence: {:.0}%)",
@@ -212,22 +216,21 @@ impl AnycastScanResults {
         } else {
             "NO".green().bold()
         };
-        println!("  Anycast Detected: {}", detection_status);
+        writeln!(output, "  Anycast Detected: {}", detection_status)?;
 
         if !self.anycast_detection.reasons.is_empty() {
-            println!("\n  Reasons:");
+            writeln!(output, "\n  Reasons:")?;
             for reason in &self.anycast_detection.reasons {
-                println!("    - {}", reason);
+                writeln!(output, "    - {}", reason)?;
             }
         }
 
         if self.anycast_detection.certificate_fingerprints.len() > 1 {
-            println!(
-                "\n  Unique Certificates: {}",
-                self.anycast_detection.certificate_fingerprints.len()
-            );
+            let unique_certificates = self.anycast_detection.certificate_fingerprints.len();
+            writeln!(output, "\n  Unique Certificates: {unique_certificates}")?;
         }
 
-        println!("{}", "=".repeat(60).cyan());
+        writeln!(output, "{}", "=".repeat(60).cyan())?;
+        Ok(())
     }
 }

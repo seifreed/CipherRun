@@ -983,4 +983,77 @@ mod tests {
 
         results.display_summary();
     }
+
+    #[test]
+    fn test_anycast_summary_formats_successes_failures_and_detection_reasons() {
+        let valid_scan = build_scan_with_fingerprint(
+            "fp1",
+            "TLS_AES_128_GCM_SHA256",
+            vec![Protocol::TLS12, Protocol::TLS13],
+        );
+        let mut invalid_scan =
+            build_scan_with_fingerprint("fp2", "TLS_AES_256_GCM_SHA384", Vec::new());
+        invalid_scan
+            .certificate_chain
+            .as_mut()
+            .unwrap()
+            .validation
+            .valid = false;
+
+        let results = AnycastScanResults {
+            hostname: "example.com".to_string(),
+            port: 443,
+            total_ips: 4,
+            successful_scans: 3,
+            ip_results: vec![
+                IpScanResult {
+                    ip: "192.0.2.1".parse().unwrap(),
+                    results: ScanResults::default(),
+                    error: Some("connection refused".to_string()),
+                },
+                IpScanResult {
+                    ip: "192.0.2.2".parse().unwrap(),
+                    results: valid_scan,
+                    error: None,
+                },
+                IpScanResult {
+                    ip: "192.0.2.3".parse().unwrap(),
+                    results: invalid_scan,
+                    error: None,
+                },
+                IpScanResult {
+                    ip: "192.0.2.4".parse().unwrap(),
+                    results: ScanResults::default(),
+                    error: None,
+                },
+            ],
+            anycast_detection: AnycastDetection {
+                is_anycast: true,
+                confidence: 0.8,
+                reasons: vec!["Different certificates detected".to_string()],
+                certificate_fingerprints: HashSet::from(["fp1".to_string(), "fp2".to_string()]),
+                cipher_preferences: HashMap::new(),
+                protocol_support: HashMap::new(),
+            },
+        };
+        let mut output = Vec::new();
+
+        results.write_summary(&mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        for expected in [
+            "192.0.2.1 - connection refused",
+            "192.0.2.2 - Valid Cert - 2 protocols",
+            "192.0.2.3 - Invalid Cert - 0 protocols",
+            "192.0.2.4 - No Cert - 0 protocols",
+            "Anycast Detected: YES (confidence: 80%)",
+            "Different certificates detected",
+            "Unique Certificates: 2",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing {expected:?} in {output:?}"
+            );
+        }
+    }
 }
