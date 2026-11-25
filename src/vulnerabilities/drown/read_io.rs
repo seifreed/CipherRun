@@ -1,7 +1,7 @@
 use super::sslv2;
 use std::io::ErrorKind;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::time::timeout;
 
 const SSLV2_MAX_RECORD_WITH_HEADER: usize = 32767 + 2;
@@ -10,8 +10,8 @@ pub(super) fn record_buffer() -> Vec<u8> {
     vec![0u8; SSLV2_MAX_RECORD_WITH_HEADER]
 }
 
-pub(super) async fn read_complete_sslv2_record(
-    stream: &mut tokio::net::TcpStream,
+pub(super) async fn read_complete_sslv2_record<R: AsyncRead + Unpin>(
+    stream: &mut R,
     buffer: &mut [u8],
 ) -> std::io::Result<usize> {
     let mut total = 0;
@@ -68,8 +68,32 @@ fn is_partial_read_end(kind: ErrorKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
     use tokio::io::AsyncWriteExt;
+    use tokio::io::ReadBuf;
     use tokio::net::TcpListener;
+
+    struct ScriptedReader(VecDeque<io::Result<Vec<u8>>>);
+
+    impl AsyncRead for ScriptedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            match self.0.pop_front() {
+                Some(Ok(bytes)) => {
+                    buffer.put_slice(&bytes);
+                    Poll::Ready(Ok(()))
+                }
+                Some(Err(error)) => Poll::Ready(Err(error)),
+                None => Poll::Ready(Ok(())),
+            }
+        }
+    }
 
     #[test]
     fn record_buffer_has_room_for_the_largest_ssl_v2_record() {
@@ -128,6 +152,80 @@ mod tests {
         assert_eq!(
             read_response(&[0x80, 0x01, 0x04]).await,
             (3, vec![0x80, 0x01, 0x04])
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_record_is_rejected_before_buffer_overrun() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(&[0x80, 0x02]).await.unwrap();
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let error = read_complete_sslv2_record(&mut stream, &mut [0; 3])
+            .await
+            .expect_err("record larger than the supplied buffer must be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_and_partial_reads_stop_after_the_read_timeout() {
+        for (response, expected) in [(&[][..], 0), (&[0x80][..], 1)] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                if !response.is_empty() {
+                    stream.write_all(response).await.unwrap();
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            });
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            assert_eq!(
+                read_complete_sslv2_record(&mut stream, &mut [0; 8])
+                    .await
+                    .unwrap(),
+                expected
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn read_errors_are_classified_by_whether_data_was_received() {
+        let mut empty_timeout =
+            ScriptedReader(VecDeque::from([Err(io::Error::from(ErrorKind::TimedOut))]));
+        assert_eq!(
+            read_complete_sslv2_record(&mut empty_timeout, &mut [0; 8])
+                .await
+                .unwrap(),
+            0
+        );
+
+        let mut partial_eof = ScriptedReader(VecDeque::from([
+            Ok(vec![0x80]),
+            Err(io::Error::from(ErrorKind::UnexpectedEof)),
+        ]));
+        assert_eq!(
+            read_complete_sslv2_record(&mut partial_eof, &mut [0; 8])
+                .await
+                .unwrap(),
+            1
+        );
+
+        let mut unexpected_error = ScriptedReader(VecDeque::from([Err(io::Error::from(
+            ErrorKind::PermissionDenied,
+        ))]));
+        assert_eq!(
+            read_complete_sslv2_record(&mut unexpected_error, &mut [0; 8])
+                .await
+                .expect_err("unexpected read errors should propagate")
+                .kind(),
+            ErrorKind::PermissionDenied
         );
     }
 }
