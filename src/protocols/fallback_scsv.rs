@@ -202,6 +202,22 @@ mod tests {
     }
 
     #[test]
+    fn test_client_hello_encodes_explicit_sni() {
+        let target = example_com_target();
+        let hostname = "scan.example.test";
+        let hello = FallbackScsvTester::new(&target)
+            .with_sni(Some(hostname.to_string()))
+            .build_client_hello_with_scsv(VERSION_TLS_1_2, false)
+            .expect("ClientHello with SNI should build");
+
+        assert!(
+            hello
+                .windows(hostname.len())
+                .any(|window| window == hostname.as_bytes())
+        );
+    }
+
+    #[test]
     fn test_with_test_all_ips_sets_flag() {
         let target = example_com_target();
 
