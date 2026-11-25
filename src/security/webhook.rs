@@ -107,6 +107,19 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         })?
         .collect();
 
+    let resolved_addrs = validate_resolved_addrs(&host, &resolved_addrs, allow_loopback_only)?;
+
+    Ok(ValidatedWebhook {
+        host,
+        resolved_addrs,
+    })
+}
+
+fn validate_resolved_addrs(
+    host: &str,
+    resolved_addrs: &[SocketAddr],
+    allow_loopback_only: bool,
+) -> Result<Vec<SocketAddr>> {
     if resolved_addrs.is_empty() {
         return Err(TlsError::InvalidInput {
             message: format!(
@@ -115,7 +128,7 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         });
     }
 
-    for addr in &resolved_addrs {
+    for addr in resolved_addrs {
         if allow_loopback_only {
             if !addr.ip().is_loopback() {
                 return Err(TlsError::InvalidInput {
@@ -135,10 +148,7 @@ pub(crate) async fn validate_webhook_url(webhook_url: &str) -> Result<ValidatedW
         }
     }
 
-    Ok(ValidatedWebhook {
-        host,
-        resolved_addrs: ordered_resolved_addrs(&resolved_addrs),
-    })
+    Ok(ordered_resolved_addrs(resolved_addrs))
 }
 
 fn webhook_lookup_target(host: &str, port: u16) -> String {
@@ -285,5 +295,31 @@ mod tests {
 
         assert!(!ordered[0].ip().is_ipv6());
         assert!(ordered[1].ip().is_ipv6());
+    }
+
+    #[test]
+    fn resolved_webhook_addresses_must_be_nonempty_and_public() {
+        let empty = validate_resolved_addrs("example.com", &[], false)
+            .expect_err("empty DNS results must be rejected");
+        assert!(empty.to_string().contains("returned no addresses"));
+
+        let private =
+            validate_resolved_addrs("example.com", &["10.0.0.1:443".parse().unwrap()], false)
+                .expect_err("private DNS answers must be rejected");
+        assert!(private.to_string().contains("SSRF blocked"));
+
+        assert!(
+            validate_resolved_addrs("localhost", &["127.0.0.1:443".parse().unwrap()], true).is_ok()
+        );
+        let mixed = validate_resolved_addrs(
+            "localhost",
+            &[
+                "127.0.0.1:443".parse().unwrap(),
+                "8.8.8.8:443".parse().unwrap(),
+            ],
+            true,
+        )
+        .expect_err("loopback-only hosts must reject any external answer");
+        assert!(mixed.to_string().contains("only to loopback"));
     }
 }
