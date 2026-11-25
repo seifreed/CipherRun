@@ -142,3 +142,42 @@ impl ChangeTracker {
         Ok(changes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::DatabaseConfig;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn detect_rating_changes_rejects_scans_without_ids() {
+        let db = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .unwrap();
+        let tracker = ChangeTracker::new(Arc::new(db));
+        let missing_id = ScanRecord::new("rating-id.test".to_string(), 443);
+        let existing_id = ScanRecord {
+            scan_id: Some(1),
+            ..ScanRecord::new("rating-id.test".to_string(), 443)
+        };
+        let timestamp = Utc::now();
+
+        let error = tracker
+            .detect_rating_changes(&missing_id, &existing_id, timestamp)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Scan 1 missing scan_id"));
+
+        let error = tracker
+            .detect_rating_changes(&existing_id, &missing_id, timestamp)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Scan 2 missing scan_id"));
+
+        let changes = tracker
+            .detect_rating_changes(&existing_id, &existing_id, timestamp)
+            .await
+            .unwrap();
+        assert!(changes.is_empty());
+    }
+}
