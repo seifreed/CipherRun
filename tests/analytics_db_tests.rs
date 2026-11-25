@@ -1798,6 +1798,89 @@ async fn test_change_tracker_does_not_report_cipher_changes_for_protocol_name_fo
 }
 
 #[tokio::test]
+async fn test_change_tracker_covers_rating_direction_rationale_and_category_changes() {
+    let db = setup_db().await;
+    let (scan1, scan2) = insert_default_scan_pair(&db, "rating-diagnostics.test", Utc::now()).await;
+
+    insert_rating_with_rationale(&db, scan1, "protocol", 80, Some("B"), Some("older")).await;
+    insert_rating_with_rationale(&db, scan2, "protocol", 90, Some("A"), Some("improved")).await;
+    insert_rating_with_rationale(
+        &db,
+        scan1,
+        "certificate",
+        80,
+        Some("B"),
+        Some("old rationale"),
+    )
+    .await;
+    insert_rating_with_rationale(
+        &db,
+        scan2,
+        "certificate",
+        80,
+        Some("A"),
+        Some("new rationale"),
+    )
+    .await;
+    insert_rating_with_rationale(
+        &db,
+        scan1,
+        "cipher",
+        70,
+        Some("C"),
+        Some("removed rationale"),
+    )
+    .await;
+    insert_rating_with_rationale(
+        &db,
+        scan2,
+        "key_exchange",
+        95,
+        Some("A"),
+        Some("new category"),
+    )
+    .await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("rating categories and rationale should be compared");
+    let rating_changes: Vec<_> = changes
+        .iter()
+        .filter(|change| matches!(change.change_type, ChangeType::Rating))
+        .collect();
+
+    let find = |description: &str| {
+        rating_changes
+            .iter()
+            .find(|change| change.description == description)
+            .expect("expected rating change")
+    };
+    assert_eq!(
+        find("Rating changed: protocol").severity,
+        ChangeSeverity::Low
+    );
+    let rationale_change = find("Rating changed: certificate");
+    assert_eq!(rationale_change.severity, ChangeSeverity::Medium);
+    assert!(
+        rationale_change
+            .current_value
+            .as_deref()
+            .unwrap()
+            .contains("rationale=new rationale")
+    );
+    assert_eq!(
+        find("Rating removed: cipher").severity,
+        ChangeSeverity::Medium
+    );
+    assert_eq!(
+        find("Rating added: key_exchange").severity,
+        ChangeSeverity::Medium
+    );
+}
+
+#[tokio::test]
 async fn test_change_tracker_detects_component_rating_changes_without_overall_change() {
     let db = setup_db().await;
     let now = Utc::now();

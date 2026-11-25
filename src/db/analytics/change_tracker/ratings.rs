@@ -28,13 +28,8 @@ impl ChangeTracker {
         match new.score.cmp(&old.score) {
             std::cmp::Ordering::Less => ChangeSeverity::High,
             std::cmp::Ordering::Greater => ChangeSeverity::Low,
-            std::cmp::Ordering::Equal => {
-                if old.grade != new.grade || old.rationale != new.rationale {
-                    ChangeSeverity::Medium
-                } else {
-                    ChangeSeverity::Info
-                }
-            }
+            // The caller invokes this only when some rating field changed.
+            std::cmp::Ordering::Equal => ChangeSeverity::Medium,
         }
     }
 
