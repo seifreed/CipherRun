@@ -402,8 +402,7 @@ mod tests {
         let certificate = pqc_certificate_chain();
         let protocols = vec![proto_result(Protocol::TLS13, true)];
 
-        let assessment =
-            PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
+        let assessment = PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
 
         assert_eq!(assessment.score, 100);
         assert_eq!(assessment.level, PqcLevel::Full);
@@ -422,14 +421,16 @@ mod tests {
             proto_result(Protocol::TLS12, true),
         ];
 
-        let assessment =
-            PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
+        let assessment = PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
 
         assert_eq!(assessment.score, 60);
         assert_eq!(assessment.level, PqcLevel::Hybrid);
-        assert!(assessment.recommendations.iter().any(|recommendation| {
-            recommendation.contains("Disable TLS 1.2 and earlier")
-        }));
+        assert!(
+            assessment
+                .recommendations
+                .iter()
+                .any(|recommendation| { recommendation.contains("Disable TLS 1.2 and earlier") })
+        );
     }
 
     #[test]

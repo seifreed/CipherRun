@@ -219,6 +219,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_read_line_rejects_invalid_utf8() {
+        let mut client = response_client(16, vec![0xff, b'\n']);
+        let mut reader = BufReader::new(&mut client);
+
+        let err = read_line(&mut reader)
+            .await
+            .expect_err("invalid UTF-8 response should fail");
+
+        assert!(format!("{err}").contains("not valid UTF-8"));
+    }
+
+    #[tokio::test]
     async fn test_read_line_rejects_line_over_limit_without_newline() {
         let mut client = response_client(MAX_LINE_LENGTH + 8, vec![b'a'; MAX_LINE_LENGTH + 1]);
         let mut reader = BufReader::new(&mut client);
