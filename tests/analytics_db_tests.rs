@@ -1920,6 +1920,44 @@ async fn test_change_tracker_detects_component_rating_changes_without_overall_ch
 }
 
 #[tokio::test]
+async fn test_change_tracker_marks_overall_score_improvement_as_low_severity() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let scan1 = insert_scan(
+        &db,
+        "overall-rating-improved.test",
+        443,
+        now - Duration::days(2),
+        Some("B"),
+        Some(80),
+    )
+    .await;
+    let scan2 = insert_scan(
+        &db,
+        "overall-rating-improved.test",
+        443,
+        now - Duration::days(1),
+        Some("A"),
+        Some(90),
+    )
+    .await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("overall score improvement should be compared");
+    let overall = changes
+        .iter()
+        .find(|change| change.description == "Overall rating changed")
+        .expect("overall rating change should be reported");
+
+    assert_eq!(overall.severity, ChangeSeverity::Low);
+    assert_eq!(overall.previous_value.as_deref(), Some("B (80)"));
+    assert_eq!(overall.current_value.as_deref(), Some("A (90)"));
+}
+
+#[tokio::test]
 async fn test_change_tracker_formats_missing_overall_score_as_unknown() {
     let db = setup_db().await;
     let now = Utc::now();
