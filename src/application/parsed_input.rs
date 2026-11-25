@@ -177,6 +177,7 @@ mod tests {
     fn parses_host_port_days() {
         for (input, hostname, port, days) in [
             ("example.com:443:7", "example.com", 443, 7),
+            ("https://example.com:8443:7", "example.com", 8443, 7),
             ("192.0.2.1:443:7", "192.0.2.1", 443, 7),
             ("example.com.:443:7", "example.com", 443, 7),
             (" example.com:443: 7 ", "example.com", 443, 7),
