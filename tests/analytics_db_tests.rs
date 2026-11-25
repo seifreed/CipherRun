@@ -1045,6 +1045,38 @@ async fn test_scan_comparator_protocol_and_cipher_diffs_are_order_stable() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_classifies_unchanged_new_and_resolved_vulnerabilities() {
+    let db = setup_db().await;
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "vulnerability-categories.test", Utc::now()).await;
+
+    insert_vulnerability(&db, scan1, "UnchangedIssue", "high").await;
+    insert_vulnerability(&db, scan2, "UnchangedIssue", "high").await;
+    insert_vulnerability(&db, scan1, "ResolvedIssue", "medium").await;
+    insert_vulnerability(&db, scan2, "NewIssue", "critical").await;
+
+    let comparison = ScanComparator::new(Arc::clone(&db))
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("vulnerability changes should be classified");
+
+    assert_eq!(comparison.vulnerability_diff.unchanged.len(), 1);
+    assert_eq!(
+        comparison.vulnerability_diff.unchanged[0].vuln_type,
+        "UnchangedIssue"
+    );
+    assert_eq!(comparison.vulnerability_diff.new.len(), 1);
+    assert_eq!(comparison.vulnerability_diff.new[0].vuln_type, "NewIssue");
+    assert_eq!(comparison.vulnerability_diff.resolved.len(), 1);
+    assert_eq!(
+        comparison.vulnerability_diff.resolved[0].vuln_type,
+        "ResolvedIssue"
+    );
+    assert!(comparison.vulnerability_diff.changed.is_empty());
+    assert_eq!(comparison.summary.vulnerability_changes, 2);
+}
+
+#[tokio::test]
 async fn test_scan_comparator_marks_vulnerability_severity_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();
