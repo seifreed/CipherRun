@@ -246,6 +246,14 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_lucky13_rejects_target_without_probe_addresses() {
+        let mut target = localhost_target(443);
+        target.ip_addresses.clear();
+
+        assert!(Lucky13Tester::new(target).test().await.is_err());
+    }
+
     #[cfg_attr(windows, ignore = "transport error classification differs on Windows")]
     #[tokio::test]
     async fn test_lucky13_closed_handshake_is_inconclusive() {
