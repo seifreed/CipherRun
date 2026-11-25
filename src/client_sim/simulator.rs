@@ -709,4 +709,60 @@ mod tests {
 
         assert!(err.to_string().contains("not supported by rustls"));
     }
+
+    #[tokio::test]
+    async fn test_simulate_client_completes_local_tls_handshake() {
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener.local_addr().expect("listener address").port();
+        let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("test certificate should generate");
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![generated.cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(
+                        generated.signing_key.serialize_der(),
+                    ),
+                ),
+            )
+            .expect("test server config should build");
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(server_config));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("simulated client should connect");
+            acceptor
+                .accept(stream)
+                .await
+                .expect("simulated TLS handshake should complete");
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        )
+        .expect("loopback target should be valid");
+        let result = ClientSimulator::new(target)
+            .simulate_client(&sample_profile(Some("tls1_3")))
+            .await;
+        server.await.expect("test TLS server should complete");
+
+        assert!(result.success, "simulation failed: {:?}", result.error);
+        assert_eq!(result.protocol, Some(Protocol::TLS13));
+        assert!(
+            result
+                .cipher
+                .as_deref()
+                .is_some_and(|cipher| cipher.starts_with("TLS_AES_"))
+        );
+        assert!(result.forward_secrecy);
+        assert!(result.handshake_time_ms.is_some());
+        assert!(result.certificate_type.is_some());
+    }
 }
