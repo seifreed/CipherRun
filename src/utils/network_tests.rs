@@ -240,6 +240,34 @@ fn test_split_target_host_port_rejects_bracketed_ipv4() {
     );
 }
 
+#[test]
+fn test_split_target_host_port_rejects_unclosed_ipv6_bracket() {
+    let error = split_target_host_port("[2001:db8::1")
+        .expect_err("unclosed IPv6 bracket should be rejected");
+
+    assert!(error.to_string().contains("missing closing bracket"));
+}
+
+#[test]
+fn test_split_target_host_port_accepts_bracketed_ipv6_without_port() {
+    assert_eq!(
+        split_target_host_port("[2001:db8::1]").expect("bracketed IPv6 should parse"),
+        ("2001:db8::1".to_string(), None)
+    );
+}
+
+#[test]
+fn test_split_target_host_port_rejects_suffix_after_bracketed_ipv6() {
+    let error = split_target_host_port("[2001:db8::1]extra")
+        .expect_err("unexpected IPv6 suffix should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Invalid format after IPv6 address")
+    );
+}
+
 #[tokio::test]
 async fn test_parse_target_with_explicit_port_override() {
     let target = Target::parse_with_port_override("93.184.216.34:443", Some(8443))
