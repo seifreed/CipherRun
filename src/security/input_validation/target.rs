@@ -1,6 +1,5 @@
 use super::ValidationError;
 use super::hostname::validate_hostname;
-use super::looks_like_obfuscated_ip;
 use super::port::validate_port;
 use super::ssrf::is_private_ip;
 use std::net::{IpAddr, Ipv6Addr};
@@ -59,13 +58,6 @@ pub fn validate_target(
         return Err(ValidationError::SsrfAttempt(format!(
             "Access to private IP addresses is not allowed: {}",
             ip
-        )));
-    }
-
-    if looks_like_obfuscated_ip(&hostname) {
-        return Err(ValidationError::InvalidHostname(format!(
-            "Target cannot use obfuscated IP notation: {}",
-            hostname
         )));
     }
 
@@ -399,5 +391,20 @@ mod tests {
             result.is_err(),
             "Bracketed target syntax is only valid for IPv6 literals"
         );
+    }
+
+    #[test]
+    fn test_validate_target_rejects_malformed_bracketed_and_ambiguous_ipv6() {
+        for (target, expected) in [
+            ("[::1", "missing closing bracket"),
+            ("[::1]extra", "Invalid format after IPv6 address"),
+            ("[::1]:not-a-port", "Invalid port format"),
+            ("2001:db8::1:65535", "Ambiguous IPv6 address with port"),
+        ] {
+            let error = validate_target(target, true).expect_err(target);
+            assert!(error.to_string().contains(expected), "{target}: {error}");
+        }
+
+        assert!(validate_target("2001:::1", true).is_err());
     }
 }
