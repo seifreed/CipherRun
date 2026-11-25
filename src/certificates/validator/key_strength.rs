@@ -111,6 +111,39 @@ mod tests {
     }
 
     #[test]
+    fn test_ec_key_strength_boundaries_follow_warning_policy() {
+        let mut weak_ec = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        weak_ec.public_key_algorithm = "id-ecPublicKey".to_string();
+        weak_ec.public_key_size = Some(192);
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut issues = Vec::new();
+
+        assert!(!validator.check_key_strength(&weak_ec, &mut issues));
+        assert!(issues.iter().any(|issue| {
+            matches!(issue.severity, IssueSeverity::High)
+                && matches!(issue.issue_type, IssueType::ShortKeyLength)
+        }));
+
+        let mut acceptable_ec = weak_ec.clone();
+        acceptable_ec.public_key_size = Some(224);
+        issues.clear();
+        assert!(validator.check_key_strength(&acceptable_ec, &mut issues));
+        assert!(issues.iter().any(|issue| {
+            matches!(issue.severity, IssueSeverity::Low)
+                && matches!(issue.issue_type, IssueType::ShortKeyLength)
+        }));
+
+        let quiet_validator =
+            CertificateValidator::with_skip_warnings("example.com".to_string(), true);
+        issues.clear();
+        assert!(quiet_validator.check_key_strength(&acceptable_ec, &mut issues));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
     fn test_key_strength_skip_warnings_suppresses_low() {
         let validator = CertificateValidator::with_skip_warnings("example.com".to_string(), true);
         let mut issues = Vec::new();
