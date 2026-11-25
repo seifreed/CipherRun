@@ -587,6 +587,7 @@ mod tests {
     use std::io::Write;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use tracing::instrument::WithSubscriber;
     use tracing_subscriber::fmt::MakeWriter;
 
     #[derive(Clone)]
@@ -624,9 +625,11 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let result = tracing::subscriber::with_default(subscriber, || {
-            runtime.block_on(scanner.initialize())
-        });
+        let result = runtime.block_on(
+            scanner
+                .initialize()
+                .with_subscriber(tracing::Dispatch::new(subscriber)),
+        );
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         (result, output)
     }
