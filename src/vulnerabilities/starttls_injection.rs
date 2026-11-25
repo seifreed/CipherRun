@@ -572,6 +572,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pop3_injection_is_inconclusive_without_greeting() {
+        let port = start_scripted_server(b"", vec![]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_rejects_non_ok_greeting() {
+        let port = start_scripted_server(b"-ERR maintenance\r\n", vec![]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_is_inconclusive_without_capability_response() {
+        let port = start_scripted_server(b"+OK POP3 server\r\n", vec![b""]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_handles_truncated_capability_response() {
+        let port =
+            start_scripted_server(b"+OK POP3 server\r\n", vec![b"+OK CAPA\r\nSTLS\r\n"]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_rejects_capability_without_stls() {
+        let port =
+            start_scripted_server(b"+OK POP3 server\r\n", vec![b"+OK CAPA\r\nTOP\r\n.\r\n"]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_is_inconclusive_without_stls_response() {
+        let port = start_scripted_server(
+            b"+OK POP3 server\r\n",
+            vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b""],
+        )
+        .await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pop3_injection_rejects_stls_response_without_second_ok() {
+        let port = start_scripted_server(
+            b"+OK POP3 server\r\n",
+            vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK Begin TLS\r\n"],
+        )
+        .await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_pop3_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
     async fn test_non_starttls_port_details() {
         let tester = loopback_tester(9999);
 
