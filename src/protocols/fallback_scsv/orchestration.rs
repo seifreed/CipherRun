@@ -258,6 +258,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn client_hello_omits_sni_extension_for_ip_literal_targets() {
+        let target = Target::with_ips(
+            "127.0.0.1".to_string(),
+            443,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let tester = FallbackScsvTester::new(&target);
+
+        let hello = tester
+            .build_client_hello_with_scsv(Protocol::TLS12.as_hex(), true)
+            .unwrap();
+
+        assert!(hello.ends_with(&[0, 0]));
+    }
+
     #[tokio::test]
     async fn insufficient_protocol_results_are_inconclusive_and_require_detected_maximum() {
         let target = target();
