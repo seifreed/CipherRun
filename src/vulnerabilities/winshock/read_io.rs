@@ -1,10 +1,10 @@
 use crate::constants::TLS_RECORD_HEADER_SIZE;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::time::timeout;
 
-pub(super) async fn complete_tls_record(
-    stream: &mut tokio::net::TcpStream,
+pub(super) async fn complete_tls_record<R: AsyncRead + Unpin>(
+    stream: &mut R,
     buffer: &mut [u8],
     timeout_duration: Duration,
 ) -> std::io::Result<usize> {
@@ -13,10 +13,7 @@ pub(super) async fn complete_tls_record(
         if total >= buffer.len() {
             break;
         }
-        let Some(read_buf) = buffer.get_mut(total..) else {
-            break;
-        };
-        let n = match timeout(timeout_duration, stream.read(read_buf)).await {
+        let n = match timeout(timeout_duration, stream.read(&mut buffer[total..])).await {
             Ok(Ok(n)) => n,
             Ok(Err(err)) => return Err(err),
             Err(_) => break,
@@ -27,14 +24,7 @@ pub(super) async fn complete_tls_record(
         total += n;
         if total >= TLS_RECORD_HEADER_SIZE {
             let record_len = usize::from(u16::from_be_bytes([buffer[3], buffer[4]]));
-            let record_total = TLS_RECORD_HEADER_SIZE
-                .checked_add(record_len)
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Winshock TLS record length overflow",
-                    )
-                })?;
+            let record_total = TLS_RECORD_HEADER_SIZE + record_len;
             if record_total > buffer.len() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -47,4 +37,70 @@ pub(super) async fn complete_tls_record(
         }
     }
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::ReadBuf;
+
+    struct ScriptedReader(VecDeque<io::Result<Vec<u8>>>);
+
+    impl AsyncRead for ScriptedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            match self.0.pop_front() {
+                Some(Ok(bytes)) => {
+                    buffer.put_slice(&bytes);
+                    Poll::Ready(Ok(()))
+                }
+                Some(Err(error)) => Poll::Ready(Err(error)),
+                None => Poll::Ready(Ok(())),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_record_reader_returns_eof_and_propagates_read_errors() {
+        let mut eof = ScriptedReader(VecDeque::new());
+        assert_eq!(
+            complete_tls_record(&mut eof, &mut [0; 5], Duration::from_secs(1))
+                .await
+                .unwrap(),
+            0
+        );
+
+        let mut partial = ScriptedReader(VecDeque::from([Ok(vec![0x16])]));
+        assert_eq!(
+            complete_tls_record(&mut partial, &mut [0; 5], Duration::from_secs(1))
+                .await
+                .unwrap(),
+            1
+        );
+
+        let mut empty_buffer = ScriptedReader(VecDeque::new());
+        assert_eq!(
+            complete_tls_record(&mut empty_buffer, &mut [], Duration::from_secs(1))
+                .await
+                .unwrap(),
+            0
+        );
+
+        let error = io::Error::from(io::ErrorKind::PermissionDenied);
+        let mut failed = ScriptedReader(VecDeque::from([Err(error)]));
+        assert_eq!(
+            complete_tls_record(&mut failed, &mut [0; 5], Duration::from_secs(1))
+                .await
+                .expect_err("unexpected read errors should propagate")
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
 }
