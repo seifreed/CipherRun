@@ -437,6 +437,33 @@ mod tests {
     }
 
     #[test]
+    fn test_ripestat_prefix_parse_success_and_empty_results() {
+        let json = serde_json::json!({
+            "data": {
+                "prefixes": [
+                    { "prefix": "192.0.2.0/24" },
+                    { "prefix": "2001:db8::/32" }
+                ]
+            }
+        });
+
+        let prefixes = AsnCidrParser::parse_ripestat_prefixes(64496, &json)
+            .expect("valid RIPEstat prefixes should parse");
+        assert_eq!(prefixes.len(), 2);
+        assert!(prefixes.contains(&"192.0.2.0/24".parse().unwrap()));
+        assert!(prefixes.contains(&"2001:db8::/32".parse().unwrap()));
+
+        for empty in [
+            serde_json::json!({}),
+            serde_json::json!({"data": {"prefixes": []}}),
+        ] {
+            let err = AsnCidrParser::parse_ripestat_prefixes(64496, &empty)
+                .expect_err("missing prefixes should be rejected");
+            assert!(err.to_string().contains("No prefixes found"));
+        }
+    }
+
+    #[test]
     fn test_parse_input_asn() {
         match AsnCidrParser::parse_input("AS1449") {
             InputType::Asn(asn) => assert_eq!(asn, "AS1449"),
@@ -453,6 +480,12 @@ mod tests {
         match AsnCidrParser::parse_input("as1449") {
             InputType::Asn(asn) => assert_eq!(asn, "as1449"),
             _ => panic!("Expected ASN input type for lowercase 'as' prefix"),
+        }
+
+        for asn in ["As1449", "aS1449"] {
+            assert!(
+                matches!(AsnCidrParser::parse_input(asn), InputType::Asn(value) if value == asn)
+            );
         }
     }
 
@@ -502,6 +535,24 @@ mod tests {
     async fn test_expand_inputs_rejects_empty_hostname() {
         let result = AsnCidrParser::expand_inputs(vec!["   ".to_string()]).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_expand_inputs_handles_cidr_ip_and_hostname() {
+        let expanded = AsnCidrParser::expand_inputs(vec![
+            "192.0.2.0/30".to_string(),
+            "192.0.2.7".to_string(),
+            "example.com".to_string(),
+        ])
+        .await
+        .expect("non-ASN inputs should expand without network access");
+
+        assert!(matches!(&expanded[0], ExpandedInput::Cidr { .. }));
+        assert!(matches!(expanded[1], ExpandedInput::Ip { .. }));
+        assert!(
+            matches!(&expanded[2], ExpandedInput::Hostname { hostname } if hostname == "example.com")
+        );
+        assert!(expanded.iter().all(|input| input.target_count() > 0));
     }
 
     #[test]
@@ -568,6 +619,14 @@ mod tests {
         assert_eq!(ips.len(), 4);
         assert_eq!(ips[0].to_string(), "192.0.2.0");
         assert_eq!(ips[3].to_string(), "192.0.2.3");
+    }
+
+    #[test]
+    fn test_large_cidr_expansion_iterates_network_lazily() {
+        let expansion = expand_cidr("192.0.0.0/21");
+        assert_eq!(expansion.total_ips(), 2048);
+        assert_eq!(expansion.iter().take(2).count(), 2);
+        assert!(matches!(expansion, CidrExpansion::Network { .. }));
     }
 
     #[test]
