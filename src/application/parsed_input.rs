@@ -73,15 +73,16 @@ pub struct HostPortDaysInput {
 impl HostPortDaysInput {
     pub fn parse(raw: &str) -> Result<Self> {
         let raw = raw.trim();
-        if raw.matches(':').count() < 2 {
+        let Some((host_port, days_str)) = raw.rsplit_once(':') else {
+            return Err(TlsError::InvalidInput {
+                message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
+            });
+        };
+        if !host_port.contains(':') {
             return Err(TlsError::InvalidInput {
                 message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
             });
         }
-
-        let (host_port, days_str) = raw.rsplit_once(':').ok_or_else(|| TlsError::InvalidInput {
-            message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
-        })?;
         if host_port.contains("://") {
             let url = url::Url::parse(host_port).map_err(|_| TlsError::InvalidInput {
                 message: "Expected format HOSTNAME:PORT:DAYS".to_string(),
@@ -211,6 +212,8 @@ mod tests {
     #[test]
     fn rejects_invalid_host_port_days() {
         for input in [
+            "",
+            "example.com:7",
             "example.com:443:0",
             "example.com:443:-7",
             "example.com:443:invalid",
