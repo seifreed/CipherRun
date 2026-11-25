@@ -381,4 +381,17 @@ mod tests {
         let is_weak = is_debian_weak_key(&cert).expect("test assertion should succeed");
         assert!(!is_weak);
     }
+
+    #[test]
+    fn test_certificate_without_public_key_returns_diagnostic_error() {
+        let cert = X509::builder()
+            .expect("X509 builder should initialize")
+            .build();
+
+        let error = DebianKeyDetector::new()
+            .is_weak_key(&cert)
+            .expect_err("certificate without a public key should be rejected");
+
+        assert!(error.contains("Failed to extract public key"));
+    }
 }
