@@ -122,6 +122,14 @@ impl FileJobStorage {
 
         Ok(())
     }
+
+    fn job_id_from_path(path: &std::path::Path) -> Result<&str> {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| crate::TlsError::InvalidInput {
+                message: format!("Invalid job file name: {}", path.display()),
+            })
+    }
 }
 
 impl JobStorage for FileJobStorage {
@@ -168,12 +176,7 @@ impl JobStorage for FileJobStorage {
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 Self::validate_job_file_count(jobs.len() + 1)?;
-                let expected_id =
-                    path.file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| crate::TlsError::InvalidInput {
-                            message: format!("Invalid job file name: {}", path.display()),
-                        })?;
+                let expected_id = Self::job_id_from_path(&path)?;
                 self.job_path(expected_id)?;
                 let json = Self::read_job_file(&path)?;
                 let job = serde_json::from_str::<ScanJob>(&json).map_err(|e| {
@@ -356,6 +359,20 @@ mod tests {
 
         let err = storage
             .load_all_jobs()
+            .expect_err("non-UTF-8 job filename should be rejected");
+
+        assert!(err.to_string().contains("Invalid job file name"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_job_id_from_path_rejects_non_utf8_stem() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&[
+            0xff, b'.', b'j', b's', b'o', b'n',
+        ]));
+        let err = FileJobStorage::job_id_from_path(path)
             .expect_err("non-UTF-8 job filename should be rejected");
 
         assert!(err.to_string().contains("Invalid job file name"));
