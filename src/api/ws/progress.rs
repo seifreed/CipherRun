@@ -624,6 +624,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_websocket_resumes_after_progress_receiver_lags() {
+        let (tx, _) = broadcast::channel(1);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("websocket should connect");
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("websocket should subscribe to progress");
+        for progress in 0..100 {
+            tx.send(ProgressMessage::new("global-scan", progress, "running"))
+                .expect("progress should broadcast");
+        }
+
+        let latest = next_text(&mut socket).await;
+        assert_eq!(latest["scan_id"], "global-scan");
+        assert_eq!(latest["progress"], 99);
+        socket
+            .send(ClientMessage::Close(None))
+            .await
+            .expect("close frame should send");
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
     async fn test_scan_websocket_filters_other_scans_and_closes_when_complete() {
         let (tx, _) = broadcast::channel(8);
         let state = Arc::new(WsState {
