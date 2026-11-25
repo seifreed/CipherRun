@@ -157,6 +157,18 @@ async fn insert_vulnerability(
     vuln_type: &str,
     severity: &str,
 ) {
+    insert_vulnerability_with_details(db, scan_id, vuln_type, severity, None, None, None).await;
+}
+
+async fn insert_vulnerability_with_details(
+    db: &CipherRunDatabase,
+    scan_id: i64,
+    vuln_type: &str,
+    severity: &str,
+    description: Option<&str>,
+    cve_id: Option<&str>,
+    affected_component: Option<&str>,
+) {
     let mut qb = db.pool().query_builder();
     let query = qb.insert_query(
         "vulnerabilities",
@@ -173,9 +185,9 @@ async fn insert_vulnerability(
         BindValue::Int64(scan_id),
         BindValue::String(vuln_type.to_string()),
         BindValue::String(severity.to_string()),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
-        BindValue::OptString(None),
+        BindValue::OptString(description.map(str::to_string)),
+        BindValue::OptString(cve_id.map(str::to_string)),
+        BindValue::OptString(affected_component.map(str::to_string)),
     ];
     db.pool()
         .execute(&query, bindings)
@@ -1437,6 +1449,57 @@ async fn test_change_tracker_marks_vulnerability_severity_changes_as_changed() {
     assert!(report.contains("Vulnerability changed: SeverityFlip"));
     assert!(!report.contains("Vulnerability resolved: SeverityFlip"));
     assert!(!report.contains("New vulnerability detected: SeverityFlip"));
+}
+
+#[tokio::test]
+async fn test_change_tracker_includes_vulnerability_metadata_in_change_details() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let (scan1, scan2) = insert_default_scan_pair(&db, "change-tracker-metadata.test", now).await;
+
+    insert_vulnerability_with_details(
+        &db,
+        scan1,
+        "MetadataIssue",
+        "medium",
+        Some("old description"),
+        Some("CVE-2025-1234"),
+        Some("TLS handshake"),
+    )
+    .await;
+    insert_vulnerability_with_details(
+        &db,
+        scan2,
+        "MetadataIssue",
+        "medium",
+        Some("new description"),
+        Some("CVE-2025-1234"),
+        Some("TLS handshake"),
+    )
+    .await;
+
+    let tracker = ChangeTracker::new(Arc::clone(&db));
+    let changes = tracker
+        .detect_changes_between(scan1, scan2)
+        .await
+        .expect("test assertion should succeed");
+    let change = changes
+        .iter()
+        .find(|change| matches!(change.change_type, ChangeType::Vulnerability))
+        .expect("metadata change should be reported");
+
+    assert_eq!(
+        change.previous_value.as_deref(),
+        Some(
+            "severity=medium, description=old description, cve=CVE-2025-1234, component=TLS handshake"
+        )
+    );
+    assert_eq!(
+        change.current_value.as_deref(),
+        Some(
+            "severity=medium, description=new description, cve=CVE-2025-1234, component=TLS handshake"
+        )
+    );
 }
 
 #[tokio::test]
