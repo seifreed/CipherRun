@@ -44,6 +44,57 @@ pub(crate) fn verify_cert_signature(cert_der: &[u8], issuer_der: &[u8]) -> crate
 mod tests {
     use super::*;
 
+    fn self_signed_der() -> Vec<u8> {
+        rcgen::generate_simple_self_signed(["example.com".to_string()])
+            .expect("certificate should build")
+            .cert
+            .der()
+            .as_ref()
+            .to_vec()
+    }
+
+    #[test]
+    fn verifies_a_certificate_signed_by_the_matching_issuer() {
+        let der = self_signed_der();
+
+        assert!(verify_cert_signature(&der, &der).expect("signature verification should work"));
+    }
+
+    #[test]
+    fn returns_false_when_the_issuer_key_does_not_match() {
+        let cert_der = self_signed_der();
+        let other_issuer_der = self_signed_der();
+
+        assert!(
+            !verify_cert_signature(&cert_der, &other_issuer_der)
+                .expect("valid certificate signatures should be compared")
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_certificate_der() {
+        let issuer_der = self_signed_der();
+
+        let error = verify_cert_signature(&[0x00], &issuer_der)
+            .expect_err("malformed certificate DER should be rejected");
+
+        assert!(error.to_string().contains("Failed to parse certificate"));
+    }
+
+    #[test]
+    fn rejects_malformed_issuer_der() {
+        let cert_der = self_signed_der();
+
+        let error = verify_cert_signature(&cert_der, &[0x00])
+            .expect_err("malformed issuer DER should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse issuer certificate")
+        );
+    }
+
     #[test]
     fn rejects_trailing_certificate_der_bytes() {
         let cert = rcgen::generate_simple_self_signed(["example.com".to_string()])
