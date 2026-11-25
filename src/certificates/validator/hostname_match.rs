@@ -231,4 +231,58 @@ mod tests {
         assert!(!validator.check_hostname(&cert, &mut issues));
         assert!(!issues.is_empty());
     }
+
+    #[test]
+    fn test_hostname_matches_single_label_cn_wildcard() {
+        let cert = test_cert("CN=*.example.com", &[]);
+        let validator = CertificateValidator::new("api.example.com".to_string());
+        let mut issues = Vec::new();
+
+        assert!(validator.check_hostname(&cert, &mut issues));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_hostname_cn_wildcard_matches_exactly_one_label() {
+        let cert = test_cert("CN=*.example.com", &[]);
+
+        for hostname in ["a.api.example.com", "example.com"] {
+            let validator = CertificateValidator::new(hostname.to_string());
+            let mut issues = Vec::new();
+
+            assert!(!validator.check_hostname(&cert, &mut issues), "{hostname}");
+            assert!(!issues.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_hostname_rejects_invalid_cn_wildcards_and_missing_cn() {
+        for subject in ["CN=*.", "CN=*.com", "O=Example", "malformed"] {
+            let cert = test_cert(subject, &[]);
+            let validator = CertificateValidator::new("api.example.com".to_string());
+            let mut issues = Vec::new();
+
+            assert!(!validator.check_hostname(&cert, &mut issues), "{subject}");
+            assert!(issues.iter().any(|issue| {
+                matches!(issue.issue_type, IssueType::HostnameMismatch)
+                    && matches!(issue.severity, IssueSeverity::Critical)
+            }));
+        }
+    }
+
+    #[test]
+    fn test_hostname_rejects_invalid_san_wildcard_suffixes() {
+        for san in ["*.", "*.com"] {
+            let cert = test_cert("CN=api.example.com", &[san]);
+            let validator = CertificateValidator::new("api.example.com".to_string());
+            let mut issues = Vec::new();
+
+            assert!(!validator.check_hostname(&cert, &mut issues), "{san}");
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| { matches!(issue.issue_type, IssueType::HostnameMismatch) })
+            );
+        }
+    }
 }
