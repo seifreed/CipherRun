@@ -265,4 +265,68 @@ mod tests {
         assert!(!result.cbc_supported);
         assert!(result.inconclusive, "{result:?}");
     }
+
+    #[tokio::test]
+    async fn test_lucky13_detects_a_successful_cbc_handshake() {
+        use openssl::asn1::Asn1Time;
+        use openssl::bn::BigNum;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::ssl::{SslAcceptor, SslMethod, SslVersion};
+        use openssl::x509::{X509Builder, X509NameBuilder};
+        use std::time::Duration;
+
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "localhost").unwrap();
+        let name = name.build();
+        let mut certificate = X509Builder::new().unwrap();
+        certificate.set_version(2).unwrap();
+        let serial = BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap();
+        certificate.set_serial_number(&serial).unwrap();
+        certificate.set_subject_name(&name).unwrap();
+        certificate.set_issuer_name(&name).unwrap();
+        certificate.set_pubkey(&key).unwrap();
+        certificate
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        certificate
+            .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        certificate.sign(&key, MessageDigest::sha256()).unwrap();
+
+        let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        acceptor.set_private_key(&key).unwrap();
+        acceptor.set_certificate(&certificate.build()).unwrap();
+        acceptor.set_cipher_list("AES128-SHA:@SECLEVEL=0").unwrap();
+        acceptor
+            .set_min_proto_version(Some(SslVersion::TLS1_2))
+            .unwrap();
+        acceptor
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .unwrap();
+        let acceptor = std::sync::Arc::new(acceptor.build());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let stream = socket.into_std().unwrap();
+            stream.set_nonblocking(false).unwrap();
+            acceptor.accept(stream).unwrap();
+        });
+
+        let result = Lucky13Tester::new(localhost_target(addr.port()))
+            .test()
+            .await
+            .unwrap();
+        server.await.unwrap();
+
+        assert!(result.cbc_supported, "{result:?}");
+        assert!(!result.inconclusive, "{result:?}");
+    }
 }
