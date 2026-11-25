@@ -176,6 +176,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn captured_writer_flushes_successfully() {
+        let mut writer = CapturedWriter(Arc::new(Mutex::new(Vec::new())));
+
+        writer
+            .flush()
+            .expect("captured writer flush should succeed");
+    }
+
     async fn build_state_with_db() -> Arc<AppState> {
         let config = DatabaseConfig::sqlite(create_unique_test_db_path("stats"));
         let pool = DatabasePool::new(&config)
