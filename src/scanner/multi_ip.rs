@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn test_terminal_progress_callbacks() {
         let progress = TerminalMultiIpProgress::new();
-        let default_progress = TerminalMultiIpProgress::default();
+        let default_progress = <TerminalMultiIpProgress as Default>::default();
 
         progress.on_scan_start(2);
         default_progress.on_scan_start(0);
