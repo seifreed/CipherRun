@@ -281,6 +281,24 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_job_reports_filesystem_errors() {
+        let (temp_dir, storage) = temp_storage();
+        let job_id = Uuid::new_v4().to_string();
+        std::fs::create_dir(temp_dir.path().join(format!("{job_id}.json")))
+            .expect("test directory should be created");
+
+        assert!(storage.delete_job(&job_id).is_err());
+    }
+
+    #[test]
+    fn test_save_job_reports_missing_storage_directory() {
+        let (temp_dir, storage) = temp_storage();
+        std::fs::remove_dir(temp_dir.path()).expect("empty storage directory should be removed");
+
+        assert!(storage.save_job(&test_job()).is_err());
+    }
+
+    #[test]
     fn test_load_all_jobs_reports_corrupt_job_file() {
         let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
@@ -292,6 +310,39 @@ mod tests {
             .expect_err("corrupt persisted job should fail loudly");
 
         assert!(err.to_string().contains("Failed to parse job file"));
+    }
+
+    #[test]
+    fn test_load_job_reports_corrupt_job_file() {
+        let (temp_dir, storage) = temp_storage();
+        let job_id = Uuid::new_v4().to_string();
+        std::fs::write(temp_dir.path().join(format!("{job_id}.json")), "{not-json")
+            .expect("test assertion should succeed");
+
+        let err = storage
+            .load_job(&job_id)
+            .expect_err("corrupt persisted job should fail loudly");
+
+        assert!(matches!(err, crate::TlsError::SerializationError(_)));
+    }
+
+    #[test]
+    fn test_load_all_jobs_rejects_payload_id_mismatch() {
+        let (temp_dir, storage) = temp_storage();
+        let mut job = test_job();
+        job.id = Uuid::new_v4().to_string();
+        let json = serde_json::to_string(&job).expect("test assertion should succeed");
+        std::fs::write(
+            temp_dir.path().join(format!("{}.json", Uuid::new_v4())),
+            json,
+        )
+        .expect("test assertion should succeed");
+
+        let err = storage
+            .load_all_jobs()
+            .expect_err("mismatched persisted id should fail");
+
+        assert!(err.to_string().contains("Persisted job id mismatch"));
     }
 
     #[cfg(target_os = "linux")]
