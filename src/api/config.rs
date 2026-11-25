@@ -1187,10 +1187,9 @@ enable_swagger = true
             b'a', b'p', b'i', 0xff, b'.', b't', b'o', b'm', b'l',
         ]));
 
-        let err = match ApiConfig::from_file(&path) {
-            Ok(_) => panic!("missing non-UTF-8 path should produce a filesystem error"),
-            Err(err) => err,
-        };
+        let err = ApiConfig::from_file(&path)
+            .map(|_| ())
+            .expect_err("missing non-UTF-8 path should produce a filesystem error");
 
         assert!(!err.to_string().contains("Invalid config file path"));
     }
