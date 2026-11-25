@@ -425,6 +425,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_imap_injection_is_inconclusive_without_greeting() {
+        let port = start_scripted_server(b"", vec![]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_rejects_non_ok_greeting() {
+        let port = start_scripted_server(b"* BYE maintenance\r\n", vec![]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_is_inconclusive_without_capability_response() {
+        let port = start_scripted_server(b"* OK IMAP4rev1\r\n", vec![b""]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_rejects_capability_without_starttls() {
+        let port =
+            start_scripted_server(b"* OK IMAP4rev1\r\n", vec![b"* CAPABILITY IMAP4rev1\r\n"]).await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_is_inconclusive_without_starttls_response() {
+        let port = start_scripted_server(
+            b"* OK IMAP4rev1\r\n",
+            vec![b"* CAPABILITY IMAP4rev1 STARTTLS\r\n"],
+        )
+        .await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::Inconclusive
+        );
+    }
+
+    #[tokio::test]
+    async fn test_imap_injection_rejects_starttls_success_without_injected_login() {
+        let port = start_scripted_server(
+            b"* OK IMAP4rev1\r\n",
+            vec![
+                b"* CAPABILITY IMAP4rev1 STARTTLS\r\n",
+                b"a002 OK Begin TLS\r\n",
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            loopback_tester(port)
+                .test_imap_injection_status()
+                .await
+                .unwrap(),
+            StarttlsInjectionStatus::NotVulnerable
+        );
+    }
+
+    #[tokio::test]
     async fn test_pop3_injection_vulnerable() {
         assert_pop3_injection(
             vec![b"+OK CAPA\r\nSTLS\r\n.\r\n", b"+OK STLS\r\n+OK USER\r\n"],

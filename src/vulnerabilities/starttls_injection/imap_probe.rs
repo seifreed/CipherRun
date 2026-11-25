@@ -37,12 +37,11 @@ pub(super) async fn test_command_injection(
     let mut response = String::new();
     for _ in 0..4 {
         let line = match timeout(Duration::from_secs(2), response::read_line(&mut reader)).await {
-            Ok(Ok(line)) if !line.is_empty() => line,
+            Ok(Ok(line)) => line,
             Ok(Err(_)) | Err(_) if response.is_empty() => {
                 return Ok(StarttlsInjectionStatus::Inconclusive);
             }
             Ok(Err(_)) | Err(_) => break,
-            _ => break,
         };
         response.push_str(&line);
     }
