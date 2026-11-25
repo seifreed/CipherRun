@@ -304,6 +304,8 @@ mod tests {
         ] {
             assert!(logs.contains(event_name));
         }
+        assert!(logs.contains("actor_permission=Admin"));
+        assert!(logs.contains("credential_permission=User"));
         assert!(logs.contains("tenant_scoped=true"));
         assert!(!logs.contains("sensitive-key-id"));
         assert!(!logs.contains("sensitive-secret-hash"));
