@@ -1077,6 +1077,37 @@ async fn test_scan_comparator_classifies_unchanged_new_and_resolved_vulnerabilit
 }
 
 #[tokio::test]
+async fn test_scan_comparator_pairs_duplicate_vulnerabilities_without_false_diffs() {
+    let db = setup_db().await;
+    let (scan1, scan2) =
+        insert_default_scan_pair(&db, "duplicate-comparator-vulns.test", Utc::now()).await;
+
+    for scan_id in [scan1, scan1, scan2, scan2] {
+        insert_vulnerability_with_details(
+            &db,
+            scan_id,
+            "DuplicateIssue",
+            "high",
+            Some("same finding"),
+            Some("CVE-2025-0002"),
+            Some("TLS handshake"),
+        )
+        .await;
+    }
+
+    let comparison = ScanComparator::new(Arc::clone(&db))
+        .compare_scans(scan1, scan2)
+        .await
+        .expect("duplicate findings should pair deterministically");
+
+    assert_eq!(comparison.vulnerability_diff.unchanged.len(), 2);
+    assert!(comparison.vulnerability_diff.new.is_empty());
+    assert!(comparison.vulnerability_diff.resolved.is_empty());
+    assert!(comparison.vulnerability_diff.changed.is_empty());
+    assert_eq!(comparison.summary.vulnerability_changes, 0);
+}
+
+#[tokio::test]
 async fn test_scan_comparator_marks_vulnerability_severity_changes_as_changed() {
     let db = setup_db().await;
     let now = Utc::now();
