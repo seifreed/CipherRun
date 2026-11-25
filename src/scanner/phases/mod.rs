@@ -624,12 +624,14 @@ mod tests {
             .finish();
         let dispatch = tracing::Dispatch::new(subscriber);
         let _default_subscriber = tracing::dispatcher::set_default(&dispatch);
+        let parent = tracing::dispatcher::with_default(&dispatch, || tracing::info_span!("test"));
         let orchestrator = PhaseOrchestrator::new().add_phase(Box::new(ErrorPhase {
             error: crate::TlsError::Other("probe failed target=private.example".to_string()),
         }));
 
         let results = orchestrator
             .execute(test_scan_context(ScanRequest::default()))
+            .instrument(parent)
             .with_subscriber(dispatch)
             .await
             .expect("nonfatal phase errors should be recoverable");
