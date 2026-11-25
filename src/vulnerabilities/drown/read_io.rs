@@ -197,6 +197,14 @@ mod tests {
 
     #[tokio::test]
     async fn read_errors_are_classified_by_whether_data_was_received() {
+        let mut eof = ScriptedReader(VecDeque::new());
+        assert_eq!(
+            read_complete_sslv2_record(&mut eof, &mut [0; 8])
+                .await
+                .unwrap(),
+            0
+        );
+
         let mut empty_timeout =
             ScriptedReader(VecDeque::from([Err(io::Error::from(ErrorKind::TimedOut))]));
         assert_eq!(
