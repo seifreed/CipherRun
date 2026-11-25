@@ -206,6 +206,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_with_cleanup_cleans_expired_entries_over_threshold() {
+        let cache = DnsCache::new(Duration::ZERO);
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+        for index in 0..=10_000 {
+            cache
+                .insert(format!("host-{index}.example"), vec![ip])
+                .await;
+        }
+
+        assert!(cache.get_with_cleanup("host-0.example").await.is_none());
+        assert_eq!(cache.size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_cleans_expired_entries_at_capacity() {
+        let cache = DnsCache::new(Duration::ZERO);
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+        for index in 0..50_000 {
+            cache
+                .insert(format!("expired-{index}.example"), vec![ip])
+                .await;
+        }
+        cache.insert("fresh.example".to_string(), vec![ip]).await;
+
+        assert_eq!(cache.size().await, 1);
+    }
+
+    #[tokio::test]
     async fn test_cache_expiration() {
         let cache = DnsCache::new(Duration::from_millis(100));
         let hostname = "example.com".to_string();
