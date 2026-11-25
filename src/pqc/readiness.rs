@@ -233,6 +233,17 @@ mod tests {
         }
     }
 
+    fn pqc_certificate_chain() -> CertificateChain {
+        CertificateChain {
+            certificates: vec![crate::certificates::parser::CertificateInfo {
+                signature_algorithm: "ML-DSA-65".to_string(),
+                ..Default::default()
+            }],
+            chain_length: 1,
+            chain_size_bytes: 0,
+        }
+    }
+
     #[test]
     fn test_pqc_level_none_when_no_data() {
         let assessment = PqcReadinessScorer::assess(None, None, &[]);
@@ -383,6 +394,42 @@ mod tests {
         assert_eq!(PqcLevel::Partial.label(), "Partial");
         assert_eq!(PqcLevel::Hybrid.label(), "Hybrid");
         assert_eq!(PqcLevel::Full.label(), "Full");
+    }
+
+    #[test]
+    fn test_pqc_certificate_and_tls13_only_reach_full_readiness() {
+        let groups = groups(vec![kx_group("X25519MLKEM768", false, true)]);
+        let certificate = pqc_certificate_chain();
+        let protocols = vec![proto_result(Protocol::TLS13, true)];
+
+        let assessment =
+            PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
+
+        assert_eq!(assessment.score, 100);
+        assert_eq!(assessment.level, PqcLevel::Full);
+    }
+
+    #[test]
+    fn test_pqc_readiness_with_legacy_tls_is_hybrid_and_warns() {
+        let groups = groups(vec![
+            kx_group("X25519", true, true),
+            kx_group("secp256r1", true, true),
+            kx_group("X25519MLKEM768", false, true),
+        ]);
+        let certificate = pqc_certificate_chain();
+        let protocols = vec![
+            proto_result(Protocol::TLS13, true),
+            proto_result(Protocol::TLS12, true),
+        ];
+
+        let assessment =
+            PqcReadinessScorer::assess(Some(&groups), Some(&certificate), &protocols);
+
+        assert_eq!(assessment.score, 60);
+        assert_eq!(assessment.level, PqcLevel::Hybrid);
+        assert!(assessment.recommendations.iter().any(|recommendation| {
+            recommendation.contains("Disable TLS 1.2 and earlier")
+        }));
     }
 
     #[test]
