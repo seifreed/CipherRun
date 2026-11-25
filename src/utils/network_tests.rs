@@ -119,6 +119,14 @@ fn test_split_target_host_port_uses_known_url_default_ports() {
 }
 
 #[test]
+fn test_split_target_host_port_rejects_malformed_url() {
+    let err =
+        split_target_host_port("https://[").expect_err("malformed target URLs should be rejected");
+
+    assert!(matches!(err, crate::error::TlsError::UrlParseError(_)));
+}
+
+#[test]
 fn test_split_target_host_port_rejects_non_http_url_scheme() {
     let err = split_target_host_port("ftp://example.com:21")
         .expect_err("non-HTTP target URL schemes should fail");
@@ -254,6 +262,23 @@ fn test_split_target_host_port_accepts_bracketed_ipv6_without_port() {
         split_target_host_port("[2001:db8::1]").expect("bracketed IPv6 should parse"),
         ("2001:db8::1".to_string(), None)
     );
+}
+
+#[test]
+fn test_split_target_host_port_parses_bracketed_ipv6_with_port() {
+    assert_eq!(
+        split_target_host_port("[2001:db8::1]:8443")
+            .expect("bracketed IPv6 with a port should parse"),
+        ("2001:db8::1".to_string(), Some(8443))
+    );
+}
+
+#[test]
+fn test_split_target_host_port_rejects_invalid_bracketed_ipv6_port() {
+    let error = split_target_host_port("[2001:db8::1]:not-a-port")
+        .expect_err("invalid IPv6 target ports should be rejected");
+
+    assert!(error.to_string().contains("Invalid port number"));
 }
 
 #[test]
