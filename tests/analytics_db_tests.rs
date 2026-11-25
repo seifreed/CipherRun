@@ -1296,6 +1296,14 @@ async fn test_change_tracker_detect_changes_compares_history_and_needs_two_scans
     insert_protocol(&db, newer_scan, "TLS 1.3", true, true).await;
 
     let tracker = ChangeTracker::new(Arc::clone(&db));
+    assert!(
+        tracker
+            .detect_changes("empty-change-history.test", 443, 10)
+            .await
+            .expect("empty history should produce no changes")
+            .is_empty()
+    );
+
     let changes = tracker
         .detect_changes("change-history.test", 443, 2)
         .await
