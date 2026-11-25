@@ -185,6 +185,8 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: Test
+        env:
+          RUST_TEST_THREADS: "1"
         run: cargo test --all --locked
 
   build-test-ubuntu:
@@ -228,6 +230,7 @@ jobs:
       - name: Test
         env:
           CIPHERRUN_TEST_POSTGRES_URL: postgres://cipherrun:cipherrun-ci-only@localhost:5432/cipherrun
+          RUST_TEST_THREADS: "1"
         run: cargo test --all --locked
 
       - name: Install cargo-llvm-cov
