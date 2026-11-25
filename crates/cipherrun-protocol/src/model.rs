@@ -244,6 +244,7 @@ mod tests {
             .finish();
 
         let protocol = tracing::subscriber::with_default(subscriber, || Protocol::from(0xffff));
+        CapturedOutputWriter(output.0.clone()).flush().unwrap();
 
         assert_eq!(protocol, Protocol::TLS12);
         let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
