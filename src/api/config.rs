@@ -749,6 +749,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
             .with_max_level(tracing::Level::ERROR)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
@@ -756,14 +758,21 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             remove_example_file(directory.path(), "bootstrap_token");
         });
+        CapturedWriter(output.clone())
+            .flush()
+            .expect("captured writer flush should succeed");
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        assert!(
-            output.contains("api.config.example.cleanup_failed"),
-            "{output}"
+        let event: serde_json::Value =
+            serde_json::from_str(output.trim()).expect("cleanup event should be valid JSON");
+        assert_eq!(
+            event["fields"]["event_name"],
+            "api.config.example.cleanup_failed"
         );
-        assert!(output.contains("bootstrap_token"), "{output}");
-        assert!(output.contains("file_may_remain"), "{output}");
+        assert_eq!(event["fields"]["file_kind"], "bootstrap_token");
+        assert_eq!(event["fields"]["error_type"], "filesystem");
+        assert_eq!(event["fields"]["error_code"], "io");
+        assert_eq!(event["fields"]["outcome"], "file_may_remain");
         assert!(
             !output.contains(directory.path().to_str().unwrap()),
             "{output}"
