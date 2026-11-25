@@ -390,8 +390,10 @@ mod tests {
     #[test]
     fn test_terminal_progress_callbacks() {
         let progress = TerminalMultiIpProgress::new();
+        let default_progress = TerminalMultiIpProgress::default();
 
         progress.on_scan_start(2);
+        default_progress.on_scan_start(0);
         progress.on_ip_start("127.0.0.1", 1, 2);
 
         let ok = IpScanProgress {
@@ -436,6 +438,19 @@ mod tests {
 
         progress.on_consistency_analysis_start();
         progress.on_consistency_analysis_complete(&[]);
+        let inconsistency = Inconsistency {
+            inconsistency_type: crate::scanner::inconsistency::InconsistencyType::ProtocolSupport,
+            severity: crate::vulnerabilities::Severity::Medium,
+            description: "Protocol support differs across backends".to_string(),
+            ips_affected: vec!["127.0.0.1".parse().unwrap()],
+            details: crate::scanner::inconsistency::InconsistencyDetails::Protocols {
+                protocol: crate::protocols::Protocol::TLS12,
+                ips_with_support: vec!["127.0.0.1".parse().unwrap()],
+                ips_without_support: vec!["127.0.0.2".parse().unwrap()],
+            },
+        };
+        progress.on_consistency_analysis_complete(std::slice::from_ref(&inconsistency));
+        progress.on_consistency_analysis_complete(&[inconsistency.clone(), inconsistency]);
         progress.on_aggregation_start();
     }
 

@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(result.files_scanned, 1);
         assert_eq!(result.findings.len(), 1);
         assert_eq!(result.findings[0].algorithm, "MD5");
-        assert!(result.findings[0].file.ends_with("src/lib.rs"));
+        assert!(std::path::Path::new(&result.findings[0].file).ends_with("src/lib.rs"));
     }
 
     #[test]
