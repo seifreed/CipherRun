@@ -14,7 +14,7 @@ scripts/validate-rule-pack-provenance.sh
 scripts/validate-trust-store-provenance.sh
 scripts/check-stable-contracts.sh
 cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --all-features --locked
+RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 # SQLx 0.8 retains rsa 0.9 in Cargo.lock through its optional MySQL driver. Keep
 # the exception valid only while rsa is absent from every enabled project feature.
