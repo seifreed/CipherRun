@@ -449,6 +449,7 @@ mod tests {
     use super::*;
     use crate::api::models::response::ProgressMessage;
     use axum::{Router, extract::Path, routing::get};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio_tungstenite::tungstenite::Message as ClientMessage;
@@ -684,6 +685,58 @@ mod tests {
             ClientMessage::Close(_)
         ));
 
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
+    async fn test_scan_websocket_times_out_when_peer_does_not_finish_close() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let address = url.strip_prefix("ws://").expect("test URL should use ws");
+        let mut socket = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("websocket TCP connection should open");
+        socket
+            .write_all(
+                format!(
+                    "GET /requested-scan HTTP/1.1\r\nHost: {address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("websocket upgrade request should send");
+        let mut response = Vec::new();
+        while !response.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            socket
+                .read_exact(&mut byte)
+                .await
+                .expect("websocket upgrade response should arrive");
+            response.push(byte[0]);
+        }
+        assert!(response.starts_with(b"HTTP/1.1 101"));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("websocket should subscribe to progress");
+        tx.send(ProgressMessage::completed("requested-scan"))
+            .expect("completion should broadcast");
+
+        let started = std::time::Instant::now();
+        let mut frames = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), socket.read_to_end(&mut frames))
+            .await
+            .expect("server should close after the close-handshake timeout")
+            .expect("websocket stream should close cleanly");
+        assert!(started.elapsed() >= Duration::from_millis(900));
+        assert!(!frames.is_empty());
         let _ = shutdown.send(());
     }
 }
