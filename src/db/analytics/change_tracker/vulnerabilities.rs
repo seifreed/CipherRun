@@ -74,21 +74,16 @@ impl ChangeTracker {
             let mut new_used = vec![false; new_vulns.len()];
 
             for candidate in candidates {
-                if old_used.get(candidate.old_index).copied().unwrap_or(true)
-                    || new_used.get(candidate.new_index).copied().unwrap_or(true)
-                {
+                // Candidate indices come directly from enumerating these vectors.
+                if old_used[candidate.old_index] || new_used[candidate.new_index] {
                     continue;
                 }
                 if candidate.score == 0 && !allow_zero_score_pairing {
                     continue;
                 }
 
-                if let Some(used) = old_used.get_mut(candidate.old_index) {
-                    *used = true;
-                }
-                if let Some(used) = new_used.get_mut(candidate.new_index) {
-                    *used = true;
-                }
+                old_used[candidate.old_index] = true;
+                new_used[candidate.new_index] = true;
 
                 if vulnerability_record_changed(candidate.old, candidate.new) {
                     changes.push(ChangeEvent {
