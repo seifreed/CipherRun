@@ -100,10 +100,8 @@ impl IdsFriendlyLimiter {
         if self.request_count >= self.config.max_requests_per_minute {
             // Wait until the minute is up
             let elapsed = self.last_reset.elapsed();
-            if elapsed < Duration::from_secs(60) {
-                let wait_time = Duration::from_secs(60) - elapsed;
-                sleep(wait_time).await;
-            }
+            let wait_time = Duration::from_secs(60).saturating_sub(elapsed);
+            sleep(wait_time).await;
             self.request_count = 0;
             self.last_reset = std::time::Instant::now();
         }
@@ -270,5 +268,47 @@ mod tests {
             limiter.request_count = request_count;
             assert_eq!(limiter.remaining_requests(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn test_wait_resets_expired_window_and_uses_fixed_delay() {
+        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
+            min_delay_ms: 0,
+            max_delay_ms: 0,
+            randomize: false,
+            max_requests_per_minute: 20,
+        });
+        limiter.request_count = 5;
+        limiter.last_reset = Instant::now() - Duration::from_secs(61);
+
+        limiter.wait().await;
+
+        assert_eq!(limiter.request_count, 1);
+        assert_eq!(limiter.remaining_requests(), 19);
+    }
+
+    #[tokio::test]
+    async fn test_wait_at_rate_limit_waits_until_window_expires() {
+        let mut limiter = IdsFriendlyLimiter::new(IdsFriendlyConfig {
+            min_delay_ms: 0,
+            max_delay_ms: 0,
+            randomize: false,
+            max_requests_per_minute: 1,
+        });
+        limiter.request_count = 1;
+        limiter.last_reset = Instant::now() - Duration::from_millis(59_999);
+        let old_reset = limiter.last_reset;
+
+        limiter.wait().await;
+
+        assert_eq!(limiter.request_count, 1);
+        assert_eq!(limiter.remaining_requests(), 0);
+        assert!(limiter.last_reset > old_reset);
+        assert!(limiter.would_exceed_limit());
+    }
+
+    #[tokio::test]
+    async fn test_fixed_delay_accepts_zero() {
+        fixed_delay(0).await;
     }
 }
