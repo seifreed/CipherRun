@@ -329,4 +329,31 @@ mod tests {
         assert!(result.cbc_supported, "{result:?}");
         assert!(!result.inconclusive, "{result:?}");
     }
+
+    #[tokio::test]
+    async fn test_lucky13_treats_tls_handshake_failure_as_no_cbc_support() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut client_hello_start = [0];
+            socket.read_exact(&mut client_hello_start).await.unwrap();
+            socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                .await
+                .unwrap();
+        });
+
+        let result = Lucky13Tester::new(localhost_target(port))
+            .test()
+            .await
+            .unwrap();
+        server.await.unwrap();
+
+        assert!(!result.cbc_supported, "{result:?}");
+        assert!(!result.inconclusive, "{result:?}");
+        assert!(result.details.contains("does not support CBC"));
+    }
 }
