@@ -158,4 +158,18 @@ mod tests {
         validator.check_key_strength(&cert, &mut issues);
         assert!(issues.is_empty(), "Low-severity advisory should be skipped");
     }
+
+    #[test]
+    fn missing_key_size_does_not_create_a_strength_finding() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let mut cert = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        cert.public_key_size = None;
+        let mut issues = Vec::new();
+
+        assert!(validator.check_key_strength(&cert, &mut issues));
+        assert!(issues.is_empty());
+    }
 }
