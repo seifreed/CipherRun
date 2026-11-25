@@ -199,6 +199,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_host_port_days_url() {
+        assert!(HostPortDaysInput::parse("https://:443:7").is_err());
+    }
+
+    #[test]
     fn rejects_host_port_days_url_path_colon_without_authority_port() {
         assert!(HostPortDaysInput::parse("https://example.com/path:443:7").is_err());
     }
