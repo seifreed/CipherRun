@@ -268,6 +268,7 @@ mod tests {
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
             .without_time()
+            .with_max_level(tracing::Level::INFO)
             .with_ansi(false)
             .with_writer(output.clone())
             .finish();
@@ -291,6 +292,9 @@ mod tests {
                 audit_credential_transition(event_name, Permission::Admin, &credential);
             }
         });
+        CapturedOutputWriter(output.0.clone())
+            .flush()
+            .expect("captured writer flush should succeed");
 
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         for event_name in [
@@ -305,5 +309,15 @@ mod tests {
         assert!(!logs.contains("sensitive-secret-hash"));
         assert!(!logs.contains("sensitive-principal-id"));
         assert!(!logs.contains("sensitive-tenant-id"));
+    }
+
+    #[test]
+    fn unexpected_store_errors_map_to_safe_internal_diagnostics() {
+        let error = map_store_error(crate::TlsError::IoError {
+            source: std::io::Error::other("secret filesystem detail"),
+        });
+
+        assert!(matches!(error, ApiError::Internal(_)));
+        assert!(!error.to_string().contains("secret filesystem detail"));
     }
 }
