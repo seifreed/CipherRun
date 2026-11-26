@@ -274,6 +274,36 @@ mod tests {
     use crate::vulnerabilities::test_support::two_ip_example_target;
     use rustls::client::danger::ServerCertVerifier;
     use std::time::Duration;
+    use tokio_rustls::TlsAcceptor;
+
+    async fn spawn_self_signed_tls_server(
+        max_connections: usize,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = rustls::pki_types::CertificateDer::from(cert.cert);
+        let key =
+            rustls::pki_types::PrivateKeyDer::try_from(cert.signing_key.serialize_der()).unwrap();
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            for _ in 0..max_connections {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let _ = acceptor.accept(stream).await;
+                });
+            }
+        });
+        (address, handle)
+    }
 
     #[test]
     fn test_opossum_tester_creation() {
@@ -324,6 +354,24 @@ mod tests {
             tester.test_certificate_parsing().await.unwrap(),
             OpossumStatus::Inconclusive
         );
+    }
+
+    #[tokio::test]
+    async fn successful_tls_fixture_exercises_both_probe_paths() {
+        let (address, server) = spawn_self_signed_tls_server(2).await;
+        let target =
+            Target::with_ips("localhost".to_string(), address.port(), vec![address.ip()]).unwrap();
+        let tester = OpossumTester::new(target);
+
+        assert_eq!(
+            tester.test_openssl_version_addr(address).await.unwrap(),
+            OpossumStatus::Inconclusive
+        );
+        assert_eq!(
+            tester.test_certificate_parsing_addr(address).await.unwrap(),
+            OpossumStatus::NotVulnerable
+        );
+        server.await.unwrap();
     }
 
     #[test]
