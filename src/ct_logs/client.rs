@@ -552,6 +552,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_entries_rejects_reversed_range_without_network_access() {
+        let err = CtClient::new()
+            .get_entries("https://ct.example.com", 2, 1)
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("start (2) > end (1)"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_size_stops_after_retryable_server_errors() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let request_calls = calls.clone();
+        let app = Router::new().route(
+            "/ct/v1/get-sth",
+            get(move || {
+                let calls = request_calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let err = CtClient::new()
+            .get_tree_size(&format!("http://{addr}"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("Server error after 3 retries"));
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_RETRIES as usize);
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn test_get_tree_size_parse_error() {
         let app = Router::new().route(
             "/ct/v1/get-sth",
