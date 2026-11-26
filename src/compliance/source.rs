@@ -251,4 +251,75 @@ mod tests {
         assert!(err.to_string().contains("Framework file"));
         assert!(err.to_string().contains("too large"));
     }
+
+    #[test]
+    fn test_load_from_file_parses_embedded_framework_copy() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let path = temp_dir.path().join("framework.yaml");
+        let content = BuiltinFrameworkSource::builtin_embedded("hipaa.yaml")
+            .expect("HIPAA framework should be embedded");
+        std::fs::write(&path, content).expect("framework should write");
+
+        let framework = BuiltinFrameworkSource::load_from_file(&path)
+            .expect("valid framework file should parse");
+        assert_eq!(framework.id, "hipaa");
+    }
+
+    #[test]
+    fn test_framework_file_errors_cover_missing_invalid_utf8_and_invalid_yaml() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let missing = temp_dir.path().join("missing.yaml");
+        assert!(
+            BuiltinFrameworkSource::load_from_file(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to inspect framework file")
+        );
+
+        let invalid_utf8 = temp_dir.path().join("invalid-utf8.yaml");
+        std::fs::write(&invalid_utf8, [0xff]).expect("invalid UTF-8 should write");
+        assert!(
+            BuiltinFrameworkSource::load_from_file(&invalid_utf8)
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to read framework file")
+        );
+
+        let invalid_yaml = temp_dir.path().join("invalid-yaml.yaml");
+        std::fs::write(&invalid_yaml, "rule_pack: [").expect("invalid YAML should write");
+        assert!(
+            BuiltinFrameworkSource::load_from_file(&invalid_yaml)
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to parse framework YAML")
+        );
+    }
+
+    #[test]
+    fn test_rule_pack_metadata_rejects_invalid_document_and_empty_fields() {
+        assert!(
+            BuiltinFrameworkSource::metadata_from_content("not: [yaml")
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid rule pack metadata")
+        );
+
+        let valid = BuiltinFrameworkSource::builtin_embedded("hipaa.yaml")
+            .expect("HIPAA framework should be embedded");
+        let missing_version = valid.replace("version: \"2026.08.1\"", "version: \" \"");
+        assert!(
+            BuiltinFrameworkSource::metadata_from_content(&missing_version)
+                .unwrap_err()
+                .to_string()
+                .contains("fields cannot be empty")
+        );
+
+        assert!(
+            BuiltinFrameworkSource::builtin_filename("unknown")
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown framework ID")
+        );
+        assert!(BuiltinFrameworkSource::builtin_embedded("unknown.yaml").is_none());
+    }
 }
