@@ -1053,7 +1053,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 0));
@@ -1154,7 +1154,7 @@ mod tests {
             get_job_error: true,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1204,7 +1204,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: true,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let (progress_tx, _) = broadcast::channel(1);
@@ -1251,7 +1251,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let job = ScanJob::new(
@@ -1285,7 +1285,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue.clone(), 1);
@@ -1323,7 +1323,7 @@ mod tests {
             get_job_error: true,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
 
@@ -1361,7 +1361,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
@@ -1407,7 +1407,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: true,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
@@ -1659,7 +1659,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: Some(RetryDisposition::Requeued),
+            retry_result: Ok(RetryDisposition::Requeued),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = ScanExecutor::new(queue.clone(), 1);
@@ -1674,6 +1674,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_schedule_failure_is_logged_safely_and_scan_fails() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new(
+            "invalid target with spaces".to_string(),
+            ScanOptions::full(),
+            None,
+        );
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            retry_result: Err("private retry backend detail"),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let mut progress = executor.subscribe_progress();
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        executor
+            .execute_scan(queue, job.clone())
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let message = loop {
+            let message = progress.try_recv().expect("scan progress is broadcast");
+            if message.msg_type == "failed" {
+                break message;
+            }
+        };
+        assert_eq!(message.msg_type, "failed");
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event["fields"]["event_name"],
+            "scan_job.retry.schedule_failed"
+        );
+        assert_eq!(event["fields"]["error_code"], "other");
+        assert!(!output.contains("private retry backend detail"));
+    }
+
+    #[tokio::test]
     async fn running_progress_is_broadcast_and_persisted_to_the_queue() {
         let job = ScanJob::new("example.com".to_string(), ScanOptions::full(), None);
         let queue: Arc<dyn JobQueue> = Arc::new(GatedJobQueue {
@@ -1685,7 +1738,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let (progress_tx, mut progress_rx) = broadcast::channel(1);
@@ -1777,7 +1830,7 @@ mod tests {
         get_job_error: bool,
         get_job_panics: bool,
         cancel_on_get: bool,
-        retry_disposition: Option<RetryDisposition>,
+        retry_result: std::result::Result<RetryDisposition, &'static str>,
         dequeue_calls: AtomicUsize,
     }
 
@@ -1831,9 +1884,8 @@ mod tests {
             _error: &str,
             _max_attempts: u32,
         ) -> Result<RetryDisposition> {
-            Ok(self
-                .retry_disposition
-                .unwrap_or(RetryDisposition::DeadLettered))
+            self.retry_result
+                .map_err(|message| TlsError::Other(message.into()))
         }
 
         async fn cancel_job(&self, _id: &str) -> Result<bool> {
@@ -1870,7 +1922,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue, 1));
@@ -1906,7 +1958,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
@@ -1937,7 +1989,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
@@ -2004,7 +2056,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
@@ -2057,7 +2109,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2104,7 +2156,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
@@ -2169,7 +2221,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
-            retry_disposition: None,
+            retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
         let executor = Arc::new(ScanExecutor::new(queue.clone(), 1));
