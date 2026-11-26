@@ -157,7 +157,24 @@ impl<'a> ScannerFormatter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vulnerabilities::Severity;
+    use crate::vulnerabilities::{Severity, VulnerabilityType};
+
+    fn result(
+        vuln_type: VulnerabilityType,
+        vulnerable: bool,
+        inconclusive: bool,
+        severity: Severity,
+    ) -> VulnerabilityResult {
+        VulnerabilityResult {
+            vuln_type,
+            vulnerable,
+            inconclusive,
+            details: "test details".to_string(),
+            cve: Some("CVE-2014-0160".to_string()),
+            cwe: None,
+            severity,
+        }
+    }
 
     #[test]
     fn test_ordered_vulnerability_severity_counts_includes_info() {
@@ -170,5 +187,58 @@ mod tests {
         assert_eq!(ordered.len(), 2);
         assert_eq!(ordered[0], (Severity::High, 1));
         assert_eq!(ordered[1], (Severity::Info, 2));
+    }
+
+    #[test]
+    fn display_results_covers_findings_severities_and_hint_paths() {
+        let mut args = crate::Args::default();
+        args.output.hints = true;
+        let formatter = ScannerFormatter::new(&args);
+        let results = [
+            result(
+                VulnerabilityType::Heartbleed,
+                true,
+                false,
+                Severity::Critical,
+            ),
+            result(VulnerabilityType::CCSInjection, true, false, Severity::High),
+            result(
+                VulnerabilityType::Ticketbleed,
+                true,
+                false,
+                Severity::Medium,
+            ),
+            result(VulnerabilityType::ROBOT, true, false, Severity::Low),
+            result(VulnerabilityType::POODLE, true, false, Severity::Info),
+            result(VulnerabilityType::FREAK, true, true, Severity::Medium),
+            result(VulnerabilityType::ROBOT, false, true, Severity::Low),
+            result(VulnerabilityType::GREASE, false, false, Severity::Info),
+        ];
+
+        formatter.display_vulnerability_results(&results);
+        let mut without_cve = result(VulnerabilityType::Heartbleed, true, false, Severity::Info);
+        without_cve.cve = None;
+        formatter.display_vulnerability_results(&[without_cve]);
+    }
+
+    #[test]
+    fn display_results_handles_empty_and_hidden_inconclusive_summaries() {
+        let mut args = crate::Args::default();
+        args.output.warnings = Some("off".to_string());
+        let formatter = ScannerFormatter::new(&args);
+
+        formatter.display_vulnerability_results(&[]);
+        formatter.display_vulnerability_results(&[result(
+            VulnerabilityType::Heartbleed,
+            false,
+            true,
+            Severity::High,
+        )]);
+        formatter.display_vulnerability_results(&[result(
+            VulnerabilityType::Heartbleed,
+            true,
+            false,
+            Severity::Critical,
+        )]);
     }
 }
