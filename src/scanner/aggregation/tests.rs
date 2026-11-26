@@ -614,6 +614,65 @@ fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
 }
 
 #[test]
+fn test_aggregate_ciphers_counts_weak_categories_and_rejects_preference_disagreement() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+
+    let null_cipher = make_cipher("NULL-SHA", 0, "RSA", "NULL");
+    let mut export_cipher = make_cipher("EXP-RC4-MD5", 40, "RSA", "RC4");
+    export_cipher.export = true;
+    let low_cipher = make_cipher("RC4-SHA", 64, "RSA", "RC4");
+
+    let mut summary_ip1 = make_summary(
+        Protocol::TLS12,
+        vec![null_cipher.clone(), export_cipher.clone()],
+    );
+    summary_ip1.server_ordered = true;
+    summary_ip1.server_preference = vec!["0x0000".to_string()];
+    summary_ip1.preferred_cipher = Some(null_cipher);
+
+    let mut summary_ip2 = make_summary(Protocol::TLS12, vec![low_cipher.clone()]);
+    summary_ip2.server_ordered = true;
+    summary_ip2.server_preference = vec!["0x0000".to_string()];
+    summary_ip2.preferred_cipher = Some(low_cipher);
+
+    let scan_ip1 = make_scan_result(
+        Vec::new(),
+        HashMap::from([(Protocol::TLS12, summary_ip1)]),
+        "fp1",
+        Grade::A,
+        90,
+        Vec::new(),
+    );
+    let scan_ip2 = make_scan_result(
+        Vec::new(),
+        HashMap::from([(Protocol::TLS12, summary_ip2)]),
+        "fp2",
+        Grade::A,
+        90,
+        Vec::new(),
+    );
+    let results = HashMap::from([
+        (ip1, successful_scan(ip1, scan_ip1, 100)),
+        (ip2, successful_scan(ip2, scan_ip2, 120)),
+    ]);
+
+    let aggregate = ConservativeAggregator::new(results, Vec::new()).aggregate();
+    let summary = aggregate
+        .ciphers
+        .get(&Protocol::TLS12)
+        .expect("TLS 1.2 cipher summary should be aggregated");
+
+    assert_eq!(summary.counts.null_ciphers, 1);
+    assert_eq!(summary.counts.export_ciphers, 1);
+    assert_eq!(summary.counts.low_strength, 1);
+    assert_eq!(summary.counts.total, 3);
+    assert!(summary.server_ordered);
+    assert_eq!(summary.server_preference, vec!["0x0000"]);
+    assert!(summary.preferred_cipher.is_none());
+}
+
+#[test]
 fn test_aggregate_ciphers_preserves_matching_server_preference_and_deduplicates() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();

@@ -161,3 +161,13 @@ fn cipher_signature(
         cipher.export,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::consensus_server_preference;
+
+    #[test]
+    fn empty_summary_list_has_no_server_preference_consensus() {
+        assert!(consensus_server_preference(&[]).is_empty());
+    }
+}
