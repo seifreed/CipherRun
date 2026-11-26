@@ -699,6 +699,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_scan_results_reports_missing_completed_payload() {
+        let state = build_state();
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        job.mark_completed(crate::scanner::ScanResults::default());
+        job.results = None;
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+
+        let error = get_scan_results(State(state), test_auth(), Path(id))
+            .await
+            .expect_err("completed jobs without payloads are internal errors");
+
+        assert!(matches!(&error, ApiError::Internal(_)));
+        assert!(!error.to_string().contains("example.com"));
+    }
+
+    #[tokio::test]
     async fn test_cancel_scan_returns_not_found_for_missing_job() {
         let state = build_state();
 
@@ -794,9 +816,11 @@ mod tests {
             .with_writer(output.clone())
             .finish();
         let request = scan_request("example.com", Some(ScanOptions::full()));
+        let mut headers = HeaderMap::new();
+        headers.insert("Idempotency-Key", "scan-request-123".parse().unwrap());
 
         let (_, Json(response)) = async {
-            create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
+            create_scan(State(state), test_auth(), headers, Json(request))
                 .await
                 .expect("valid scan should be queued")
         }
@@ -809,6 +833,7 @@ mod tests {
         assert!(logs.contains("\"outcome\":\"queued\""), "{logs}");
         assert!(logs.contains("\"duration_ms\":"), "{logs}");
         assert!(!logs.contains("example.com"), "{logs}");
+        assert!(!logs.contains("scan-request-123"), "{logs}");
     }
 
     #[tokio::test]
