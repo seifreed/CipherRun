@@ -456,12 +456,11 @@ mod tests {
             LdapNegotiator::parse_starttls_response(&success[..success.len() - 1]).unwrap(),
             None
         );
-        assert_eq!(
+        assert!(
             LdapNegotiator::parse_starttls_response(&[success.as_slice(), &[0]].concat())
                 .unwrap_err()
                 .to_string()
-                .contains("trailing bytes"),
-            true
+                .contains("trailing bytes")
         );
 
         let mut rejected = success;
