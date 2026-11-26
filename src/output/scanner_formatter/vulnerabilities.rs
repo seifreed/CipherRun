@@ -216,6 +216,12 @@ mod tests {
         ];
 
         formatter.display_vulnerability_results(&results);
+        formatter.display_vulnerability_results(&[result(
+            VulnerabilityType::FREAK,
+            true,
+            true,
+            Severity::Medium,
+        )]);
         let mut without_cve = result(VulnerabilityType::Heartbleed, true, false, Severity::Info);
         without_cve.cve = None;
         formatter.display_vulnerability_results(&[without_cve]);
