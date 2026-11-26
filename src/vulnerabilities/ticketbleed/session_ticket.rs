@@ -243,6 +243,27 @@ mod tests {
     }
 
     #[test]
+    fn scans_multiple_handshake_messages_and_tls_records_for_tickets() {
+        let mut handshakes = message(0x02, &[0; 3]);
+        handshakes.extend_from_slice(&message(0x04, &[0, 0, 0, 0, 0, 2, 0xaa, 0xbb]));
+        let mut response = record(0x15, &[1, 2]);
+        response.extend_from_slice(&record(0x16, &handshakes));
+
+        assert!(is_present(&response).unwrap());
+        assert_eq!(extract(&response).unwrap(), Some(vec![0xaa, 0xbb]));
+    }
+
+    #[test]
+    fn handles_empty_and_non_handshake_responses_consistently() {
+        assert_eq!(extract(&[]).unwrap(), None);
+        assert!(!is_present(&[]).unwrap());
+
+        let non_handshake_prefix = [0x15, 0x03];
+        assert_eq!(extract(&non_handshake_prefix).unwrap(), None);
+        assert!(is_present(&non_handshake_prefix).is_err());
+    }
+
+    #[test]
     fn rejects_truncated_record_and_handshake_lengths() {
         assert!(extract(&[0x16, 0x03]).is_err());
         assert!(is_present(&[0x16, 0x03]).is_err());
