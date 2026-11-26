@@ -117,11 +117,9 @@ impl ClientHelloBuilder {
 
         let extensions_len = buf.len() - extensions_start - 2;
         let extensions_len = tls_vector::u16_len(extensions_len, "extensions list")?;
-        buf.get_mut(extensions_start..extensions_start + 2)
-            .ok_or_else(|| {
-                crate::TlsError::Other("extensions length placeholder missing".to_string())
-            })?
-            .copy_from_slice(&extensions_len.to_be_bytes());
+        // The placeholder was written immediately above, so this range is an
+        // invariant of the builder rather than a recoverable input error.
+        buf[extensions_start..extensions_start + 2].copy_from_slice(&extensions_len.to_be_bytes());
         Ok(())
     }
 
@@ -134,17 +132,15 @@ impl ClientHelloBuilder {
         hello_start: usize,
     ) -> crate::Result<()> {
         let handshake_len = tls_vector::u24_len(buf.len() - hello_start, "handshake length")?;
-        buf.get_mut(handshake_length_pos..handshake_length_pos + 3)
-            .ok_or_else(|| {
-                crate::TlsError::Other("handshake length placeholder missing".to_string())
-            })?
-            .copy_from_slice(&handshake_len);
+        // `handshake_length_pos` is produced alongside the placeholder by
+        // `handshake_offsets`, and the body is appended without removing bytes.
+        buf[handshake_length_pos..handshake_length_pos + 3].copy_from_slice(&handshake_len);
 
         let record_len = buf.len() - handshake_start;
         let record_len = tls_vector::u16_len(record_len, "record length")?;
-        buf.get_mut(length_pos..length_pos + 2)
-            .ok_or_else(|| crate::TlsError::Other("record length placeholder missing".to_string()))?
-            .copy_from_slice(&record_len.to_be_bytes());
+        // `length_pos` is the record-length placeholder written by
+        // `handshake_offsets` before the body is appended.
+        buf[length_pos..length_pos + 2].copy_from_slice(&record_len.to_be_bytes());
         Ok(())
     }
 }
