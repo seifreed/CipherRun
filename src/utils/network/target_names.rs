@@ -161,7 +161,7 @@ fn split_url_target(input: &str) -> Result<(String, Option<u16>)> {
     }
     let host = url
         .host_str()
-        .ok_or_else(|| TlsError::Other("No hostname in URL".to_string()))?
+        .ok_or(TlsError::Other("No hostname in URL".to_string()))?
         .to_string();
     if matches!(url.port(), Some(0)) {
         crate::tls_bail!("Port must be between 1 and 65535");
@@ -198,4 +198,17 @@ fn unbracket_host(hostname: &str) -> &str {
         .strip_prefix('[')
         .and_then(|value| value.strip_suffix(']'))
         .unwrap_or(hostname)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_target_host_port;
+
+    #[test]
+    fn split_https_target_uses_explicit_port() {
+        assert_eq!(
+            split_target_host_port("https://example.com:8443").unwrap(),
+            ("example.com".to_string(), Some(8443))
+        );
+    }
 }
