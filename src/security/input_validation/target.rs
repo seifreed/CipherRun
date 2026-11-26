@@ -374,6 +374,14 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_target_allows_bracketed_ipv6_without_port() {
+        assert_eq!(
+            validate_target("[::1]", true).unwrap(),
+            ("::1".to_string(), None)
+        );
+    }
+
+    #[test]
     fn test_validate_target_rejects_bracketed_hostname() {
         let result = validate_target("[example.com]:443", true);
 
