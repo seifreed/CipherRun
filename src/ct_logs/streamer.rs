@@ -612,6 +612,14 @@ mod tests {
         Json(serde_json::json!({ "entries": [] }))
     }
 
+    async fn test_unavailable_entries(
+        State(state): State<Arc<EmptyEntriesState>>,
+    ) -> axum::http::StatusCode {
+        state.entries_requests.fetch_add(1, Ordering::SeqCst);
+        state.shutdown.store(true, Ordering::Release);
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
+
     async fn test_malformed_entry(
         State(state): State<Arc<EmptyEntriesState>>,
     ) -> Json<serde_json::Value> {
@@ -851,6 +859,59 @@ mod tests {
 
         assert_eq!(state.tree_size_requests.load(Ordering::SeqCst), 1);
         assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_ct_log_batch_is_logged_and_retried_safely() {
+        let state = Arc::new(EmptyEntriesState::default());
+        let app = Router::new()
+            .route("/ct/v1/get-sth", get(test_tree_size))
+            .route("/ct/v1/get-entries", get(test_unavailable_entries))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+        let (tx, _rx) = mpsc::channel(1);
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            format!("http://{address}"),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::clone(&state.shutdown),
+            CtConfig {
+                custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                ..CtConfig::default()
+            },
+        )
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        assert_eq!(state.tree_size_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(state.entries_requests.load(Ordering::SeqCst), 3);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| {
+                event["fields"]["event_name"] == "ct_log.entries.failed"
+                    && event["fields"]["outcome"] == "retrying"
+                    && event["level"] == "WARN"
+            }),
+            "{output}"
+        );
+        assert!(!output.contains(&address.to_string()));
         server.abort();
     }
 
