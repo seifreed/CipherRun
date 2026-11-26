@@ -235,6 +235,7 @@ pub async fn revoke_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{middleware::AuthExtension, test_support::build_test_state};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
@@ -321,5 +322,31 @@ mod tests {
 
         assert!(matches!(error, ApiError::Internal(_)));
         assert!(!error.to_string().contains("secret filesystem detail"));
+    }
+
+    #[tokio::test]
+    async fn rotating_missing_credential_maps_store_errors_for_both_expiry_paths() {
+        let state = build_test_state();
+        let auth = || {
+            Extension(AuthExtension {
+                permission: Permission::Admin,
+                key_id: "admin-key".to_string(),
+                principal_id: "admin".to_string(),
+                tenant_id: None,
+            })
+        };
+
+        for expires_at in [None, Some(Utc::now() + chrono::Duration::days(1))] {
+            let error = rotate_credential(
+                State(state.clone()),
+                auth(),
+                axum::extract::Path("missing-key".to_string()),
+                Json(RotateCredentialRequest { expires_at }),
+            )
+            .await
+            .expect_err("rotating a missing credential should fail");
+
+            assert!(matches!(error, ApiError::BadRequest(_)));
+        }
     }
 }
