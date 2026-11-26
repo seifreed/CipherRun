@@ -367,6 +367,25 @@ mod tests {
 
     struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
 
+    struct FailingSummaryWriter {
+        fail_after: usize,
+        writes: usize,
+    }
+
+    impl Write for FailingSummaryWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.writes == self.fail_after {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            self.writes += 1;
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     impl Write for CapturedLogWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(bytes);
@@ -1055,5 +1074,44 @@ mod tests {
                 "missing {expected:?} in {output:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_anycast_summary_propagates_writer_failures_at_each_output_step() {
+        let results = AnycastScanResults {
+            hostname: "example.com".to_string(),
+            port: 443,
+            total_ips: 0,
+            successful_scans: 0,
+            ip_results: Vec::new(),
+            anycast_detection: AnycastDetection {
+                is_anycast: false,
+                confidence: 0.0,
+                reasons: Vec::new(),
+                certificate_fingerprints: HashSet::new(),
+                cipher_preferences: HashMap::new(),
+                protocol_support: HashMap::new(),
+            },
+        };
+        let mut reached_success = false;
+
+        for fail_after in 0..64 {
+            let mut writer = FailingSummaryWriter {
+                fail_after,
+                writes: 0,
+            };
+            match results.write_summary(&mut writer) {
+                Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
+                Ok(()) => {
+                    reached_success = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            reached_success,
+            "the fixture should reach its successful write"
+        );
     }
 }
