@@ -118,6 +118,7 @@ impl Command for RemediationCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
 
     #[test]
     fn renders_each_supported_format() {
@@ -142,5 +143,63 @@ mod tests {
         let error = RemediationCommand::render(&results, "lighttpd")
             .expect_err("unknown format should fail");
         assert!(error.to_string().contains("format must be one of"));
+    }
+
+    #[test]
+    fn renders_only_confirmed_findings_and_accepts_mixed_case_format() {
+        let results = ScanResults {
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: String::new(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Critical,
+            }],
+            ..Default::default()
+        };
+
+        let output = RemediationCommand::render(&results, "NGINX").expect("format renders");
+        assert!(output.contains("CR-TLS-HEARTBLEED-001"));
+    }
+
+    #[test]
+    fn rejects_remediation_output_over_the_limit() {
+        let results = ScanResults {
+            target: "x".repeat(MAX_OUTPUT_BYTES),
+            ..Default::default()
+        };
+        let error = RemediationCommand::render(&results, "nginx")
+            .expect_err("oversized output should fail");
+        assert!(error.to_string().contains("output limit"));
+    }
+
+    #[test]
+    fn writes_new_output_and_rejects_existing_output_without_overwrite() {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let path = dir.path().join("remediation.conf");
+        RemediationCommand::write_output(&path, "first", false).expect("new file is written");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("file readable"),
+            "first"
+        );
+
+        let error = RemediationCommand::write_output(&path, "second", false)
+            .expect_err("existing file should not be replaced");
+        assert!(error.to_string().contains("already exists"));
+        RemediationCommand::write_output(&path, "second", true).expect("overwrite is enabled");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("file readable"),
+            "second"
+        );
+    }
+
+    #[test]
+    fn reports_output_write_failures() {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let error = RemediationCommand::write_output(&dir.path().to_path_buf(), "content", true)
+            .expect_err("directory cannot be replaced by a file");
+        assert!(matches!(error, crate::TlsError::FileSystemError { .. }));
     }
 }
