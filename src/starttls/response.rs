@@ -35,12 +35,10 @@ where
 
             let newline_pos = available.iter().position(|&byte| byte == b'\n');
             let take = newline_pos.map_or(available.len(), |pos| pos + 1);
-            let next_len = bytes.len().checked_add(take).ok_or_else(|| {
-                crate::error::TlsError::ParseError {
-                    message: "STARTTLS response line length overflow".to_string(),
-                }
-            })?;
-            if next_len > MAX_LINE_LENGTH {
+            // `bytes` is bounded by MAX_LINE_LENGTH on every previous
+            // iteration, and `take` never exceeds `available.len()`. Comparing
+            // against the remaining capacity avoids an overflow-prone addition.
+            if take > MAX_LINE_LENGTH.saturating_sub(bytes.len()) {
                 return Err(crate::error::TlsError::ParseError {
                     message: format!(
                         "STARTTLS response line too long: exceeds {} bytes",
@@ -49,13 +47,8 @@ where
                 });
             }
 
-            let chunk =
-                available
-                    .get(..take)
-                    .ok_or_else(|| crate::error::TlsError::ParseError {
-                        message: "STARTTLS response chunk exceeded buffer".to_string(),
-                    })?;
-            bytes.extend_from_slice(chunk);
+            // `take` comes from the newline position or `available.len()`.
+            bytes.extend_from_slice(&available[..take]);
             (take, newline_pos.is_some())
         };
 
