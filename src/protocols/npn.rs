@@ -176,28 +176,26 @@ impl NpnTester {
 
         // Update extensions length
         let ext_len = hello.len() - ext_pos - 2;
-        if let Some(len_bytes) = hello.get_mut(ext_pos..ext_pos + 2) {
-            len_bytes.copy_from_slice(
-                &crate::protocols::tls_vector::u16_len(ext_len, "NPN extensions")?.to_be_bytes(),
-            );
-        }
+        // `ext_pos` points to the placeholder written above; no bytes are
+        // removed from the buffer before this patch is applied.
+        hello[ext_pos..ext_pos + 2].copy_from_slice(
+            &crate::protocols::tls_vector::u16_len(ext_len, "NPN extensions")?.to_be_bytes(),
+        );
 
         // Update handshake length
         let hs_len = hello.len() - hs_len_pos - 3;
-        if let Some(len_bytes) = hello.get_mut(hs_len_pos..hs_len_pos + 3) {
-            len_bytes.copy_from_slice(&crate::protocols::tls_vector::u24_len(
-                hs_len,
-                "NPN handshake",
-            )?);
-        }
+        // `hs_len_pos` is the fixed handshake placeholder created above.
+        hello[hs_len_pos..hs_len_pos + 3].copy_from_slice(&crate::protocols::tls_vector::u24_len(
+            hs_len,
+            "NPN handshake",
+        )?);
 
         // Update record length
         let rec_len = hello.len() - len_pos - 2;
-        if let Some(len_bytes) = hello.get_mut(len_pos..len_pos + 2) {
-            len_bytes.copy_from_slice(
-                &crate::protocols::tls_vector::u16_len(rec_len, "NPN record")?.to_be_bytes(),
-            );
-        }
+        // `len_pos` is the record placeholder and the buffer remains append-only.
+        hello[len_pos..len_pos + 2].copy_from_slice(
+            &crate::protocols::tls_vector::u16_len(rec_len, "NPN record")?.to_be_bytes(),
+        );
 
         Ok(hello)
     }
@@ -453,6 +451,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_npn_peer_closing_before_record_header_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("probe should connect");
+            drop(socket);
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = NpnTester::new(target)
+            .test()
+            .await
+            .expect("NPN probe should return a result");
+
+        assert!(result.inconclusive);
+        assert!(!result.supported);
+    }
+
+    #[tokio::test]
+    async fn test_npn_oversized_record_header_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            socket
+                .write_all(&[0x16, 0x03, 0x03, 0xff, 0xff])
+                .await
+                .expect("oversized record header should write");
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = NpnTester::new(target)
+            .test()
+            .await
+            .expect("NPN probe should return a result");
+
+        assert!(result.inconclusive);
+        assert!(!result.supported);
+    }
+
+    #[tokio::test]
+    async fn test_npn_unparseable_server_hello_is_inconclusive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            socket
+                .write_all(&[0x16, 0x03, 0x03, 0x00, 0x01, 0xff])
+                .await
+                .expect("malformed ServerHello should write");
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = NpnTester::new(target)
+            .test()
+            .await
+            .expect("NPN probe should return a result");
+
+        assert!(result.inconclusive);
+        assert!(!result.supported);
+    }
+
+    #[tokio::test]
     async fn test_npn_truncated_response_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -460,9 +537,11 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
 
         tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let _ = socket.write_all(&[0x16, 0x03, 0x03, 0x00, 0x05]).await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            socket
+                .write_all(&[0x16, 0x03, 0x03, 0x00, 0x05])
+                .await
+                .expect("truncated record header should write");
         });
 
         let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
@@ -483,18 +562,29 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
 
         tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = [0u8; 1024];
-                let _ = socket.read(&mut buffer).await;
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await;
 
-                let response = npn_server_hello(NPN_H2_HTTP11_EXTENSION, None);
+            let response = npn_server_hello(NPN_H2_HTTP11_EXTENSION, None);
 
-                socket.write_all(&response[..7]).await.unwrap();
-                socket.flush().await.unwrap();
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                socket.write_all(&response[7..]).await.unwrap();
-                socket.flush().await.unwrap();
-            }
+            socket
+                .write_all(&response[..7])
+                .await
+                .expect("first ServerHello fragment should write");
+            socket
+                .flush()
+                .await
+                .expect("first ServerHello fragment should flush");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            socket
+                .write_all(&response[7..])
+                .await
+                .expect("second ServerHello fragment should write");
+            socket
+                .flush()
+                .await
+                .expect("second ServerHello fragment should flush");
         });
 
         let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
@@ -519,14 +609,13 @@ mod tests {
         let addr = listener.local_addr().expect("local addr should exist");
 
         tokio::spawn(async move {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = [0u8; 1024];
-                let _ = socket.read(&mut buffer).await;
-                socket
-                    .write_all(&npn_server_hello(&[], Some(0)))
-                    .await
-                    .expect("ServerHello should write");
-            }
+            let (mut socket, _) = listener.accept().await.expect("probe should connect");
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await;
+            socket
+                .write_all(&npn_server_hello(&[], Some(0)))
+                .await
+                .expect("ServerHello should write");
         });
 
         let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
