@@ -377,4 +377,50 @@ mod tests {
         assert_eq!(source.failed_fetches, u64::MAX);
         assert_eq!(source.total_fetch_time_ms, u64::MAX);
     }
+
+    #[test]
+    fn test_per_source_tracking_stops_at_capacity_but_existing_sources_continue() {
+        let tracker = StatsTracker::new();
+        for index in 0..MAX_SOURCES {
+            tracker.update_source_stats(
+                &format!("log-{index}"),
+                index as u64,
+                MAX_SOURCES as u64,
+                Duration::from_millis(1),
+            );
+        }
+
+        tracker.update_source_stats("log-0", 7, 10, Duration::from_millis(3));
+        tracker.update_source_stats("overflow", 1, 2, Duration::from_millis(1));
+        tracker.increment_source_processed("overflow", 1);
+        tracker.increment_source_failures("overflow");
+
+        let snapshot = tracker.get_snapshot();
+        assert_eq!(snapshot.per_source.len(), MAX_SOURCES);
+        assert_eq!(snapshot.per_source["log-0"].successful_fetches, 2);
+        assert_eq!(snapshot.per_source["log-0"].current_index, 7);
+        assert!(!snapshot.per_source.contains_key("overflow"));
+    }
+
+    #[test]
+    fn test_source_counters_create_entries_when_capacity_is_available() {
+        let tracker = StatsTracker::new();
+        tracker.increment_source_processed("log-a", 4);
+        tracker.increment_source_failures("log-b");
+
+        let snapshot = tracker.get_snapshot();
+        assert_eq!(snapshot.per_source["log-a"].certificates_processed, 4);
+        assert_eq!(snapshot.per_source["log-b"].failed_fetches, 1);
+    }
+
+    #[test]
+    fn test_processing_rate_is_zero_without_a_start_time() {
+        let tracker = StatsTracker::new();
+        tracker
+            .stats
+            .lock()
+            .expect("stats lock should not be poisoned")
+            .start_time = None;
+        assert_eq!(tracker.get_processing_rate(), 0.0);
+    }
 }
