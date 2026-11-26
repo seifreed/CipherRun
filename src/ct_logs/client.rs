@@ -590,6 +590,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tree_size_does_not_retry_client_errors() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let request_calls = calls.clone();
+        let app = Router::new().route(
+            "/ct/v1/get-sth",
+            get(move || {
+                let calls = request_calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::BAD_REQUEST
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let err = CtClient::new()
+            .get_tree_size(&format!("http://{addr}"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("status: 400"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_tree_size_rejects_advertised_oversized_response() {
+        let body = "x".repeat(1024 * 1024 + 1);
+        let app = Router::new().route(
+            "/ct/v1/get-sth",
+            get(move || {
+                let body = body.clone();
+                async move { (StatusCode::OK, body) }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let err = CtClient::new()
+            .get_tree_size(&format!("http://{addr}"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("STH response too large"));
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn test_get_tree_size_parse_error() {
         let app = Router::new().route(
             "/ct/v1/get-sth",
