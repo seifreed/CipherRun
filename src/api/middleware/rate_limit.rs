@@ -712,6 +712,48 @@ mod tests {
         assert_eq!(unauthenticated.status(), StatusCode::NO_CONTENT);
     }
 
+    #[tokio::test]
+    async fn health_and_documentation_paths_do_not_consume_authenticated_quota() {
+        let config = ApiConfig {
+            rate_limit_per_minute: 1,
+            ..ApiConfig::default()
+        };
+        let state = Arc::new(AppState::new(config).unwrap());
+        let app = Router::new()
+            .fallback(|| async { StatusCode::NO_CONTENT })
+            .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
+            .with_state(state);
+        let request = |path: &str| {
+            let mut request = Request::builder().uri(path).body(Body::empty()).unwrap();
+            request.extensions_mut().insert(AuthExtension {
+                permission: Permission::User,
+                key_id: "shared-key".to_string(),
+                principal_id: "test-principal".to_string(),
+                tenant_id: None,
+            });
+            request
+        };
+
+        for path in [
+            "/api/v1/health",
+            "/health",
+            "/api/docs",
+            "/api/docs/openapi.json",
+            "/swagger",
+            "/swagger/index.html",
+        ] {
+            let response = app.clone().oneshot(request(path)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+            assert!(!response.headers().contains_key("X-RateLimit-Limit"));
+        }
+
+        let first_protected = app.clone().oneshot(request("/protected")).await.unwrap();
+        assert_eq!(first_protected.status(), StatusCode::NO_CONTENT);
+        assert_eq!(first_protected.headers()["X-RateLimit-Remaining"], "0");
+        let second_protected = app.oneshot(request("/protected")).await.unwrap();
+        assert_eq!(second_protected.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
     #[test]
     fn cleanup_logs_poisoned_index_without_sensitive_context() {
         let limiter = PerKeyRateLimiter::new(100);
