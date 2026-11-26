@@ -103,4 +103,27 @@ mod tests {
             io::ErrorKind::PermissionDenied
         );
     }
+
+    #[tokio::test]
+    async fn complete_record_reader_parses_header_and_rejects_oversized_record() {
+        let mut complete = ScriptedReader(VecDeque::from([Ok(vec![
+            0x16, 0x03, 0x03, 0x00, 0x01, 0x00,
+        ])]));
+        assert_eq!(
+            complete_tls_record(&mut complete, &mut [0; 6], Duration::from_secs(1))
+                .await
+                .expect("complete record should be read"),
+            6
+        );
+
+        let mut oversized =
+            ScriptedReader(VecDeque::from([Ok(vec![0x16, 0x03, 0x03, 0x00, 0x01])]));
+        assert_eq!(
+            complete_tls_record(&mut oversized, &mut [0; 5], Duration::from_secs(1))
+                .await
+                .expect_err("record larger than the buffer must fail")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 }
