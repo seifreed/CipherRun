@@ -205,6 +205,20 @@ fn test_check_key_size_flags_ec_public_key_algorithm() {
 }
 
 #[test]
+fn test_check_key_size_flags_small_rsa_key() {
+    let rule = Rule {
+        min_rsa_bits: Some(3072),
+        ..base_rule("CertificateKeySize")
+    };
+    let results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+
+    let violations =
+        ComplianceChecker::check_key_size(&rule, &results).expect("test assertion should succeed");
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].description.contains("RSA key size 2048 bits"));
+}
+
+#[test]
 fn test_check_forward_secrecy_treats_tls13_cipher_metadata_case_insensitively() {
     let rule = Rule {
         required: Some(true),
@@ -273,6 +287,37 @@ fn test_check_ciphers_exact_lists_are_case_insensitive() {
         .expect("test assertion should succeed");
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].violation_type, "Prohibited Cipher Suite");
+}
+
+#[test]
+fn test_check_ciphers_denied_pattern_and_combined_allow_lists() {
+    let results =
+        assessment_with_single_cipher("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "ECDHE-RSA-AES128-SHA");
+    let denied = Rule {
+        denied_patterns: vec![".*CBC.*".to_string()],
+        ..base_rule("CipherSuite")
+    };
+    let violations =
+        ComplianceChecker::check_ciphers(&denied, &results).expect("test assertion should succeed");
+    assert_eq!(violations[0].violation_type, "Prohibited Cipher Suite");
+
+    let rejected_by_both = Rule {
+        allowed: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+        allowed_patterns: vec![".*GCM.*".to_string()],
+        ..base_rule("CipherSuite")
+    };
+    let violations = ComplianceChecker::check_ciphers(&rejected_by_both, &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations[0].violation_type, "Non-Compliant Cipher Suite");
+
+    let accepted_by_pattern = Rule {
+        allowed: vec!["TLS_AES_128_GCM_SHA256".to_string()],
+        allowed_patterns: vec![".*CBC.*".to_string()],
+        ..base_rule("CipherSuite")
+    };
+    let violations = ComplianceChecker::check_ciphers(&accepted_by_pattern, &results)
+        .expect("test assertion should succeed");
+    assert!(violations.is_empty(), "{violations:?}");
 }
 
 fn preferred_rule() -> Rule {
@@ -373,6 +418,23 @@ fn test_check_signature_denied_rejects_partial_match() {
 }
 
 #[test]
+fn test_check_signature_allowed_list_rejects_nonmatching_algorithm() {
+    let rule = Rule {
+        allowed: vec!["SHA256-RSA".to_string()],
+        ..base_rule("SignatureAlgorithm")
+    };
+    let mut results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+    leaf_certificate_mut(&mut results).signature_algorithm = "SHA-384-RSA".to_string();
+
+    let violations =
+        ComplianceChecker::check_signature(&rule, &results).expect("test assertion should succeed");
+    assert_eq!(
+        violations[0].violation_type,
+        "Non-Compliant Signature Algorithm"
+    );
+}
+
+#[test]
 fn test_check_cert_validation_requires_revocation_check() {
     let rule = Rule {
         require_revocation_check: Some(true),
@@ -399,6 +461,43 @@ fn test_check_cert_validation_requires_revocation_check() {
 }
 
 #[test]
+fn test_check_cert_validation_reports_missing_certificate_and_status() {
+    let rule = Rule {
+        require_revocation_check: Some(true),
+        ..base_rule("CertificateValidation")
+    };
+    let violations = ComplianceChecker::check_cert_validation(&rule, &ScanAssessment::default())
+        .expect("test assertion should succeed");
+    assert_eq!(violations[0].violation_type, "Missing Certificate");
+
+    let results = create_certificate_assessment("2027-01-01 00:00:00 +0000".to_string(), true);
+    let violations = ComplianceChecker::check_cert_validation(&rule, &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations[0].violation_type, "Missing Revocation Status");
+}
+
+#[test]
+fn test_check_cert_validation_reports_chain_expiry_and_hostname_failures() {
+    let rule = Rule {
+        require_valid_chain: Some(true),
+        require_unexpired: Some(true),
+        require_hostname_match: Some(true),
+        ..base_rule("CertificateValidation")
+    };
+    let mut results = create_certificate_assessment("2020-01-01 00:00:00 +0000".to_string(), false);
+    let validation = &mut results.certificate_chain.as_mut().unwrap().validation;
+    validation.trust_chain_valid = false;
+    validation.hostname_match = false;
+
+    let violations = ComplianceChecker::check_cert_validation(&rule, &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations.len(), 3);
+    assert_eq!(violations[0].violation_type, "Invalid Certificate Chain");
+    assert_eq!(violations[1].violation_type, "Expired Certificate");
+    assert_eq!(violations[2].violation_type, "Hostname Mismatch");
+}
+
+#[test]
 fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() {
     let rule = Rule {
         max_days_until_expiration: Some(30),
@@ -412,6 +511,22 @@ fn test_check_cert_expiration_does_not_warn_for_recently_expired_certificates() 
     let violations = ComplianceChecker::check_cert_expiration(&rule, &results)
         .expect("test assertion should succeed");
     assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[test]
+fn test_check_cert_expiration_warns_when_expiry_is_within_threshold() {
+    let rule = Rule {
+        max_days_until_expiration: Some(30),
+        ..base_rule("CertificateExpiration")
+    };
+    let not_after = (Utc::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%d %H:%M:%S %z")
+        .to_string();
+    let results = create_certificate_assessment(not_after, true);
+
+    let violations = ComplianceChecker::check_cert_expiration(&rule, &results)
+        .expect("test assertion should succeed");
+    assert_eq!(violations[0].violation_type, "Certificate Expiring Soon");
 }
 
 #[test]
