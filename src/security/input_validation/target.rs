@@ -416,4 +416,9 @@ mod tests {
         assert!(validate_target("2001:::1", true).is_err());
         assert!(validate_target("2001:::invalid", true).is_err());
     }
+
+    #[test]
+    fn test_validate_target_rejects_malformed_unbracketed_ipv6() {
+        assert!(validate_target("2001::not-ip", true).is_err());
+    }
 }
