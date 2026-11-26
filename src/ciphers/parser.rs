@@ -432,4 +432,122 @@ mod tests {
         let formatted = CipherFormatter::format_cipher_detailed(&cipher, false);
         assert!(!formatted.contains("Mac="));
     }
+
+    #[test]
+    fn colorized_formatters_cover_every_cipher_strength() {
+        let cipher = tls12_aes256_gcm_cipher();
+        for strength in [
+            CipherStrength::NULL,
+            CipherStrength::Export,
+            CipherStrength::Low,
+            CipherStrength::Medium,
+            CipherStrength::High,
+        ] {
+            assert!(!CipherFormatter::format_strength(strength, true).is_empty());
+        }
+
+        let mut variants = Vec::new();
+        let mut null = cipher.clone();
+        null.encryption = "NULL".to_string();
+        variants.push(null);
+        let mut export = cipher.clone();
+        export.export = true;
+        variants.push(export);
+        let mut low = cipher.clone();
+        low.bits = 64;
+        variants.push(low);
+        let mut medium = cipher.clone();
+        medium.bits = 128;
+        variants.push(medium);
+        variants.push(cipher);
+        for variant in variants {
+            assert!(!CipherFormatter::format_cipher(&variant, true).is_empty());
+        }
+    }
+
+    #[test]
+    fn detailed_format_omits_empty_metadata_and_lists_export_marker() {
+        let mut cipher = tls12_aes128_gcm_cipher();
+        cipher.openssl_name = "AES128-GCM-SHA256".to_string();
+        cipher.iana_name = "TLS_RSA_WITH_AES_128_GCM_SHA256".to_string();
+        cipher.key_exchange.clear();
+        cipher.authentication.clear();
+        cipher.encryption.clear();
+        cipher.mac.clear();
+        cipher.export = true;
+        cipher.protocol.clear();
+
+        let details = CipherFormatter::format_cipher_detailed(&cipher, false);
+        assert!(!details.contains("Kx="));
+        assert!(!details.contains("Au="));
+        assert!(!details.contains("Enc="));
+        assert!(!details.contains("Mac="));
+        assert!(!details.contains("FS"));
+        assert!(!details.contains("AEAD"));
+
+        let list = CipherListFormatter::format_list(&[cipher], Protocol::TLS12, false);
+        assert!(list.contains("EXPORT"));
+    }
+
+    #[test]
+    fn summary_display_covers_count_rows_and_missing_preferred_cipher() {
+        let mut summary = ProtocolCipherSummary {
+            protocol: Protocol::TLS12,
+            supported_ciphers: Vec::new(),
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: Default::default(),
+            avg_handshake_time_ms: None,
+        };
+        summary.counts.total = 5;
+        summary.counts.null_ciphers = 1;
+        summary.counts.export_ciphers = 1;
+        summary.counts.low_strength = 1;
+        summary.counts.medium_strength = 1;
+        summary.counts.high_strength = 1;
+        summary.counts.forward_secrecy = 2;
+        summary.counts.aead = 3;
+
+        let output = summary.to_string();
+        for section in [
+            "NULL ciphers:   1",
+            "EXPORT ciphers: 1",
+            "LOW strength:   1",
+            "MEDIUM strength: 1",
+            "HIGH strength:  1",
+            "Forward Secrecy: 2/5",
+            "AEAD:            3/5",
+            "Server Cipher Order: NO",
+        ] {
+            assert!(output.contains(section), "missing {section} in {output}");
+        }
+    }
+
+    #[test]
+    fn comparison_formatter_sorts_protocols_and_handles_empty_summaries() {
+        let mut summaries = std::collections::HashMap::new();
+        for protocol in [Protocol::TLS13, Protocol::SSLv2, Protocol::TLS12] {
+            summaries.insert(
+                protocol,
+                ProtocolCipherSummary {
+                    protocol,
+                    supported_ciphers: Vec::new(),
+                    server_ordered: false,
+                    server_preference: Vec::new(),
+                    preferred_cipher: None,
+                    counts: Default::default(),
+                    avg_handshake_time_ms: None,
+                },
+            );
+        }
+
+        let output = CipherComparisonFormatter::format_comparison(&summaries, false);
+        assert!(output.find("SSLv2").unwrap() < output.find("TLS 1.2").unwrap());
+        assert!(output.find("TLS 1.2").unwrap() < output.find("TLS 1.3").unwrap());
+        assert!(
+            CipherComparisonFormatter::format_comparison(&std::collections::HashMap::new(), false)
+                .contains("Cipher Support Across Protocols")
+        );
+    }
 }
