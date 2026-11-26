@@ -415,6 +415,33 @@ impl TlsVulnerabilityCvss {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedOutputWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedOutputWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedOutputWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_cvss_severity_from_score() {
@@ -556,10 +583,33 @@ mod tests {
         assert!(Scope::Changed.is_changed());
         assert!(!Scope::Unchanged.is_changed());
         assert_eq!(CvssSeverity::High.as_str(), "High");
+        assert_eq!(CvssSeverity::Medium.as_str(), "Medium");
         assert_eq!(CvssSeverity::None.as_str(), "None");
         assert_eq!(CvssSeverity::Low.as_str(), "Low");
         assert_eq!(PrivilegesRequired::Low.as_str(), "L");
         assert_eq!(Scope::Changed.as_str(), "C");
+    }
+
+    #[test]
+    fn negative_cvss_scores_are_classified_as_none() {
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(output.clone())
+            .finish();
+
+        let severity =
+            tracing::subscriber::with_default(subscriber, || CvssSeverity::from_score(-0.1));
+
+        assert_eq!(severity, CvssSeverity::None);
+        let output = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["level"], "WARN");
+        assert_eq!(event["fields"]["event_name"], "rating.cvss.score.invalid");
+        assert_eq!(event["fields"]["score"], -0.1);
+        assert_eq!(event["fields"]["fallback"], "none");
     }
 
     #[test]
