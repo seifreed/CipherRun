@@ -497,6 +497,53 @@ mod tests {
     }
 
     #[test]
+    fn test_all_cvss_metric_variants_have_expected_scores_and_labels() {
+        for (metric, score, label) in [
+            (AttackVector::Network, 0.85, "N"),
+            (AttackVector::Adjacent, 0.62, "A"),
+            (AttackVector::Local, 0.55, "L"),
+            (AttackVector::Physical, 0.2, "P"),
+        ] {
+            assert_eq!(metric.score(), score);
+            assert_eq!(metric.as_str(), label);
+        }
+        assert_eq!(AttackComplexity::Low.score(), 0.77);
+        assert_eq!(AttackComplexity::Low.as_str(), "L");
+        assert_eq!(PrivilegesRequired::None.score(false), 0.85);
+        assert_eq!(PrivilegesRequired::None.as_str(), "N");
+        assert_eq!(PrivilegesRequired::High.as_str(), "H");
+        assert_eq!(UserInteraction::None.score(), 0.85);
+        assert_eq!(UserInteraction::None.as_str(), "N");
+        assert_eq!(Scope::Unchanged.as_str(), "U");
+        assert_eq!(Impact::None.score(), 0.0);
+        assert_eq!(Impact::None.as_str(), "N");
+        assert_eq!(Impact::High.score(), 0.56);
+        assert_eq!(Impact::High.as_str(), "H");
+        assert_eq!(CvssSeverity::from_score(-0.1), CvssSeverity::None);
+        assert_eq!(CvssSeverity::from_score(3.9), CvssSeverity::Low);
+        assert_eq!(CvssSeverity::from_score(6.9), CvssSeverity::Medium);
+        assert_eq!(CvssSeverity::from_score(8.9), CvssSeverity::High);
+        assert_eq!(CvssSeverity::from_score(9.0), CvssSeverity::Critical);
+    }
+
+    #[test]
+    fn test_predefined_tls_vulnerability_scores_are_well_formed() {
+        for score in [
+            TlsVulnerabilityCvss::poodle(),
+            TlsVulnerabilityCvss::beast(),
+            TlsVulnerabilityCvss::robot(),
+            TlsVulnerabilityCvss::drown(),
+            TlsVulnerabilityCvss::freak(),
+            TlsVulnerabilityCvss::logjam(),
+        ] {
+            assert!((0.0..=10.0).contains(&score.base_score));
+            assert!(score.vector_string.starts_with("CVSS:3.1/"));
+            assert_eq!(score.temporal_score, None);
+            assert_eq!(score.environmental_score, None);
+        }
+    }
+
+    #[test]
     fn test_privileges_required_scores_with_scope() {
         assert_eq!(PrivilegesRequired::Low.score(false), 0.62);
         assert_eq!(PrivilegesRequired::Low.score(true), 0.68);
