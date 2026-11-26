@@ -678,6 +678,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_scan_results_returns_completed_results() {
+        let state = build_state();
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        job.mark_completed(crate::scanner::ScanResults::default());
+        let expected = serde_json::to_value(crate::scanner::ScanResults::default()).unwrap();
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+
+        let Json(results) = get_scan_results(State(state), test_auth(), Path(id))
+            .await
+            .expect("completed scan results should be returned");
+
+        assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
     async fn test_cancel_scan_returns_not_found_for_missing_job() {
         let state = build_state();
 
@@ -704,6 +725,36 @@ mod tests {
             .await
             .expect_err("completed scan should not be cancellable");
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scan_cancels_queued_job() {
+        let state = build_state();
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+
+        let Json(response) = cancel_scan(State(state.clone()), test_auth(), Path(id.clone()))
+            .await
+            .expect("queued scan should be cancelled");
+
+        assert_eq!(response["message"], "Scan cancelled successfully");
+        assert_eq!(response["scan_id"], id);
+        assert_eq!(
+            state
+                .job_queue
+                .get_job(&id)
+                .await
+                .expect("job lookup should succeed")
+                .expect("job should remain available")
+                .status,
+            ScanStatus::Cancelled
+        );
     }
 
     #[tokio::test]
