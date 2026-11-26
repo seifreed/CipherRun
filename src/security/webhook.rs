@@ -321,6 +321,17 @@ mod tests {
                 .expect_err("private DNS answers must be rejected");
         assert!(private.to_string().contains("SSRF blocked"));
 
+        let public = validate_resolved_addrs(
+            "example.com",
+            &[
+                "[2606:4700:4700::1111]:443".parse().unwrap(),
+                "8.8.8.8:443".parse().unwrap(),
+            ],
+            false,
+        )
+        .expect("public DNS answers should be accepted");
+        assert!(!public[0].is_ipv6());
+
         assert!(
             validate_resolved_addrs("localhost", &["127.0.0.1:443".parse().unwrap()], true).is_ok()
         );
