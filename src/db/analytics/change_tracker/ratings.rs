@@ -180,4 +180,99 @@ mod tests {
             .unwrap();
         assert!(changes.is_empty());
     }
+
+    #[tokio::test]
+    async fn detect_rating_changes_reports_category_and_overall_outcomes() {
+        let db = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .unwrap();
+        let DatabasePool::Sqlite(pool) = db.pool() else {
+            unreachable!("test database uses SQLite");
+        };
+        let timestamp = Utc::now();
+        let mut scan_ids = Vec::new();
+        for (grade, score) in [("A", 95_i32), ("B", 85_i32)] {
+            let result = sqlx::query(
+                "INSERT INTO scans (target_hostname, target_port, scan_timestamp, overall_grade, overall_score) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind("ratings.example")
+            .bind(443_i32)
+            .bind(timestamp)
+            .bind(grade)
+            .bind(score)
+            .execute(pool)
+            .await
+            .unwrap();
+            scan_ids.push(result.last_insert_rowid());
+        }
+
+        for (scan_id, category, score, grade) in [
+            (scan_ids[0], "certificate", 90_i32, Some("A")),
+            (scan_ids[0], "protocol", 80_i32, Some("B")),
+            (scan_ids[0], "key_exchange", 70_i32, Some("C")),
+            (scan_ids[0], "cipher", 60_i32, None),
+            (scan_ids[1], "certificate", 80_i32, Some("B")),
+            (scan_ids[1], "protocol", 90_i32, Some("A")),
+            (scan_ids[1], "key_exchange", 70_i32, Some("B")),
+            (scan_ids[1], "new_category", 88_i32, Some("A")),
+        ] {
+            sqlx::query(
+                "INSERT INTO ratings (scan_id, category, score, grade) VALUES (?, ?, ?, ?)",
+            )
+            .bind(scan_id)
+            .bind(category)
+            .bind(score)
+            .bind(grade)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        let mut old_scan = ScanRecord::new("ratings.example".to_string(), 443);
+        old_scan.scan_id = Some(scan_ids[0]);
+        old_scan.overall_grade = Some("A".to_string());
+        old_scan.overall_score = Some(95);
+        let mut new_scan = ScanRecord::new("ratings.example".to_string(), 443);
+        new_scan.scan_id = Some(scan_ids[1]);
+        new_scan.overall_grade = Some("B".to_string());
+        new_scan.overall_score = Some(85);
+
+        let tracker = ChangeTracker::new(Arc::new(db));
+        let changes = tracker
+            .detect_rating_changes(&old_scan, &new_scan, timestamp)
+            .await
+            .unwrap();
+
+        assert_eq!(changes.len(), 6);
+        let change_for = |description: &str| {
+            changes
+                .iter()
+                .find(|change| change.description == description)
+                .expect("expected rating change")
+        };
+        assert_eq!(
+            change_for("Rating changed: certificate").severity,
+            ChangeSeverity::High
+        );
+        assert_eq!(
+            change_for("Rating changed: protocol").severity,
+            ChangeSeverity::Low
+        );
+        assert_eq!(
+            change_for("Rating changed: key_exchange").severity,
+            ChangeSeverity::Medium
+        );
+        assert_eq!(
+            change_for("Rating removed: cipher").severity,
+            ChangeSeverity::Medium
+        );
+        assert_eq!(
+            change_for("Rating added: new_category").severity,
+            ChangeSeverity::Medium
+        );
+        let overall = change_for("Overall rating changed");
+        assert_eq!(overall.severity, ChangeSeverity::High);
+        assert_eq!(overall.previous_value.as_deref(), Some("A (95)"));
+        assert_eq!(overall.current_value.as_deref(), Some("B (85)"));
+    }
 }
