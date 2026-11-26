@@ -148,7 +148,7 @@ impl IntoleranceTester {
                         && c.name().contains("DHE")
                     {
                         // Extract the DH prime from the negotiated connection
-                        let tmp_key = ssl_stream.ssl().tmp_key().map_err(|error| {
+                        let tmp_key = ssl_stream.ssl().peer_tmp_key().map_err(|error| {
                             crate::TlsError::Other(format!(
                                 "failed to extract temporary key: {error}"
                             ))
@@ -377,5 +377,110 @@ mod tests {
             .expect_err("handshake failure should not be reported as no DH prime");
 
         assert!(err.to_string().contains("handshake failed"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_dh_prime_from_local_dhe_handshake() {
+        use openssl::asn1::Asn1Time;
+        use openssl::bn::BigNum;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::ssl::{SslAcceptor, SslMethod, SslVersion};
+        use openssl::x509::{X509, X509NameBuilder};
+
+        let key = PKey::from_rsa(Rsa::generate(2048).expect("RSA key should generate"))
+            .expect("private key should build");
+        let mut name = X509NameBuilder::new().expect("certificate name should build");
+        name.append_entry_by_text("CN", "example.test")
+            .expect("certificate common name should be set");
+        let name = name.build();
+        let mut certificate = X509::builder().expect("certificate builder should build");
+        certificate
+            .set_version(2)
+            .expect("certificate version should be set");
+        let serial = BigNum::from_u32(1)
+            .expect("serial should build")
+            .to_asn1_integer()
+            .expect("serial should convert");
+        certificate
+            .set_serial_number(&serial)
+            .expect("serial should be set");
+        certificate
+            .set_subject_name(&name)
+            .expect("subject should be set");
+        certificate
+            .set_issuer_name(&name)
+            .expect("issuer should be set");
+        certificate
+            .set_pubkey(&key)
+            .expect("public key should be set");
+        certificate
+            .set_not_before(&Asn1Time::days_from_now(0).expect("start time should build"))
+            .expect("start time should be set");
+        certificate
+            .set_not_after(&Asn1Time::days_from_now(1).expect("end time should build"))
+            .expect("end time should be set");
+        certificate
+            .sign(&key, MessageDigest::sha256())
+            .expect("certificate should be signed");
+
+        let mut acceptor =
+            SslAcceptor::mozilla_intermediate(SslMethod::tls()).expect("TLS acceptor should build");
+        acceptor
+            .set_private_key(&key)
+            .expect("server private key should be set");
+        acceptor
+            .set_certificate(&certificate.build())
+            .expect("server certificate should be set");
+        acceptor
+            .set_tmp_dh(&openssl::dh::Dh::get_2048_256().expect("DH parameters should load"))
+            .expect("server DH parameters should be set");
+        acceptor
+            .set_cipher_list("DHE-RSA-AES128-SHA:@SECLEVEL=0")
+            .expect("DHE cipher should be enabled");
+        acceptor
+            .set_min_proto_version(Some(SslVersion::TLS1_2))
+            .expect("minimum TLS version should be set");
+        acceptor
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .expect("maximum TLS version should be set");
+        let acceptor = std::sync::Arc::new(acceptor.build());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let addr = listener.local_addr().expect("bound address should exist");
+        let server = tokio::spawn(async move {
+            let (socket, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .expect("TLS client should connect")
+                .expect("connection should be accepted");
+            let stream = socket.into_std().expect("socket should convert");
+            stream
+                .set_nonblocking(false)
+                .expect("OpenSSL stream should be blocking");
+            tokio::task::spawn_blocking(move || {
+                acceptor
+                    .accept(stream)
+                    .expect("DHE handshake should succeed")
+            })
+            .await
+            .expect("server handshake task should complete");
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("loopback TLS target should be valid");
+        let tester = IntoleranceTester::new(target).with_sni(Some("example.test".to_string()));
+        let prime = tester
+            .extract_dh_prime()
+            .await
+            .expect("DHE handshake should return a prime")
+            .expect("DHE cipher should expose a prime");
+        server.await.expect("server task should complete");
+
+        assert!(prime.len() >= 512);
+        assert!(prime.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(prime, prime.to_ascii_uppercase());
     }
 }
