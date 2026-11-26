@@ -10,19 +10,29 @@ use std::sync::Arc;
 /// Returns the database if already initialized, or initializes it on first call.
 /// Returns an error if the embedded database is malformed.
 pub fn curves_db() -> Result<Arc<CurvesDatabase>> {
-    CURVES_DB
+    cached_curves_db(&CURVES_DB)
+}
+
+fn cached_curves_db(
+    result: &std::result::Result<Arc<CurvesDatabase>, String>,
+) -> Result<Arc<CurvesDatabase>> {
+    result
         .as_ref()
         .map(Arc::clone)
-        .map_err(|e| TlsError::Other(e.clone()))
+        .map_err(|error| TlsError::Other(error.clone()))
+}
+
+fn cache_curves_db(
+    result: Result<CurvesDatabase>,
+) -> std::result::Result<Arc<CurvesDatabase>, String> {
+    result
+        .map(Arc::new)
+        .map_err(|error| format!("Failed to load embedded curves database: {error}"))
 }
 
 /// Cached embedded curves database.
 pub static CURVES_DB: std::sync::LazyLock<std::result::Result<Arc<CurvesDatabase>, String>> =
-    std::sync::LazyLock::new(|| {
-        CurvesDatabase::load()
-            .map(Arc::new)
-            .map_err(|e| format!("Failed to load embedded curves database: {e}"))
-    });
+    std::sync::LazyLock::new(|| cache_curves_db(CurvesDatabase::load()));
 
 /// Elliptic curve information
 #[derive(Debug, Clone)]
@@ -264,6 +274,17 @@ mod tests {
     }
 
     #[test]
+    fn test_embedded_database_errors_are_cached_and_exposed() {
+        let failed = cache_curves_db(CurvesDatabase::parse("invalid"));
+        assert!(
+            failed
+                .as_ref()
+                .is_err_and(|error| error.contains("Failed to load embedded curves database"))
+        );
+        assert!(cached_curves_db(&failed).is_err());
+    }
+
+    #[test]
     fn test_empty_database_fallback() {
         let db = CurvesDatabase::empty();
 
@@ -296,10 +317,9 @@ mod tests {
                 "Duplicate curve name on line 2",
             ),
         ] {
-            let err = match CurvesDatabase::parse(data) {
-                Ok(_) => panic!("invalid database should fail"),
-                Err(err) => err,
-            };
+            let err = CurvesDatabase::parse(data)
+                .err()
+                .expect("invalid database should fail");
 
             assert!(err.to_string().contains(expected), "{data}");
         }
