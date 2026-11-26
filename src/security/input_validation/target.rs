@@ -187,6 +187,31 @@ fn parse_host_port(target: &str) -> std::result::Result<(String, Option<u16>), V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_validate_target() {
@@ -420,5 +445,26 @@ mod tests {
     #[test]
     fn test_validate_target_rejects_malformed_unbracketed_ipv6() {
         assert!(validate_target("2001::not-ip", true).is_err());
+    }
+
+    #[test]
+    fn malformed_ipv6_warning_is_structured_and_does_not_echo_target() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(validate_target("2001:::private-target", true).is_err());
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "input.target.malformed_ipv6");
+        assert_eq!(event["fields"]["error_type"], "invalid_address_format");
+        assert!(!output.contains("private-target"));
     }
 }
