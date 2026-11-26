@@ -27,13 +27,26 @@ pub struct StreamTicketManager {
 
 impl StreamTicketManager {
     pub fn new() -> crate::Result<Self> {
-        let mut key = [0u8; 32];
-        ring::rand::SystemRandom::new()
-            .fill(&mut key)
-            .map_err(|_| crate::TlsError::Other("Failed to generate stream ticket key".into()))?;
+        let random = ring::rand::SystemRandom::new();
+        let signing_key = Self::signing_key_from_random(|key| random.fill(key))?;
         Ok(Self {
-            signing_key: hmac::Key::new(hmac::HMAC_SHA256, &key),
+            signing_key,
             issued: Mutex::new(HashMap::new()),
+        })
+    }
+
+    fn signing_key_from_random(
+        fill_random: impl FnOnce(&mut [u8]) -> std::result::Result<(), ring::error::Unspecified>,
+    ) -> crate::Result<hmac::Key> {
+        let mut key = [0u8; 32];
+        fill_random(&mut key)
+            .map_err(|_| crate::TlsError::Other("Failed to generate stream ticket key".into()))?;
+        Ok(hmac::Key::new(hmac::HMAC_SHA256, &key))
+    }
+
+    fn serialize_claims(claims: &impl Serialize) -> Result<Vec<u8>, ApiError> {
+        serde_json::to_vec(claims).map_err(|_| {
+            ApiError::internal_with_diagnostic("issue_stream_ticket", "serialization_error")
         })
     }
 
@@ -51,9 +64,7 @@ impl StreamTicketManager {
             tenant_id: auth.tenant_id.clone(),
             expires_at: expires_at.timestamp(),
         };
-        let payload = serde_json::to_vec(&claims).map_err(|_| {
-            ApiError::internal_with_diagnostic("issue_stream_ticket", "serialization_error")
-        })?;
+        let payload = Self::serialize_claims(&claims)?;
         let signature = hmac::sign(&self.signing_key, &payload);
         let token = format!(
             "{}.{}",
@@ -130,6 +141,37 @@ mod tests {
         }
     }
 
+    fn claims(nonce: &str, expires_at: i64) -> StreamTicketClaims {
+        StreamTicketClaims {
+            nonce: nonce.to_string(),
+            scan_id: "scan-1".to_string(),
+            key_id: "key-1".to_string(),
+            principal_id: "principal-1".to_string(),
+            tenant_id: Some("tenant-1".to_string()),
+            expires_at,
+        }
+    }
+
+    fn signed_token(manager: &StreamTicketManager, payload: &[u8]) -> String {
+        let signature = hmac::sign(&manager.signing_key, payload);
+        format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(payload),
+            URL_SAFE_NO_PAD.encode(signature.as_ref())
+        )
+    }
+
+    struct FailingClaims;
+
+    impl Serialize for FailingClaims {
+        fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("fixture serialization failure"))
+        }
+    }
+
     #[tokio::test]
     async fn ticket_is_scan_bound_signed_and_single_use() {
         let manager = StreamTicketManager::new().expect("manager should initialize");
@@ -142,12 +184,113 @@ mod tests {
 
         let (ticket, _) = manager.issue("scan-1", &auth()).await.unwrap();
         let mut tampered = ticket.into_bytes();
-        tampered[0] = if tampered[0] == b'A' { b'B' } else { b'A' };
+        tampered[0] = b'B';
         assert!(
             manager
                 .consume(std::str::from_utf8(&tampered).unwrap(), "scan-1")
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn initialization_and_claim_serialization_fail_safely() {
+        assert!(matches!(
+            StreamTicketManager::signing_key_from_random(|_| Err(ring::error::Unspecified)),
+            Err(crate::TlsError::Other(message)) if message == "Failed to generate stream ticket key"
+        ));
+        assert!(matches!(
+            StreamTicketManager::serialize_claims(&FailingClaims),
+            Err(ApiError::Internal(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn consume_rejects_oversized_malformed_tampered_and_invalid_claim_tickets() {
+        let manager = StreamTicketManager::new().expect("manager should initialize");
+
+        for token in [
+            "x".repeat(MAX_TICKET_BYTES + 1),
+            "missing-separator".to_string(),
+        ] {
+            assert!(matches!(
+                manager.consume(&token, "scan-1").await,
+                Err(ApiError::Unauthorized(_))
+            ));
+        }
+        for token in ["!.signature", "e30.!", "e30.AAAAAAAAAAAAAAAAAAAAAA"] {
+            assert!(matches!(
+                manager.consume(token, "scan-1").await,
+                Err(ApiError::Unauthorized(_))
+            ));
+        }
+
+        let invalid_json = signed_token(&manager, b"not a claims document");
+        assert!(matches!(
+            manager.consume(&invalid_json, "scan-1").await,
+            Err(ApiError::Unauthorized(_))
+        ));
+
+        let expired_claims = claims("expired", chrono::Utc::now().timestamp() - 1);
+        let expired_payload = serde_json::to_vec(&expired_claims).unwrap();
+        let expired_ticket = signed_token(&manager, &expired_payload);
+        assert!(matches!(
+            manager.consume(&expired_ticket, "scan-1").await,
+            Err(ApiError::Unauthorized(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn consume_rejects_claims_that_do_not_match_the_issued_record() {
+        let manager = StreamTicketManager::new().expect("manager should initialize");
+        let now = chrono::Utc::now().timestamp();
+        let token_claims = claims("nonce-1", now + TICKET_LIFETIME_SECONDS);
+        let payload = serde_json::to_vec(&token_claims).unwrap();
+        let ticket = signed_token(&manager, &payload);
+
+        assert!(matches!(
+            manager.consume(&ticket, "scan-1").await,
+            Err(ApiError::Unauthorized(_))
+        ));
+
+        let mut issued_claims = token_claims.clone();
+        issued_claims.principal_id = "different-principal".to_string();
+        manager
+            .issued
+            .lock()
+            .await
+            .insert(token_claims.nonce.clone(), issued_claims);
+
+        assert!(matches!(
+            manager.consume(&ticket, "scan-1").await,
+            Err(ApiError::Unauthorized(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn issue_prunes_expired_tickets_and_rejects_capacity_overflow() {
+        let manager = StreamTicketManager::new().expect("manager should initialize");
+        let now = chrono::Utc::now().timestamp();
+        {
+            let mut issued = manager.issued.lock().await;
+            for index in 0..MAX_OUTSTANDING_TICKETS {
+                let ticket = claims(&format!("expired-{index}"), now - 1);
+                issued.insert(ticket.nonce.clone(), ticket);
+            }
+        }
+
+        manager.issue("scan-1", &auth()).await.unwrap();
+        {
+            let mut issued = manager.issued.lock().await;
+            assert_eq!(issued.len(), 1, "expired tickets should be pruned");
+            issued.clear();
+            for index in 0..MAX_OUTSTANDING_TICKETS {
+                let ticket = claims(&format!("active-{index}"), now + 3600);
+                issued.insert(ticket.nonce.clone(), ticket);
+            }
+        }
+
+        let error = manager.issue("scan-1", &auth()).await.unwrap_err();
+        assert!(matches!(error, ApiError::ServiceUnavailable(_)));
     }
 }
