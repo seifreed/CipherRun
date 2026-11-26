@@ -112,6 +112,32 @@ mod tests {
     }
 
     #[test]
+    fn small_valid_heartbeat_leak_requests_manual_verification() {
+        let response = [
+            0x18, 0x03, 0x03, 0x00, 0x0b, 0x02, 0x00, 0x08, 1, 2, 3, 4, 5, 6, 7, 8,
+        ];
+
+        let result = classify_response(&response);
+
+        assert!(result.vulnerable);
+        assert!(result.tested);
+        assert!(result.details.contains("manual verification recommended"));
+    }
+
+    #[test]
+    fn invalid_heartbeat_response_is_reported_as_not_vulnerable() {
+        let result = classify_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x40, 0x00]);
+
+        assert!(!result.vulnerable);
+        assert!(!result.tested);
+        assert!(
+            result
+                .details
+                .contains("not appear to be a valid heartbeat response")
+        );
+    }
+
+    #[test]
     fn empty_response_is_inconclusive() {
         let result = classify_response(&[]);
 
