@@ -557,6 +557,9 @@ mod tests {
         assert!(!Scope::Unchanged.is_changed());
         assert_eq!(CvssSeverity::High.as_str(), "High");
         assert_eq!(CvssSeverity::None.as_str(), "None");
+        assert_eq!(CvssSeverity::Low.as_str(), "Low");
+        assert_eq!(PrivilegesRequired::Low.as_str(), "L");
+        assert_eq!(Scope::Changed.as_str(), "C");
     }
 
     #[test]
