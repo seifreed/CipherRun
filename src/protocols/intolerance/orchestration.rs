@@ -198,4 +198,42 @@ mod tests {
         assert_eq!(result.inconclusive_checks, ["version_intolerance"]);
         assert!(result.details["version_intolerance"].contains("baseline probe did not complete"));
     }
+
+    #[tokio::test]
+    async fn test_all_marks_network_failures_inconclusive() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("ephemeral loopback port should be available");
+        let port = listener
+            .local_addr()
+            .expect("bound address should exist")
+            .port();
+        drop(listener);
+
+        let target = crate::utils::network::Target::with_ips(
+            "example.test".to_string(),
+            port,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .expect("loopback target should be valid");
+        let result = crate::protocols::intolerance::IntoleranceTester::new(target)
+            .test_all()
+            .await
+            .expect("network failures are reported in the result");
+
+        assert!(result.inconclusive);
+        assert_eq!(
+            result.inconclusive_checks,
+            [
+                "extension_intolerance",
+                "version_intolerance",
+                "long_handshake_intolerance",
+                "incorrect_sni_alerts",
+                "uses_common_dh_primes",
+            ]
+        );
+        assert_eq!(result.details.len(), 5);
+        assert!(result.details.values().all(|detail| {
+            detail.contains("inconclusive") && detail.contains("baseline probe did not complete")
+        }));
+    }
 }
