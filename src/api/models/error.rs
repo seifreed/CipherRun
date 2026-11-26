@@ -380,6 +380,11 @@ mod tests {
         assert_eq!(resp.error, "BAD_REQUEST");
         assert_eq!(resp.message, "oops");
 
+        let resp = ApiErrorResponse::not_found("missing");
+        assert_eq!(resp.status, 404);
+        assert_eq!(resp.error, "NOT_FOUND");
+        assert_eq!(resp.message, "missing");
+
         let resp = ApiErrorResponse::unauthorized("nope").with_details("detail".to_string());
         assert_eq!(resp.status, 401);
         assert_eq!(resp.error, "UNAUTHORIZED");
@@ -449,6 +454,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         });
+        CapturedWriter(output.0.clone())
+            .flush()
+            .expect("captured writer should flush");
 
         for (index, response) in responses.into_iter().enumerate() {
             let body = to_bytes(response.into_body(), 64 * 1024)
