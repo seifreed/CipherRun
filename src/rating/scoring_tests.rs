@@ -481,3 +481,185 @@ fn test_modern_protocols_not_capped_by_legacy_rule() {
         result.grade
     );
 }
+
+fn valid_certificate() -> ValidationResult {
+    ValidationResult {
+        valid: true,
+        issues: Vec::new(),
+        trust_chain_valid: true,
+        hostname_match: true,
+        not_expired: true,
+        signature_valid: true,
+        trusted_ca: None,
+        platform_trust: None,
+    }
+}
+
+#[test]
+fn test_protocol_score_keeps_quic_neutral_without_modern_tls() {
+    let protocols = vec![protocol_result(Protocol::QUIC, true, 4)];
+
+    assert_eq!(RatingCalculator::calculate_protocol_score(&protocols), 80);
+}
+
+#[test]
+fn test_key_exchange_score_penalty_thresholds() {
+    for (forward_secrecy, expected) in [(50, 80), (70, 90), (80, 95), (81, 100)] {
+        let ciphers = ciphers_with_counts(CipherCounts {
+            total: 100,
+            forward_secrecy,
+            ..Default::default()
+        });
+
+        assert_eq!(
+            RatingCalculator::calculate_key_exchange_score(&ciphers),
+            expected,
+            "forward secrecy percentage {forward_secrecy}%"
+        );
+    }
+}
+
+#[test]
+fn test_null_cipher_forces_zero_rating_and_cipher_score() {
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: 1,
+        null_ciphers: 1,
+        ..Default::default()
+    });
+
+    assert_eq!(
+        RatingCalculator::calculate_cipher_strength_score(&ciphers),
+        0
+    );
+
+    let result = RatingCalculator::calculate(
+        &[protocol_result(Protocol::TLS13, true, 1)],
+        &ciphers,
+        None,
+        &[],
+    );
+    assert_eq!(result.grade, Grade::F);
+    assert_eq!(result.score, 0);
+    assert_eq!(result.cipher_strength_score, 0);
+}
+
+#[test]
+fn test_cipher_strength_score_weak_cipher_penalty_thresholds() {
+    for (weak_ciphers, expected) in [(75, 80), (50, 85), (25, 90), (1, 95)] {
+        let ciphers = ciphers_with_counts(CipherCounts {
+            total: 100,
+            low_strength: weak_ciphers,
+            aead: 100,
+            ..Default::default()
+        });
+
+        assert_eq!(
+            RatingCalculator::calculate_cipher_strength_score(&ciphers),
+            expected,
+            "weak cipher percentage {weak_ciphers}%"
+        );
+    }
+}
+
+#[test]
+fn test_certificate_grade_overrides_and_score_failures() {
+    let protocols = [protocol_result(Protocol::TLS13, true, 1)];
+    let ciphers = HashMap::new();
+
+    let mut expired = valid_certificate();
+    expired.not_expired = false;
+    assert_eq!(
+        RatingCalculator::calculate(&protocols, &ciphers, Some(&expired), &[]).grade,
+        Grade::T
+    );
+    assert_eq!(
+        RatingCalculator::calculate_certificate_score(Some(&expired)),
+        0
+    );
+
+    let mut untrusted = valid_certificate();
+    untrusted.trust_chain_valid = false;
+    assert_eq!(
+        RatingCalculator::calculate(&protocols, &ciphers, Some(&untrusted), &[]).grade,
+        Grade::T
+    );
+    assert_eq!(
+        RatingCalculator::calculate_certificate_score(Some(&untrusted)),
+        0
+    );
+
+    let mut hostname_mismatch = valid_certificate();
+    hostname_mismatch.hostname_match = false;
+    assert_eq!(
+        RatingCalculator::calculate(&protocols, &ciphers, Some(&hostname_mismatch), &[]).grade,
+        Grade::M
+    );
+    assert_eq!(
+        RatingCalculator::calculate_certificate_score(Some(&hostname_mismatch)),
+        0
+    );
+}
+
+#[test]
+fn test_certificate_score_deducts_each_issue_severity() {
+    use crate::certificates::validator::{IssueSeverity, IssueType, ValidationIssue};
+
+    let mut certificate = valid_certificate();
+    certificate.issues = [
+        IssueSeverity::Critical,
+        IssueSeverity::High,
+        IssueSeverity::Medium,
+        IssueSeverity::Low,
+        IssueSeverity::Info,
+    ]
+    .into_iter()
+    .map(|severity| ValidationIssue {
+        severity,
+        issue_type: IssueType::MissingExtension,
+        description: "fixture issue".to_string(),
+    })
+    .collect();
+
+    assert_eq!(
+        RatingCalculator::calculate_certificate_score(Some(&certificate)),
+        25
+    );
+}
+
+#[test]
+fn test_confirmed_vulnerability_penalties_cover_all_severities() {
+    use crate::vulnerabilities::{Severity, VulnerabilityType};
+
+    let vulnerabilities = [
+        (Severity::Critical, VulnerabilityType::Heartbleed),
+        (Severity::High, VulnerabilityType::POODLE),
+        (Severity::Medium, VulnerabilityType::ROBOT),
+        (Severity::Low, VulnerabilityType::DROWN),
+        (Severity::Info, VulnerabilityType::FREAK),
+    ]
+    .into_iter()
+    .map(|(severity, vuln_type)| VulnerabilityResult {
+        vuln_type,
+        vulnerable: true,
+        inconclusive: false,
+        details: "confirmed fixture".to_string(),
+        cve: None,
+        cwe: None,
+        severity,
+    })
+    .collect::<Vec<_>>();
+
+    let (score, warnings) = RatingCalculator::apply_vulnerability_penalties(100, &vulnerabilities);
+    assert_eq!(score, 25);
+    assert_eq!(warnings.len(), 4);
+    assert!(warnings[0].starts_with("Critical vulnerability:"));
+    assert!(warnings[1].starts_with("High severity vulnerability:"));
+    assert!(warnings[2].starts_with("Medium severity vulnerability:"));
+    assert!(warnings[3].starts_with("Low severity vulnerability:"));
+}
+
+#[test]
+fn test_percentage_handles_empty_and_saturated_inputs() {
+    assert_eq!(percentage(1, 0), None);
+    assert_eq!(percentage(usize::MAX, usize::MAX), Some(100));
+}

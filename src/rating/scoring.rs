@@ -434,9 +434,8 @@ fn percentage(numerator: usize, denominator: usize) -> Option<usize> {
         return None;
     }
 
-    let percentage = (numerator as u128)
-        .saturating_mul(100)
-        .checked_div(denominator as u128)?;
+    // The zero denominator is handled above, so division is defined here.
+    let percentage = (numerator as u128).saturating_mul(100) / denominator as u128;
     Some(usize::try_from(percentage.min(100)).expect("percentage is capped at 100"))
 }
 
