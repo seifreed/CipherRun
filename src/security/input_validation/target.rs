@@ -414,5 +414,6 @@ mod tests {
         }
 
         assert!(validate_target("2001:::1", true).is_err());
+        assert!(validate_target("2001:::invalid", true).is_err());
     }
 }
