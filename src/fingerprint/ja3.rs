@@ -468,6 +468,14 @@ mod tests {
     }
 
     #[test]
+    fn ja3_string_building_handles_empty_components() {
+        assert_eq!(
+            Ja3Fingerprint::build_ja3_string(771, &[], &[], &[], &[]),
+            "771,,,,"
+        );
+    }
+
+    #[test]
     fn test_md5_calculation() {
         let ja3_string = "771,49195-49199-52393-52392,0-10-11-13-35,29-23-24,0";
         let hash = Ja3Fingerprint::calculate_md5(ja3_string);
@@ -573,6 +581,14 @@ mod tests {
 
         fp.ssl_version = 0x0301;
         assert_eq!(fp.ssl_version_name(), "TLS 1.0");
+        fp.ssl_version = 0x0002;
+        assert_eq!(fp.ssl_version_name(), "SSL 2.0");
+        fp.ssl_version = 0x0300;
+        assert_eq!(fp.ssl_version_name(), "SSL 3.0");
+        fp.ssl_version = 0x0302;
+        assert_eq!(fp.ssl_version_name(), "TLS 1.1");
+        fp.ssl_version = 0xffff;
+        assert_eq!(fp.ssl_version_name(), "Unknown");
     }
 
     #[test]
@@ -592,5 +608,54 @@ mod tests {
         assert!(names.contains(&"X25519".to_string()));
         assert!(names.contains(&"secp256r1".to_string()));
         assert!(names.contains(&"secp384r1".to_string()));
+    }
+
+    #[test]
+    fn curve_names_cover_all_registered_groups_and_unknown_ids() {
+        let fp = Ja3Fingerprint {
+            ja3_string: String::new(),
+            ja3_hash: String::new(),
+            ssl_version: 0x0303,
+            ciphers: vec![],
+            extensions: vec![],
+            curves: vec![25, 30, 256, 257, 258, 259, 260, 0xffff],
+            point_formats: vec![],
+        };
+
+        assert_eq!(
+            fp.curve_names(),
+            [
+                "secp521r1",
+                "X448",
+                "ffdhe2048",
+                "ffdhe3072",
+                "ffdhe4096",
+                "ffdhe6144",
+                "ffdhe8192",
+                "unknown",
+            ]
+        );
+    }
+
+    #[test]
+    fn common_signature_database_contains_expected_browser_and_tool_entries() {
+        let db = Ja3Database::with_common_signatures();
+
+        assert_eq!(db.signatures().len(), 8);
+        assert_eq!(
+            db.match_fingerprint("773906b0efdefa24a7f2b8eb6985bf37")
+                .map(|signature| signature.name.as_str()),
+            Some("Chrome 120")
+        );
+        assert_eq!(
+            db.match_fingerprint("a0e9f5d64349fb13191bc781f81f42e1")
+                .map(|signature| signature.threat_level.as_str()),
+            Some("high")
+        );
+        assert_eq!(
+            db.match_fingerprint("b32309a26951912be7dba376398abc3b")
+                .map(|signature| signature.category.as_str()),
+            Some("Library")
+        );
     }
 }
