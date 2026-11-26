@@ -445,6 +445,7 @@ mod tests {
         };
         let current = ScanResults {
             target: previous.target.clone(),
+            rating: Some(test_rating(Grade::B, 75)),
             vulnerabilities: vec![VulnerabilityResult {
                 vuln_type: VulnerabilityType::Ticketbleed,
                 vulnerable: true,
@@ -488,6 +489,7 @@ mod tests {
         assert!(
             rendered.contains("Finding CR-TLS-HEARTBLEED-001: confirmed_vulnerable -> missing")
         );
+        assert!(rendered.contains("Rating: missing -> B (75)"));
     }
 
     #[test]
