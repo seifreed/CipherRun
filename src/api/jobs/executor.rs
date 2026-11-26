@@ -1001,10 +1001,19 @@ mod tests {
 
     #[tokio::test]
     async fn executor_start_stops_immediately_when_shutdown_is_requested() {
+        use tracing::instrument::WithSubscriber;
+
         let executor = Arc::new(ScanExecutor::new(
             Arc::new(super::super::InMemoryJobQueue::new(1)),
             1,
         ));
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
         executor
             .shutdown_tx
             .send(true)
@@ -1012,8 +1021,19 @@ mod tests {
 
         executor
             .start()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
             .await
             .expect("shutdown before startup should stop cleanly");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 3, "{output}");
+        assert_eq!(events[0]["fields"]["event_name"], "scan_executor.started");
+        assert_eq!(events[1]["fields"]["event_name"], "scan_executor.draining");
+        assert_eq!(events[2]["fields"]["event_name"], "scan_executor.shutdown");
     }
 
     #[tokio::test]
