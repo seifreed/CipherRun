@@ -243,6 +243,14 @@ mod tests {
     }
 
     #[test]
+    fn extract_crl_url_returns_none_when_distribution_points_are_absent() {
+        let checker = RevocationChecker::new(false);
+        let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+
+        assert!(checker.extract_crl_url(&cert).unwrap().is_none());
+    }
+
+    #[test]
     fn crl_completion_events_report_structured_outcomes_and_duration() {
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
