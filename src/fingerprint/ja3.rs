@@ -563,6 +563,37 @@ mod tests {
     }
 
     #[test]
+    fn database_file_loading_handles_valid_and_missing_paths() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("signatures.json");
+        std::fs::write(
+            &path,
+            r#"{"773906b0efdefa24a7f2b8eb6985bf37":{"name":"Chrome","category":"Browser","description":"test","threat_level":"none"}}"#,
+        )
+        .expect("signature fixture should be written");
+
+        let db = Ja3Database::from_file(&path).expect("valid JA3 signature file should load");
+        assert_eq!(db.signatures().len(), 1);
+
+        let error = Ja3Database::from_file(&directory.path().join("missing.json"))
+            .expect_err("missing JA3 signature file should fail");
+        assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
+    fn database_defaults_and_json_type_errors_are_defined() {
+        let embedded = Ja3Database::default().expect("inherent default loads embedded signatures");
+        assert!(!embedded.signatures().is_empty());
+
+        let empty: Ja3Database = Default::default();
+        assert!(empty.signatures().is_empty());
+
+        let error = Ja3Database::from_json("[]")
+            .expect_err("JA3 signatures must be represented as an object");
+        assert!(error.to_string().contains("a JA3 signature object"));
+    }
+
+    #[test]
     fn test_ssl_version_names() {
         let mut fp = Ja3Fingerprint {
             ja3_string: String::new(),
