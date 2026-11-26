@@ -37,6 +37,15 @@ impl AnycastScanCommand {
         }
     }
 
+    fn has_fail_on_finding(&self, results: &AnycastScanResults) -> bool {
+        self.args.output.fail_on.is_some_and(|threshold| {
+            results
+                .ip_results
+                .iter()
+                .any(|result| threshold.is_met_by(&result.results))
+        })
+    }
+
     fn export_results(&self, results: &AnycastScanResults) -> Result<()> {
         let exporter = ScanExporter::new(&self.args);
         let Some(json_path) = exporter.collection_json_output_path()? else {
@@ -77,14 +86,7 @@ impl Command for AnycastScanCommand {
         self.export_results(&results)?;
 
         let exit = Self::exit_for_results(&results);
-        if exit.is_success()
-            && self.args.output.fail_on.is_some_and(|threshold| {
-                results
-                    .ip_results
-                    .iter()
-                    .any(|result| threshold.is_met_by(&result.results))
-            })
-        {
+        if exit.is_success() && self.has_fail_on_finding(&results) {
             return Ok(CommandExit::findings_failure());
         }
 
@@ -206,5 +208,75 @@ mod tests {
                 .expect("exported JSON should deserialize");
         assert_eq!(exported.total_ips, 1);
         assert_eq!(exported.successful_scans, 1);
+    }
+
+    #[test]
+    fn anycast_json_export_without_json_path_is_a_noop() {
+        let command = AnycastScanCommand::new(Args::default());
+
+        command
+            .export_results(&anycast_results(1, 1))
+            .expect("export without a JSON destination should be a no-op");
+    }
+
+    #[test]
+    fn anycast_json_export_supports_pretty_output() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("anycast-pretty.json");
+        let command = AnycastScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                json: Some(path.clone()),
+                json_pretty: true,
+                overwrite: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        command
+            .export_results(&anycast_results(1, 1))
+            .expect("pretty JSON export should succeed");
+        let contents = std::fs::read_to_string(path).expect("JSON should be written");
+        assert!(contents.starts_with("{\n"));
+    }
+
+    #[tokio::test]
+    async fn anycast_execution_requires_a_target() {
+        let command = AnycastScanCommand::new(Args::default());
+
+        let error = command
+            .execute()
+            .await
+            .expect_err("Anycast scan requires an explicit target");
+        assert!(
+            matches!(error, TlsError::InvalidInput { message } if message.contains("requires a target"))
+        );
+    }
+
+    #[test]
+    fn fail_on_threshold_checks_confirmed_findings_across_ip_results() {
+        let mut results = anycast_results(1, 1);
+        results.ip_results[0].results.vulnerabilities.push(
+            crate::vulnerabilities::VulnerabilityResult {
+                vuln_type: crate::vulnerabilities::VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed test finding".to_string(),
+                cve: None,
+                cwe: None,
+                severity: crate::vulnerabilities::Severity::Critical,
+            },
+        );
+        let command = AnycastScanCommand::new(Args {
+            output: crate::cli::OutputArgs {
+                fail_on: Some(crate::cli::FailOnSeverity::High),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert!(command.has_fail_on_finding(&results));
+        assert!(!command.has_fail_on_finding(&anycast_results(1, 1)));
+        assert!(!AnycastScanCommand::new(Args::default()).has_fail_on_finding(&results));
     }
 }
