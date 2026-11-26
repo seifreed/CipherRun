@@ -60,6 +60,13 @@ fn parse_blacklist(raw: &str) -> Vec<String> {
         .collect()
 }
 
+fn map_openssl_error<T>(
+    result: std::result::Result<T, openssl::error::ErrorStack>,
+    action: &str,
+) -> Result<T, String> {
+    result.map_err(|error| format!("Failed to {action}: {error}"))
+}
+
 /// Whether the embedded default blacklist contains any fingerprints.
 ///
 /// When false, callers should report "not checked" rather than a (false) clean
@@ -113,9 +120,7 @@ impl DebianKeyDetector {
     /// * `Err(_)` - Error processing certificate
     pub fn is_weak_key(&self, cert: &X509) -> Result<bool, String> {
         // Extract public key from certificate
-        let public_key = cert
-            .public_key()
-            .map_err(|e| format!("Failed to extract public key: {}", e))?;
+        let public_key = map_openssl_error(cert.public_key(), "extract public key")?;
 
         self.is_weak_public_key(&public_key)
     }
@@ -136,13 +141,14 @@ impl DebianKeyDetector {
         public_key: &PKey<impl openssl::pkey::HasPublic>,
     ) -> Result<bool, String> {
         // Get public key in DER format
-        let der_bytes = public_key
-            .public_key_to_der()
-            .map_err(|e| format!("Failed to export public key to DER: {}", e))?;
+        let der_bytes =
+            map_openssl_error(public_key.public_key_to_der(), "export public key to DER")?;
 
         // Compute SHA256 fingerprint
-        let fingerprint = hash(MessageDigest::sha256(), &der_bytes)
-            .map_err(|e| format!("Failed to compute SHA256 hash: {}", e))?;
+        let fingerprint = map_openssl_error(
+            hash(MessageDigest::sha256(), &der_bytes),
+            "compute SHA256 hash",
+        )?;
 
         // Convert to hex string
         let fingerprint_hex = fingerprint
@@ -244,6 +250,15 @@ mod tests {
             parse_blacklist("\n  # comment\n  AABBCC  \n\nDeF123\n"),
             ["aabbcc", "def123"]
         );
+    }
+
+    #[test]
+    fn openssl_errors_include_the_failed_action() {
+        let error = Rsa::public_key_from_der(&[]).expect_err("empty DER must be rejected");
+
+        let mapped = map_openssl_error::<()>(Err(error), "export public key to DER")
+            .expect_err("OpenSSL errors should be returned with operation context");
+        assert!(mapped.starts_with("Failed to export public key to DER:"));
     }
 
     #[test]
