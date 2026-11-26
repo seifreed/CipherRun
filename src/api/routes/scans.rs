@@ -499,6 +499,14 @@ mod tests {
         };
         assert!(authorize_scan(&job, &same_tenant).is_ok());
 
+        let admin = AuthExtension {
+            permission: Permission::Admin,
+            principal_id: "administrator".to_string(),
+            tenant_id: Some("different-tenant".to_string()),
+            ..same_tenant.clone()
+        };
+        assert!(authorize_scan(&job, &admin).is_ok());
+
         let other_tenant = AuthExtension {
             tenant_id: Some("tenant-b".to_string()),
             ..same_tenant
@@ -777,6 +785,96 @@ mod tests {
                 .status,
             ScanStatus::Cancelled
         );
+    }
+
+    #[tokio::test]
+    async fn cancel_scan_logs_safe_cancellation_event() {
+        use tracing::instrument::WithSubscriber;
+
+        let state = build_state();
+        let mut job = ScanJob::new("private.example:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(output.clone())
+            .finish();
+
+        async {
+            let Json(response) = cancel_scan(State(state), test_auth(), Path(id))
+                .await
+                .expect("queued scan should be cancelled");
+            assert_eq!(response["message"], "Scan cancelled successfully");
+        }
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("scan.request.cancelled"), "{logs}");
+        assert!(logs.contains("\"outcome\":\"cancelled\""), "{logs}");
+        assert!(!logs.contains("private.example"), "{logs}");
+    }
+
+    struct CancellationRaceQueue(ScanJob);
+
+    #[async_trait]
+    impl JobQueue for CancellationRaceQueue {
+        async fn enqueue(&self, _job: ScanJob) -> crate::Result<String> {
+            unreachable!()
+        }
+
+        async fn dequeue(&self) -> crate::Result<Option<ScanJob>> {
+            unreachable!()
+        }
+
+        async fn get_job(&self, _id: &str) -> crate::Result<Option<ScanJob>> {
+            Ok(Some(self.0.clone()))
+        }
+
+        async fn update_job(&self, _job: &ScanJob) -> crate::Result<()> {
+            unreachable!()
+        }
+
+        async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> crate::Result<bool> {
+            unreachable!()
+        }
+
+        async fn cancel_job(&self, _id: &str) -> crate::Result<bool> {
+            Ok(false)
+        }
+
+        async fn queue_length(&self) -> crate::Result<usize> {
+            unreachable!()
+        }
+
+        async fn list_jobs(&self) -> crate::Result<Vec<ScanJob>> {
+            unreachable!()
+        }
+
+        async fn active_jobs_count(&self) -> crate::Result<usize> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scan_reports_race_when_job_cannot_be_cancelled() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        let id = job.id.clone();
+        let state = build_state_with_queue(Arc::new(CancellationRaceQueue(job)));
+
+        let error = cancel_scan(State(state), test_auth(), Path(id))
+            .await
+            .expect_err("queue cancellation race should be reported");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
     }
 
     #[tokio::test]
