@@ -1094,13 +1094,18 @@ mod tests {
             },
         };
         let mut reached_success = false;
+        CapturedLogWriter(Arc::new(Mutex::new(Vec::new())))
+            .flush()
+            .expect("captured log writer flush should succeed");
 
         for fail_after in 0..64 {
             let mut writer = FailingSummaryWriter {
                 fail_after,
                 writes: 0,
             };
-            match results.write_summary(&mut writer) {
+            let result = results.write_summary(&mut writer);
+            writer.flush().expect("summary writer flush should succeed");
+            match result {
                 Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
                 Ok(()) => {
                     reached_success = true;
