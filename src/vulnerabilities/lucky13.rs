@@ -28,6 +28,12 @@ pub(super) enum CbcCipherSupportStatus {
     Inconclusive,
 }
 
+fn map_blocking_task_result<T>(
+    result: std::result::Result<T, tokio::task::JoinError>,
+) -> Result<T> {
+    result.map_err(|error| crate::TlsError::Other(format!("Spawn blocking failed: {error}")))
+}
+
 impl Lucky13Tester {
     pub fn new(target: Target) -> Self {
         Self {
@@ -129,7 +135,7 @@ impl Lucky13Tester {
 
                 let (hostname, use_sni) =
                     crate::utils::network::openssl_hostname_and_sni(&self.target.hostname, None);
-                crate::utils::task::spawn_blocking_with_current_span(
+                let blocking_result = crate::utils::task::spawn_blocking_with_current_span(
                     move || -> Result<CbcCipherSupportStatus> {
                         let mut builder = SslConnector::builder(SslMethod::tls())?;
                         // The scanner must determine cipher support even on hosts with
@@ -152,8 +158,8 @@ impl Lucky13Tester {
                         }
                     },
                 )
-                .await
-                .map_err(|e| crate::TlsError::Other(format!("Spawn blocking failed: {e}")))?
+                .await;
+                map_blocking_task_result(blocking_result)?
             }
             _ => Ok(CbcCipherSupportStatus::Inconclusive),
         }
@@ -187,6 +193,20 @@ mod tests {
             classify_cbc_handshake_error("connection reset by peer"),
             CbcCipherSupportStatus::Inconclusive
         );
+    }
+
+    #[tokio::test]
+    async fn blocking_task_cancellation_maps_to_a_diagnostic_error() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let join_error = task
+            .await
+            .expect_err("cancelled tasks should produce a join error");
+
+        let error = map_blocking_task_result::<()>(Err(join_error))
+            .expect_err("blocking task join failures should become scanner errors");
+
+        assert!(error.to_string().starts_with("Spawn blocking failed:"));
     }
 
     #[test]
