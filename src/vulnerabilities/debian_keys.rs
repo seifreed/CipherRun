@@ -239,6 +239,14 @@ mod tests {
     use openssl::x509::{X509Builder, X509NameBuilder};
 
     #[test]
+    fn blacklist_parser_ignores_comments_and_blank_lines_and_normalizes_hashes() {
+        assert_eq!(
+            parse_blacklist("\n  # comment\n  AABBCC  \n\nDeF123\n"),
+            ["aabbcc", "def123"]
+        );
+    }
+
+    #[test]
     fn test_detector_creation() {
         let detector = DebianKeyDetector::new();
         assert_eq!(
