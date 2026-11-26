@@ -243,6 +243,28 @@ mod tests {
     }
 
     #[test]
+    fn crl_url_validation_accepts_only_http_without_credentials() {
+        assert!(is_http_crl_url("http://crl.example.test/root.crl"));
+        assert!(is_http_crl_url("https://crl.example.test/root.crl"));
+        assert!(!is_http_crl_url("ldap://crl.example.test/root.crl"));
+        assert!(!is_http_crl_url(
+            "https://user:secret@crl.example.test/root.crl"
+        ));
+        assert!(!is_http_crl_url("not a URL"));
+    }
+
+    #[test]
+    fn extract_crl_url_ignores_empty_certificate_der() {
+        let checker = RevocationChecker::new(false);
+        let certificate = CertificateInfo {
+            der_bytes: Vec::new(),
+            ..Default::default()
+        };
+
+        assert!(checker.extract_crl_url(&certificate).unwrap().is_none());
+    }
+
+    #[test]
     fn extract_crl_url_returns_none_when_distribution_points_are_absent() {
         let checker = RevocationChecker::new(false);
         let cert = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
