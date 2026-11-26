@@ -780,6 +780,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_stream_ticket_returns_scan_scoped_ticket() {
+        let state = build_state();
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "test-principal".to_string();
+        let id = job.id.clone();
+        state
+            .job_queue
+            .enqueue(job)
+            .await
+            .expect("enqueue should succeed");
+
+        let Json(response) =
+            create_stream_ticket(State(state.clone()), test_auth(), Path(id.clone()))
+                .await
+                .expect("owner should receive a stream ticket");
+
+        assert!(
+            response
+                .websocket_url
+                .starts_with(&format!("/api/v1/scan/{id}/stream?ticket="))
+        );
+        assert!(
+            state
+                .stream_tickets
+                .consume(&response.ticket, &id)
+                .await
+                .is_ok()
+        );
+        assert!(
+            state
+                .stream_tickets
+                .consume(&response.ticket, &id)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn test_create_scan_defaults_missing_options_to_full_scan() {
         let state = build_state();
         let request = scan_request("example.com", None);
