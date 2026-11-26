@@ -279,6 +279,8 @@ mod tests {
         assert!(snapshot.connect_timeout >= Duration::from_secs(5));
         assert!(snapshot.socket_timeout >= Duration::from_secs(5));
         assert!(snapshot.backoff >= Duration::from_millis(100));
+        assert!(controller.max_backoff() >= Duration::from_secs(2));
+        assert_eq!(controller.max_retries(), 3);
     }
 
     #[test]
@@ -359,5 +361,18 @@ mod tests {
         let snapshot = controller.snapshot();
         assert!(snapshot.connect_timeout >= Duration::from_secs(6));
         assert!(snapshot.max_concurrency <= 6);
+    }
+
+    #[test]
+    fn poisoned_mutex_recovers_the_inner_state() {
+        let mutex = Mutex::new(42);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = mutex
+                .lock()
+                .expect("mutex should be healthy before poisoning");
+            panic!("poison the test mutex");
+        }));
+
+        assert_eq!(*lock_mutex(&mutex), 42);
     }
 }
