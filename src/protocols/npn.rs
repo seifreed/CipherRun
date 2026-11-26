@@ -311,6 +311,51 @@ mod tests {
     }
 
     #[test]
+    fn test_server_hello_parseability_checks_record_and_handshake_bounds() {
+        let response = npn_server_hello(NPN_H2_HTTP11_EXTENSION, None);
+        assert!(server_hello::is_parseable(&response));
+
+        assert!(!server_hello::is_parseable(&[]));
+        let mut invalid_record_type = response.clone();
+        invalid_record_type[0] = 0x17;
+        assert!(!server_hello::is_parseable(&invalid_record_type));
+
+        let mut oversized_record = response.clone();
+        oversized_record[3] = 0xff;
+        oversized_record[4] = 0xff;
+        assert!(!server_hello::is_parseable(&oversized_record));
+
+        let mut oversized_handshake = response.clone();
+        oversized_handshake[6] = 0xff;
+        oversized_handshake[7] = 0xff;
+        oversized_handshake[8] = 0xff;
+        assert!(!server_hello::is_parseable(&oversized_handshake));
+
+        let mut oversized_session_id = response;
+        oversized_session_id[43] = 255;
+        assert!(!server_hello::is_parseable(&oversized_session_id));
+    }
+
+    #[test]
+    fn test_npn_protocol_list_stops_at_the_configured_limit() {
+        const MAX_PROTOCOLS: usize = 100;
+        let mut protocol_names = Vec::with_capacity((MAX_PROTOCOLS + 1) * 2);
+        for _ in 0..=MAX_PROTOCOLS {
+            protocol_names.extend_from_slice(&[1, b'x']);
+        }
+        let mut extension = vec![0x33, 0x74];
+        extension.extend_from_slice(&((protocol_names.len()) as u16).to_be_bytes());
+        extension.extend_from_slice(&protocol_names);
+        let response = npn_server_hello(&extension, None);
+
+        let protocols = parse_npn_response(&response)
+            .expect("protocol list within the input bounds should parse");
+
+        assert_eq!(protocols.len(), MAX_PROTOCOLS);
+        assert!(protocols.iter().all(|protocol| protocol == "x"));
+    }
+
+    #[test]
     fn test_parse_npn_response_rejects_invalid_protocol_utf8() {
         let response = npn_server_hello(&[0x33, 0x74, 0x00, 0x02, 0x01, 0xff], None);
 
