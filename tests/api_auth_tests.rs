@@ -271,6 +271,11 @@ async fn test_credential_routes_validate_input_and_expiration() {
             "permission": "User"
         }),
         serde_json::json!({
+            "key_id": "k".repeat(129),
+            "principal_id": "principal",
+            "permission": "User"
+        }),
+        serde_json::json!({
             "key_id": "key",
             "principal_id": "principal with whitespace",
             "permission": "User"
