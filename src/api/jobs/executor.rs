@@ -442,17 +442,13 @@ impl ScanExecutor {
         let mut outcome_error_code = "unknown";
         let mut failed = false;
 
-        match scan_result {
+        let mut terminal_progress = match scan_result {
             Ok(results) => {
                 if let Err(error) = self.persist_results(&job, &results).await {
                     outcome_error_code = error.observability_code();
                     error!(event_name = "scan_job.result_persist_failed", job_id = %job.id, error_type = "results_store", error_code = error.observability_code(), "Failed to persist scan results");
                     job.mark_failed(error.to_string());
                     failed = true;
-                    let _ = self.progress_tx.send(ProgressMessage::failed(
-                        &job.id,
-                        job.error.clone().unwrap_or_default(),
-                    ));
                 }
                 let duration_ms = job
                     .started_at
@@ -488,10 +484,10 @@ impl ScanExecutor {
                 } else {
                     ProgressMessage::completed(&job.id)
                 };
-                let _ = self.progress_tx.send(msg);
                 if !cancelled && !failed {
                     completed_duration = Some(duration_ms);
                 }
+                Some(msg)
             }
             Err(e) => {
                 outcome_error_code = e.observability_code();
@@ -557,9 +553,9 @@ impl ScanExecutor {
                 } else {
                     ProgressMessage::failed(&job.id, job.error.clone().unwrap_or_default())
                 };
-                let _ = self.progress_tx.send(msg);
+                Some(msg)
             }
-        }
+        };
 
         // Authoritative final update. Use update_job_preserving_cancelled to
         // prevent the race where a cancellation request arrives between scan
@@ -586,6 +582,8 @@ impl ScanExecutor {
             }
             Ok(false) => {
                 // Job was cancelled while we were processing - this is expected.
+                job.mark_cancelled();
+                terminal_progress = Some(ProgressMessage::cancelled(&job.id, job.progress));
                 tracing::info!(
                     event_name = "scan_job.cancelled",
                     job_id = %job.id,
@@ -595,6 +593,10 @@ impl ScanExecutor {
             Err(error) => {
                 error!(event_name = "scan_job.final_status_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist final scan status");
             }
+        }
+
+        if let Some(progress) = terminal_progress {
+            let _ = self.progress_tx.send(progress);
         }
 
         // Call webhook if configured
@@ -1082,6 +1084,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1183,6 +1186,7 @@ mod tests {
             get_job_error: true,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         };
@@ -1233,6 +1237,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: true,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1280,6 +1285,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1314,6 +1320,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1341,6 +1348,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1367,6 +1375,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finalizing_late_cancellation_publishes_cancelled_without_counting_completion() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "principal-1".to_string();
+        job.mark_started();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            final_update_cancelled: true,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let stats = Arc::new(RwLock::new(ApiStats::default()));
+        let executor = ScanExecutor::new(queue.clone(), 1).with_stats(stats.clone());
+        let mut progress = executor.subscribe_progress();
+        let results = ScanResults {
+            target: job.target.clone(),
+            ..Default::default()
+        };
+
+        executor.finalize_scan(queue, job, Ok(results)).await;
+
+        let message = progress
+            .try_recv()
+            .expect("late cancellation should publish the authoritative outcome");
+        assert_eq!(message.msg_type, "cancelled");
+        assert_eq!(stats.read().await.completed_scans, 0);
+        assert_eq!(stats.read().await.failed_scans, 0);
+    }
+
+    #[tokio::test]
     async fn finalizing_store_failure_marks_scan_failed_without_logging_details() {
         use tracing::instrument::WithSubscriber;
 
@@ -1381,6 +1425,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1444,6 +1489,7 @@ mod tests {
             get_job_error: true,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1482,6 +1528,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1528,6 +1575,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: true,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1780,6 +1828,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::Requeued),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1813,6 +1862,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Err("private retry backend detail"),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1859,6 +1909,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1951,6 +2002,7 @@ mod tests {
         get_job_error: bool,
         get_job_panics: bool,
         cancel_on_get: bool,
+        final_update_cancelled: bool,
         retry_result: std::result::Result<RetryDisposition, &'static str>,
         dequeue_calls: AtomicUsize,
     }
@@ -1995,7 +2047,12 @@ mod tests {
             Ok(())
         }
 
-        async fn update_job_preserving_cancelled(&self, _job: &ScanJob) -> Result<bool> {
+        async fn update_job_preserving_cancelled(&self, job: &ScanJob) -> Result<bool> {
+            if self.final_update_cancelled
+                && matches!(job.status, ScanStatus::Completed | ScanStatus::Failed)
+            {
+                return Ok(false);
+            }
             Ok(true)
         }
 
@@ -2043,6 +2100,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2079,6 +2137,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2110,6 +2169,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2177,6 +2237,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2230,6 +2291,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2286,6 +2348,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2358,6 +2421,7 @@ mod tests {
             get_job_error: false,
             get_job_panics: false,
             cancel_on_get: false,
+            final_update_cancelled: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
