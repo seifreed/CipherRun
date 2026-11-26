@@ -650,15 +650,34 @@ mod tests {
 
     #[test]
     fn test_handshake_type_names() {
-        assert_eq!(handshake_type_name(0x01), "ClientHello");
-        assert_eq!(handshake_type_name(0x02), "ServerHello");
-        assert_eq!(handshake_type_name(0x0B), "Certificate");
-        assert_eq!(handshake_type_name(0x14), "Finished");
+        for (handshake_type, expected) in [
+            (HANDSHAKE_TYPE_HELLO_REQUEST, "HelloRequest"),
+            (HANDSHAKE_TYPE_CLIENT_HELLO, "ClientHello"),
+            (HANDSHAKE_TYPE_SERVER_HELLO, "ServerHello"),
+            (HANDSHAKE_TYPE_HELLO_VERIFY_REQUEST, "HelloVerifyRequest"),
+            (HANDSHAKE_TYPE_NEW_SESSION_TICKET, "NewSessionTicket"),
+            (HANDSHAKE_TYPE_END_OF_EARLY_DATA, "EndOfEarlyData"),
+            (HANDSHAKE_TYPE_ENCRYPTED_EXTENSIONS, "EncryptedExtensions"),
+            (HANDSHAKE_TYPE_CERTIFICATE, "Certificate"),
+            (HANDSHAKE_TYPE_SERVER_KEY_EXCHANGE, "ServerKeyExchange"),
+            (HANDSHAKE_TYPE_CERTIFICATE_REQUEST, "CertificateRequest"),
+            (HANDSHAKE_TYPE_SERVER_HELLO_DONE, "ServerHelloDone"),
+            (HANDSHAKE_TYPE_CERTIFICATE_VERIFY, "CertificateVerify"),
+            (HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, "ClientKeyExchange"),
+            (HANDSHAKE_TYPE_FINISHED, "Finished"),
+            (HANDSHAKE_TYPE_CERTIFICATE_URL, "CertificateURL"),
+            (HANDSHAKE_TYPE_CERTIFICATE_STATUS, "CertificateStatus"),
+            (HANDSHAKE_TYPE_KEY_UPDATE, "KeyUpdate"),
+            (HANDSHAKE_TYPE_MESSAGE_HASH, "MessageHash"),
+        ] {
+            assert_eq!(handshake_type_name(handshake_type), expected);
+        }
         assert_eq!(handshake_type_name(0xFF), "Unknown");
     }
 
     #[test]
     fn test_protocol_version_names() {
+        assert_eq!(protocol_version_name(VERSION_SSL_2_0), "SSL 2.0");
         assert_eq!(protocol_version_name(0x0301), "TLS 1.0");
         assert_eq!(protocol_version_name(0x0302), "TLS 1.1");
         assert_eq!(protocol_version_name(0x0303), "TLS 1.2");
