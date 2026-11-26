@@ -483,6 +483,48 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn idempotency_key_validates_header_count_and_value() {
+        assert_eq!(idempotency_key(&HeaderMap::new()).unwrap(), None);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("Idempotency-Key", "request-123".parse().unwrap());
+        assert_eq!(
+            idempotency_key(&headers).unwrap(),
+            Some("request-123".to_string())
+        );
+
+        headers.append("Idempotency-Key", "second".parse().unwrap());
+        assert!(matches!(
+            idempotency_key(&headers),
+            Err(ApiError::BadRequest(message)) if message == "Duplicate Idempotency-Key header"
+        ));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("Idempotency-Key", "".parse().unwrap());
+        assert!(matches!(
+            idempotency_key(&headers),
+            Err(ApiError::BadRequest(message)) if message.starts_with("Idempotency-Key must contain")
+        ));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("Idempotency-Key", "k".repeat(129).parse().unwrap());
+        assert!(matches!(
+            idempotency_key(&headers),
+            Err(ApiError::BadRequest(message)) if message.starts_with("Idempotency-Key must contain")
+        ));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_bytes(&[0xff]).unwrap(),
+        );
+        assert!(matches!(
+            idempotency_key(&headers),
+            Err(ApiError::BadRequest(message)) if message == "Invalid Idempotency-Key header"
+        ));
+    }
+
     fn valid_hostname_253() -> String {
         format!(
             "{}.{}.{}.{}",
