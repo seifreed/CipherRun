@@ -413,11 +413,37 @@ mod tests {
     use crate::api::state::ApiStats;
     use async_trait::async_trait;
     use axum::{Router, http::StatusCode, middleware as axum_middleware, routing::get};
-    use std::sync::Arc;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
     use tokio::net::TcpListener;
     use tokio::sync::{RwLock, oneshot};
     use tokio_tungstenite::{connect_async, tungstenite::Error as WsError};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn build_state() -> Arc<AppState> {
         build_state_with_queue(Arc::new(InMemoryJobQueue::new(1000)))
@@ -702,6 +728,36 @@ mod tests {
 
         assert!(job.options.full_scan);
         assert!(job.options.analyze_certificates);
+    }
+
+    #[tokio::test]
+    async fn create_scan_logs_safe_queued_event() {
+        use tracing::instrument::WithSubscriber;
+
+        let state = build_state();
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let request = scan_request("example.com", Some(ScanOptions::full()));
+
+        let (_, Json(response)) = async {
+            create_scan(State(state), test_auth(), HeaderMap::new(), Json(request))
+                .await
+                .expect("valid scan should be queued")
+        }
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        assert_eq!(response.status, ScanStatus::Queued);
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("scan.request.queued"), "{logs}");
+        assert!(logs.contains("\"outcome\":\"queued\""), "{logs}");
+        assert!(logs.contains("\"duration_ms\":"), "{logs}");
+        assert!(!logs.contains("example.com"), "{logs}");
     }
 
     #[tokio::test]
