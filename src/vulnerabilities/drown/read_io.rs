@@ -95,6 +95,18 @@ mod tests {
         }
     }
 
+    struct PendingReader;
+
+    impl AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
     #[test]
     fn record_buffer_has_room_for_the_largest_ssl_v2_record() {
         let buffer = record_buffer();
@@ -193,6 +205,17 @@ mod tests {
             );
             server.abort();
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_read_timeout_returns_zero_without_waiting_for_real_time() {
+        let read = tokio::spawn(async {
+            read_complete_sslv2_record(&mut PendingReader, &mut [0; 8]).await
+        });
+
+        tokio::time::advance(Duration::from_secs(3)).await;
+
+        assert_eq!(read.await.unwrap().unwrap(), 0);
     }
 
     #[tokio::test]
