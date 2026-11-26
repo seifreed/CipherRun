@@ -28,7 +28,13 @@ pub struct StreamTicketManager {
 impl StreamTicketManager {
     pub fn new() -> crate::Result<Self> {
         let random = ring::rand::SystemRandom::new();
-        let signing_key = Self::signing_key_from_random(|key| random.fill(key))?;
+        Self::new_with_random(|key| random.fill(key))
+    }
+
+    fn new_with_random(
+        fill_random: impl FnOnce(&mut [u8]) -> std::result::Result<(), ring::error::Unspecified>,
+    ) -> crate::Result<Self> {
+        let signing_key = Self::signing_key_from_random(fill_random)?;
         Ok(Self {
             signing_key,
             issued: Mutex::new(HashMap::new()),
@@ -50,10 +56,30 @@ impl StreamTicketManager {
         })
     }
 
+    fn sign_claims(&self, claims: &impl Serialize) -> Result<String, ApiError> {
+        let payload = Self::serialize_claims(claims)?;
+        let signature = hmac::sign(&self.signing_key, &payload);
+        Ok(format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(&payload),
+            URL_SAFE_NO_PAD.encode(signature.as_ref())
+        ))
+    }
+
     pub async fn issue(
         &self,
         scan_id: &str,
         auth: &AuthExtension,
+    ) -> Result<(String, chrono::DateTime<chrono::Utc>), ApiError> {
+        self.issue_with_signer(scan_id, auth, |claims| self.sign_claims(claims))
+            .await
+    }
+
+    async fn issue_with_signer(
+        &self,
+        scan_id: &str,
+        auth: &AuthExtension,
+        sign: impl FnOnce(&StreamTicketClaims) -> Result<String, ApiError>,
     ) -> Result<(String, chrono::DateTime<chrono::Utc>), ApiError> {
         let expires_at = chrono::Utc::now() + chrono::Duration::seconds(TICKET_LIFETIME_SECONDS);
         let claims = StreamTicketClaims {
@@ -64,13 +90,7 @@ impl StreamTicketManager {
             tenant_id: auth.tenant_id.clone(),
             expires_at: expires_at.timestamp(),
         };
-        let payload = Self::serialize_claims(&claims)?;
-        let signature = hmac::sign(&self.signing_key, &payload);
-        let token = format!(
-            "{}.{}",
-            URL_SAFE_NO_PAD.encode(&payload),
-            URL_SAFE_NO_PAD.encode(signature.as_ref())
-        );
+        let token = sign(&claims)?;
 
         let mut issued = self.issued.lock().await;
         let now = chrono::Utc::now().timestamp();
@@ -193,14 +213,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn issue_does_not_store_ticket_when_signing_fails() {
+        let manager = StreamTicketManager::new().expect("manager should initialize");
+
+        assert!(matches!(
+            manager
+                .issue_with_signer("scan-1", &auth(), |_| {
+                    Err(ApiError::internal_with_diagnostic(
+                        "issue_stream_ticket",
+                        "serialization_error",
+                    ))
+                })
+                .await,
+            Err(ApiError::Internal(_))
+        ));
+        assert!(manager.issued.lock().await.is_empty());
+    }
+
     #[test]
     fn initialization_and_claim_serialization_fail_safely() {
         assert!(matches!(
-            StreamTicketManager::signing_key_from_random(|_| Err(ring::error::Unspecified)),
+            StreamTicketManager::new_with_random(|_| Err(ring::error::Unspecified)),
             Err(crate::TlsError::Other(message)) if message == "Failed to generate stream ticket key"
         ));
         assert!(matches!(
             StreamTicketManager::serialize_claims(&FailingClaims),
+            Err(ApiError::Internal(_))
+        ));
+        let manager = StreamTicketManager::new().expect("manager should initialize");
+        assert!(matches!(
+            manager.sign_claims(&FailingClaims),
             Err(ApiError::Internal(_))
         ));
     }
