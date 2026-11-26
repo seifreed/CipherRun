@@ -180,4 +180,84 @@ mod tests {
 
         assert!(error.to_string().contains("Failed to fetch protocols"));
     }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn compares_protocols_from_postgres() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_protocol_test_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        sqlx::query(
+            "CREATE TABLE protocols (
+                protocol_id BIGSERIAL PRIMARY KEY,
+                scan_id BIGINT NOT NULL,
+                protocol_name TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL,
+                preferred BOOLEAN NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("protocol table should be created");
+        for (scan_id, name, enabled, preferred) in [
+            (1_i64, "TLS 1.2", true, true),
+            (1, "TLS 1.0", true, false),
+            (2, "TLSv1.2", true, false),
+            (2, "TLS 1.3", true, true),
+            (2, "TLS 1.0", false, false),
+        ] {
+            sqlx::query(
+                "INSERT INTO protocols (scan_id, protocol_name, enabled, preferred) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(scan_id)
+            .bind(name)
+            .bind(enabled)
+            .bind(preferred)
+            .execute(&pool)
+            .await
+            .expect("protocol should insert");
+        }
+
+        let database = std::sync::Arc::new(crate::db::CipherRunDatabase::from_pool(
+            DatabasePool::Postgres(pool.clone()),
+        ));
+        let diff = ScanComparator::new(database)
+            .compare_protocols(1, 2)
+            .await
+            .expect("PostgreSQL protocols should compare");
+        assert_eq!(diff.added, ["TLS 1.3"]);
+        assert_eq!(diff.removed, ["TLS 1.0"]);
+        assert_eq!(diff.unchanged, ["TLSv1.2"]);
+        assert_eq!(
+            diff.preferred_change,
+            Some((Some("TLS 1.2".to_string()), Some("TLS 1.3".to_string())))
+        );
+
+        drop(pool);
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+    }
 }
