@@ -182,6 +182,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn detect_rating_changes_preserves_rating_query_errors() {
+        let db = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .unwrap();
+        db.pool
+            .execute("DROP TABLE ratings", Vec::new())
+            .await
+            .unwrap();
+        let tracker = ChangeTracker::new(Arc::new(db));
+        let old_scan = ScanRecord {
+            scan_id: Some(1),
+            ..ScanRecord::new("rating-query-error.test".to_string(), 443)
+        };
+        let new_scan = ScanRecord {
+            scan_id: Some(2),
+            ..ScanRecord::new("rating-query-error.test".to_string(), 443)
+        };
+
+        let error = tracker
+            .detect_rating_changes(&old_scan, &new_scan, Utc::now())
+            .await
+            .expect_err("missing ratings table should fail the comparison");
+        assert!(error.to_string().contains("Failed to fetch ratings"));
+    }
+
+    #[tokio::test]
     async fn detect_rating_changes_reports_category_and_overall_outcomes() {
         let db = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
             .await
