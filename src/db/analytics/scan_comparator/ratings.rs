@@ -165,3 +165,144 @@ impl ScanComparator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::CipherRunDatabase;
+    use crate::db::connection::DatabasePool;
+    use std::sync::Arc;
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn compare_ratings_reads_postgres_changes_and_preserves_query_errors() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_rating_compare_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        sqlx::query(
+            "CREATE TABLE ratings (
+                rating_id BIGSERIAL PRIMARY KEY,
+                scan_id BIGINT NOT NULL,
+                category TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                grade TEXT,
+                rationale TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("ratings table should be created");
+        for (scan_id, category, score, grade, rationale) in [
+            (1_i64, "certificate", 95_i32, Some("A"), Some("old")),
+            (1, "protocol", 80, Some("B"), None),
+            (2, "certificate", 90, Some("B"), Some("updated")),
+            (2, "cipher", 75, Some("C"), None),
+        ] {
+            sqlx::query(
+                "INSERT INTO ratings (scan_id, category, score, grade, rationale) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(scan_id)
+            .bind(category)
+            .bind(score)
+            .bind(grade)
+            .bind(rationale)
+            .execute(&pool)
+            .await
+            .expect("rating should be inserted");
+        }
+
+        let database = Arc::new(CipherRunDatabase::from_pool(DatabasePool::Postgres(
+            pool.clone(),
+        )));
+        let comparator = ScanComparator::new(database);
+        let mut scan_1 = ScanRecord::new("ratings.example".to_string(), 443);
+        scan_1.scan_id = Some(1);
+        scan_1.overall_grade = Some("A".to_string());
+        scan_1.overall_score = Some(95);
+        let mut scan_2 = ScanRecord::new("ratings.example".to_string(), 443);
+        scan_2.scan_id = Some(2);
+        scan_2.overall_grade = Some("B".to_string());
+        scan_2.overall_score = Some(85);
+
+        let diff = comparator
+            .compare_ratings(&scan_1, &scan_2, 1, 2)
+            .await
+            .expect("PostgreSQL ratings should compare");
+        assert!(diff.overall_changed);
+        assert_eq!(diff.component_diffs.len(), 3);
+        assert!(
+            diff.component_diffs
+                .iter()
+                .all(|component| component.changed)
+        );
+        let certificate = diff
+            .component_diffs
+            .iter()
+            .find(|component| component.category == "certificate")
+            .expect("certificate rating should be present");
+        assert_eq!(certificate.scan_1_rationale.as_deref(), Some("old"));
+        assert_eq!(certificate.scan_2_rationale.as_deref(), Some("updated"));
+
+        sqlx::query("DROP TABLE ratings")
+            .execute(&pool)
+            .await
+            .expect("test should remove the ratings table");
+        let error = comparator
+            .compare_ratings(&scan_1, &scan_2, 1, 2)
+            .await
+            .expect_err("a missing PostgreSQL ratings table should fail comparison");
+        assert!(error.to_string().contains("Failed to fetch ratings"));
+
+        drop(comparator);
+        drop(pool);
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+    }
+
+    #[tokio::test]
+    async fn compare_ratings_preserves_sqlite_query_errors() {
+        use crate::db::DatabaseConfig;
+        use std::path::PathBuf;
+
+        let database = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .expect("in-memory SQLite database should initialize");
+        database
+            .pool()
+            .execute("DROP TABLE ratings", Vec::new())
+            .await
+            .expect("test should remove the ratings table");
+
+        let scan_1 = ScanRecord::new("ratings.example".to_string(), 443);
+        let scan_2 = ScanRecord::new("ratings.example".to_string(), 443);
+        let error = ScanComparator::new(Arc::new(database))
+            .compare_ratings(&scan_1, &scan_2, 1, 2)
+            .await
+            .expect_err("a missing SQLite ratings table should fail comparison");
+
+        assert!(error.to_string().contains("Failed to fetch ratings"));
+    }
+}
