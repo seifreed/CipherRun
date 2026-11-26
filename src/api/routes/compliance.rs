@@ -6,6 +6,7 @@ use crate::api::{
     presenters::compliance::present_compliance_report,
     state::AppState,
 };
+use crate::application::ScanAssessment;
 use crate::compliance::{BuiltinFrameworkSource, ComplianceFramework, ComplianceReport, Reporter};
 use axum::{
     Json,
@@ -219,6 +220,43 @@ pub async fn check_compliance(
     Path(framework_id): Path<String>,
     Query(query): Query<ComplianceQuery>,
 ) -> Result<Response, ApiError> {
+    check_compliance_with_runner(
+        State(_state),
+        Path(framework_id),
+        Query(query),
+        &DefaultComplianceRunner,
+    )
+    .await
+}
+
+#[async_trait::async_trait]
+trait ComplianceRunner: Send + Sync {
+    async fn run(
+        &self,
+        framework: &ComplianceFramework,
+        target: &str,
+    ) -> Result<(ScanAssessment, ComplianceReport), ApiError>;
+}
+
+struct DefaultComplianceRunner;
+
+#[async_trait::async_trait]
+impl ComplianceRunner for DefaultComplianceRunner {
+    async fn run(
+        &self,
+        framework: &ComplianceFramework,
+        target: &str,
+    ) -> Result<(ScanAssessment, ComplianceReport), ApiError> {
+        compliance_adapter::run_compliance_check_with_defaults(framework, target).await
+    }
+}
+
+async fn check_compliance_with_runner(
+    State(_state): State<Arc<AppState>>,
+    Path(framework_id): Path<String>,
+    Query(query): Query<ComplianceQuery>,
+    runner: &dyn ComplianceRunner,
+) -> Result<Response, ApiError> {
     // Validate target is provided
     let target = query
         .target
@@ -230,8 +268,7 @@ pub async fn check_compliance(
     let framework = compliance_adapter::load_framework(&BuiltinFrameworkSource, &framework_id)?;
 
     // Run scan and evaluate compliance via adapter
-    let (_assessment, report) =
-        compliance_adapter::run_compliance_check_with_defaults(&framework, target).await?;
+    let (_assessment, report) = runner.run(&framework, target).await?;
 
     Ok(format.render(&framework, &report, query.detailed))
 }
@@ -279,6 +316,21 @@ mod tests {
         });
         report.finalize();
         report
+    }
+
+    struct SuccessfulComplianceRunner;
+
+    #[async_trait::async_trait]
+    impl ComplianceRunner for SuccessfulComplianceRunner {
+        async fn run(
+            &self,
+            _framework: &ComplianceFramework,
+            target: &str,
+        ) -> Result<(ScanAssessment, ComplianceReport), ApiError> {
+            let mut report = test_report();
+            report.target = target.to_string();
+            Ok((ScanAssessment::default(), report))
+        }
     }
 
     #[tokio::test]
@@ -347,6 +399,32 @@ mod tests {
             .expect_err("private target should error");
 
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn test_check_compliance_success_renders_the_report() {
+        let runner = SuccessfulComplianceRunner;
+        let response = check_compliance_with_runner(
+            State(build_test_state()),
+            Path("pci-dss-v4".to_string()),
+            Query(ComplianceQuery {
+                target: Some("example.com:443".to_string()),
+                format: "json".to_string(),
+                detailed: false,
+            }),
+            &runner,
+        )
+        .await
+        .expect("compliance report should render");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid json");
+        assert_eq!(json["framework_id"], "pci-dss-v4");
+        assert_eq!(json["target"], "example.com:443");
     }
 
     #[test]
