@@ -131,7 +131,10 @@ mod tests {
         }
     }
 
-    struct FailingQueue;
+    struct FailingQueue {
+        fail_active_count: bool,
+        fail_queued_count: bool,
+    }
 
     #[async_trait]
     impl JobQueue for FailingQueue {
@@ -160,9 +163,13 @@ mod tests {
         }
 
         async fn queue_length(&self) -> crate::Result<usize> {
-            Err(crate::TlsError::Other(
-                "queue backend failed password=must-not-leak".to_string(),
-            ))
+            if self.fail_queued_count {
+                Err(crate::TlsError::Other(
+                    "queue backend failed password=must-not-leak".to_string(),
+                ))
+            } else {
+                Ok(0)
+            }
         }
 
         async fn list_jobs(&self) -> crate::Result<Vec<ScanJob>> {
@@ -170,10 +177,35 @@ mod tests {
         }
 
         async fn active_jobs_count(&self) -> crate::Result<usize> {
-            Err(crate::TlsError::Other(
-                "queue backend failed password=must-not-leak".to_string(),
-            ))
+            if self.fail_active_count {
+                Err(crate::TlsError::Other(
+                    "queue backend failed password=must-not-leak".to_string(),
+                ))
+            } else {
+                Ok(0)
+            }
         }
+    }
+
+    fn state_with_queue(job_queue: Arc<dyn JobQueue>) -> Arc<AppState> {
+        let config = Arc::new(ApiConfig::default());
+        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
+        let progress_tx: broadcast::Sender<ProgressMessage> = executor.progress_broadcaster();
+
+        Arc::new(AppState {
+            credential_store: crate::api::config::ApiCredentialStore::new(&config),
+            config,
+            job_queue,
+            executor,
+            progress_tx,
+            start_time: Instant::now(),
+            stats: Arc::new(RwLock::new(ApiStats::default())),
+            rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
+            db_pool: None,
+            policy_dir: None,
+            stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
+            results_store: None,
+        })
     }
 
     #[tokio::test]
@@ -222,25 +254,10 @@ mod tests {
     async fn test_health_check_degrades_when_queue_backend_fails() {
         use tracing::instrument::WithSubscriber;
 
-        let config = Arc::new(ApiConfig::default());
-        let job_queue = Arc::new(FailingQueue);
-        let executor = Arc::new(ScanExecutor::new(job_queue.clone(), 1));
-        let progress_tx: broadcast::Sender<ProgressMessage> = executor.progress_broadcaster();
-
-        let state = Arc::new(AppState {
-            credential_store: crate::api::config::ApiCredentialStore::new(&config),
-            config,
-            job_queue,
-            executor,
-            progress_tx,
-            start_time: Instant::now(),
-            stats: Arc::new(RwLock::new(ApiStats::default())),
-            rate_limiter: Arc::new(PerKeyRateLimiter::new(100)),
-            db_pool: None,
-            policy_dir: None,
-            stream_tickets: Arc::new(crate::api::ws::tickets::StreamTicketManager::new().unwrap()),
-            results_store: None,
-        });
+        let state = state_with_queue(Arc::new(FailingQueue {
+            fail_active_count: true,
+            fail_queued_count: true,
+        }));
 
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
@@ -271,5 +288,53 @@ mod tests {
         assert!(logs.contains("active_error_code=\"other\""), "{logs}");
         assert!(logs.contains("queued_error_code=\"other\""), "{logs}");
         assert!(!logs.contains("must-not-leak"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn test_health_check_reports_only_the_queue_counter_that_failed() {
+        use tracing::instrument::WithSubscriber;
+
+        for (fail_active_count, fail_queued_count, active_failed, queued_failed) in
+            [(false, true, false, true), (true, false, true, false)]
+        {
+            let state = state_with_queue(Arc::new(FailingQueue {
+                fail_active_count,
+                fail_queued_count,
+            }));
+            let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::WARN)
+                .with_writer(output.clone())
+                .finish();
+            let Json(response) = async { health_check(State(state)).await }
+                .with_subscriber(tracing::Dispatch::new(subscriber))
+                .await;
+
+            assert_eq!(response.status, "degraded");
+            assert_eq!(response.active_scans, None);
+            assert_eq!(response.queued_scans, None);
+            let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+            assert!(
+                logs.contains(&format!("active_scans_failed={active_failed}")),
+                "{logs}"
+            );
+            assert!(
+                logs.contains(&format!("queued_scans_failed={queued_failed}")),
+                "{logs}"
+            );
+            let active_code = if active_failed { "other" } else { "none" };
+            let queued_code = if queued_failed { "other" } else { "none" };
+            assert!(
+                logs.contains(&format!("active_error_code=\"{active_code}\"")),
+                "{logs}"
+            );
+            assert!(
+                logs.contains(&format!("queued_error_code=\"{queued_code}\"")),
+                "{logs}"
+            );
+            assert!(!logs.contains("must-not-leak"), "{logs}");
+        }
     }
 }
