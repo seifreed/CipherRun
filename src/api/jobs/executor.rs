@@ -441,6 +441,8 @@ impl ScanExecutor {
         let mut completed_duration: Option<u64> = None;
         let mut outcome_error_code = "unknown";
         let mut failed = false;
+        let mut final_status_persisted = true;
+        let mut webhook_allowed = true;
 
         let mut terminal_progress = match scan_result {
             Ok(results) => {
@@ -582,6 +584,7 @@ impl ScanExecutor {
             }
             Ok(false) => {
                 // Job was cancelled while we were processing - this is expected.
+                webhook_allowed = false;
                 job.mark_cancelled();
                 terminal_progress = Some(ProgressMessage::cancelled(&job.id, job.progress));
                 tracing::info!(
@@ -591,6 +594,9 @@ impl ScanExecutor {
                 );
             }
             Err(error) => {
+                final_status_persisted = false;
+                webhook_allowed = false;
+                terminal_progress = None;
                 error!(event_name = "scan_job.final_status_persist_failed", job_id = %job.id, error_type = "queue", error_code = error.observability_code(), "Failed to persist final scan status");
             }
         }
@@ -602,6 +608,7 @@ impl ScanExecutor {
         // Call webhook if configured
         if let (Some(webhook_url), Some(secret)) =
             (&job.webhook_url, self.webhook_signing_secret.as_deref())
+            && webhook_allowed
             && !matches!(job.status, ScanStatus::Cancelled)
         {
             let started = Instant::now();
@@ -623,7 +630,11 @@ impl ScanExecutor {
                 job_id = %job.id,
                 duration_ms,
                 error_code = outcome_error_code,
-                outcome = "failed",
+                outcome = if final_status_persisted {
+                    "failed"
+                } else {
+                    "persistence_failed"
+                },
                 "Scan job finished"
             ),
             ScanStatus::Cancelled => info!(
@@ -637,7 +648,11 @@ impl ScanExecutor {
                 event_name = "scan_job.finished",
                 job_id = %job.id,
                 duration_ms,
-                outcome = "complete",
+                outcome = if final_status_persisted {
+                    "complete"
+                } else {
+                    "persistence_failed"
+                },
                 "Scan job finished"
             ),
         }
@@ -1085,6 +1100,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1187,6 +1203,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         };
@@ -1238,6 +1255,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: true,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1286,6 +1304,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1321,6 +1340,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1349,6 +1369,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1389,6 +1410,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: true,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1411,6 +1433,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_status_persistence_failure_suppresses_terminal_progress_and_webhook() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.webhook_url = Some("http://127.0.0.1:9/webhook".to_string());
+        job.mark_started();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            final_update_cancelled: false,
+            final_update_error: true,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let stats = Arc::new(RwLock::new(ApiStats::default()));
+        let executor = ScanExecutor::new(queue.clone(), 1)
+            .with_stats(stats.clone())
+            .with_webhook_signing_secret(Some(b"test secret".to_vec()));
+        let mut progress = executor.subscribe_progress();
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let results = ScanResults {
+            target: job.target.clone(),
+            ..Default::default()
+        };
+
+        executor
+            .finalize_scan(queue, job, Ok(results))
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        assert!(progress.try_recv().is_err());
+        assert_eq!(stats.read().await.completed_scans, 0);
+        assert_eq!(stats.read().await.failed_scans, 0);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("scan_job.final_status_persist_failed"));
+        assert!(!output.contains("private queue detail"));
+        assert!(!output.contains("scan_job.webhook.failed"));
+    }
+
+    #[tokio::test]
     async fn finalizing_store_failure_marks_scan_failed_without_logging_details() {
         use tracing::instrument::WithSubscriber;
 
@@ -1426,6 +1499,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1490,6 +1564,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1529,6 +1604,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1576,6 +1652,7 @@ mod tests {
             get_job_panics: true,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1829,6 +1906,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::Requeued),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1863,6 +1941,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Err("private retry backend detail"),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -1910,6 +1989,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2003,6 +2083,7 @@ mod tests {
         get_job_panics: bool,
         cancel_on_get: bool,
         final_update_cancelled: bool,
+        final_update_error: bool,
         retry_result: std::result::Result<RetryDisposition, &'static str>,
         dequeue_calls: AtomicUsize,
     }
@@ -2048,6 +2129,11 @@ mod tests {
         }
 
         async fn update_job_preserving_cancelled(&self, job: &ScanJob) -> Result<bool> {
+            if self.final_update_error
+                && matches!(job.status, ScanStatus::Completed | ScanStatus::Failed)
+            {
+                return Err(TlsError::Other("private queue detail".into()));
+            }
             if self.final_update_cancelled
                 && matches!(job.status, ScanStatus::Completed | ScanStatus::Failed)
             {
@@ -2101,6 +2187,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2138,6 +2225,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2170,6 +2258,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2238,6 +2327,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2292,6 +2382,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2349,6 +2440,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
@@ -2422,6 +2514,7 @@ mod tests {
             get_job_panics: false,
             cancel_on_get: false,
             final_update_cancelled: false,
+            final_update_error: false,
             retry_result: Ok(RetryDisposition::DeadLettered),
             dequeue_calls: AtomicUsize::new(0),
         });
