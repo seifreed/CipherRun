@@ -254,6 +254,15 @@ mod tests {
     #[test]
     fn test_storage_creation_fails_when_base_path_is_a_file() {
         let temp_dir = TempDir::new().expect("test assertion should succeed");
+        let path_buf_storage = FileJobStorage::new(temp_dir.path().join("created-from-pathbuf"))
+            .expect("a valid PathBuf should create storage");
+        assert!(path_buf_storage.base_path.is_dir());
+
+        let path_buf = temp_dir.path().join("created-from-pathbuf-reference");
+        let path_buf_reference_storage = FileJobStorage::new(&path_buf)
+            .expect("a valid PathBuf reference should create storage");
+        assert!(path_buf_reference_storage.base_path.is_dir());
+
         let file_path = temp_dir.path().join("not-a-directory");
         std::fs::write(&file_path, "occupied").expect("test file should be written");
 
