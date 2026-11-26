@@ -579,6 +579,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_scan_results_reports_failed_and_cancelled_outcomes() {
+        for (outcome, expected_message) in [
+            ("failed", "Scan failed, no results available"),
+            ("cancelled", "Scan was cancelled"),
+        ] {
+            let state = build_state();
+            let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+            job.principal_id = "test-principal".to_string();
+            match outcome {
+                "failed" => job.mark_failed("private diagnostic details"),
+                "cancelled" => job.mark_cancelled(),
+                _ => unreachable!("test case must define a known terminal outcome"),
+            }
+            let id = job.id.clone();
+            state
+                .job_queue
+                .enqueue(job)
+                .await
+                .expect("enqueue should succeed");
+
+            let error = get_scan_results(State(state), test_auth(), Path(id))
+                .await
+                .expect_err("terminal scan outcomes do not have results");
+            match error {
+                ApiError::BadRequest(message) => assert_eq!(message, expected_message),
+                other => panic!("expected a bad-request response, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_cancel_scan_returns_not_found_for_missing_job() {
         let state = build_state();
 
