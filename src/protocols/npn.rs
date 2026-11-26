@@ -465,4 +465,35 @@ mod tests {
             vec!["h2".to_string(), "http/1.1".to_string()]
         );
     }
+
+    #[tokio::test]
+    async fn test_npn_server_hello_without_extension_is_not_supported() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+                socket
+                    .write_all(&npn_server_hello(&[], Some(0)))
+                    .await
+                    .expect("ServerHello should write");
+            }
+        });
+
+        let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let result = NpnTester::new(target)
+            .test()
+            .await
+            .expect("NPN probe should return a result");
+
+        assert!(!result.supported);
+        assert!(!result.inconclusive);
+        assert!(result.protocols.is_empty());
+        assert!(result.details.contains("NPN not supported"));
+    }
 }
