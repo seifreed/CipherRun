@@ -305,6 +305,41 @@ mod tests {
         assert!(context.results.ciphers.is_empty());
     }
 
+    #[tokio::test]
+    async fn execute_keeps_empty_cipher_result_for_supported_closed_target() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve a local port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        let mut context = ScanContext::new(target, Arc::new(ScanRequest::default()), None, None);
+        context.results.protocols.push(ProtocolTestResult {
+            protocol: Protocol::TLS12,
+            supported: true,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        });
+
+        CipherPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("closed target should not fail the phase");
+        assert!(context.results.ciphers.is_empty());
+    }
+
     #[test]
     fn test_configure_tester_with_flags() {
         let target = example_com_loopback_target(443);
