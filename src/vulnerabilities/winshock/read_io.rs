@@ -126,4 +126,21 @@ mod tests {
             io::ErrorKind::InvalidData
         );
     }
+
+    #[tokio::test]
+    async fn complete_record_reader_waits_for_fragmented_record_body() {
+        let mut fragmented = ScriptedReader(VecDeque::from([
+            Ok(vec![0x16, 0x03, 0x03, 0x00, 0x01]),
+            Ok(vec![0x00]),
+        ]));
+        let mut buffer = [0; 6];
+
+        assert_eq!(
+            complete_tls_record(&mut fragmented, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("fragmented TLS record should complete"),
+            6
+        );
+        assert_eq!(&buffer, &[0x16, 0x03, 0x03, 0x00, 0x01, 0x00]);
+    }
 }
