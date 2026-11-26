@@ -1461,7 +1461,7 @@ mod tests {
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_max_level(tracing::Level::ERROR)
+            .with_max_level(tracing::Level::INFO)
             .with_writer(CapturedOutput(output.clone()))
             .finish();
         let results = ScanResults {
@@ -1478,7 +1478,17 @@ mod tests {
         assert_eq!(stats.read().await.completed_scans, 0);
         assert_eq!(stats.read().await.failed_scans, 0);
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        assert!(output.contains("scan_job.final_status_persist_failed"));
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.final_status_persist_failed"
+        }));
+        assert!(events.iter().any(|event| {
+            event["fields"]["event_name"] == "scan_job.finished"
+                && event["fields"]["outcome"] == "persistence_failed"
+        }));
         assert!(!output.contains("private queue detail"));
         assert!(!output.contains("scan_job.webhook.failed"));
     }
