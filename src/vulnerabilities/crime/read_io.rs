@@ -91,6 +91,24 @@ mod tests {
         }
     }
 
+    struct PartialThenPendingReader(bool);
+
+    impl tokio::io::AsyncRead for PartialThenPendingReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if self.0 {
+                Poll::Pending
+            } else {
+                self.0 = true;
+                buffer.put_slice(&[22, 3]);
+                Poll::Ready(Ok(()))
+            }
+        }
+    }
+
     fn scripted_reader(steps: impl IntoIterator<Item = io::Result<Vec<u8>>>) -> ScriptedReader {
         ScriptedReader(steps.into_iter().collect())
     }
@@ -167,6 +185,20 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn returns_partial_bytes_when_the_followup_read_times_out() {
+        let mut reader = PartialThenPendingReader(false);
+        let read = tokio::spawn(async move {
+            complete_tls_record_with_timeout(&mut reader, &mut [0; 16], Duration::from_secs(1))
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+
+        assert_eq!(read.await.unwrap().unwrap(), 2);
     }
 
     #[tokio::test]
