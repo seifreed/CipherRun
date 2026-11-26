@@ -506,6 +506,24 @@ mod tests {
     }
 
     #[test]
+    fn test_file_storage_round_trips_completed_job_with_results() {
+        let (_temp_dir, storage) = temp_storage();
+        let mut job = test_job();
+        job.mark_completed(crate::scanner::ScanResults::default());
+
+        storage
+            .save_job(&job)
+            .expect("completed job with results should be persisted");
+
+        let loaded = storage
+            .load_job(&job.id)
+            .expect("completed job should load")
+            .expect("persisted job should exist");
+        assert_eq!(loaded.status, ScanStatus::Completed);
+        assert!(loaded.results.is_some());
+    }
+
+    #[test]
     fn test_load_job_rejects_failed_job_without_error() {
         let (temp_dir, storage) = temp_storage();
         let mut job = test_job();
