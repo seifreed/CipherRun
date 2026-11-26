@@ -168,6 +168,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn complete_record_in_one_read_stops_without_waiting_for_more_data() {
+        let mut reader = ScriptedReader(VecDeque::from([Ok(vec![0x80, 0x01, 0x04])]));
+        let mut buffer = [0; 8];
+
+        assert_eq!(
+            read_complete_sslv2_record(&mut reader, &mut buffer)
+                .await
+                .unwrap(),
+            3
+        );
+    }
+
+    #[tokio::test]
     async fn oversized_record_is_rejected_before_buffer_overrun() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
