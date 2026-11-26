@@ -696,4 +696,72 @@ mod tests {
         assert!(report.contains("Current:  new-cipher"));
         assert!(report.find("a-first").unwrap() < report.find("z-last").unwrap());
     }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn detect_changes_between_reads_all_postgres_change_sources() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_change_tracker_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        for ddl in [
+            "CREATE TABLE scans (scan_id BIGINT PRIMARY KEY, target_hostname TEXT NOT NULL, target_port INTEGER NOT NULL, scan_timestamp TIMESTAMPTZ NOT NULL, overall_grade TEXT, overall_score INTEGER, scan_duration_ms BIGINT, revocation_json TEXT, scanner_version TEXT, principal_id TEXT, tenant_id TEXT, created_by_key_id TEXT)",
+            "CREATE TABLE protocols (protocol_id BIGINT PRIMARY KEY, scan_id BIGINT NOT NULL, protocol_name TEXT NOT NULL, enabled BOOLEAN NOT NULL, preferred BOOLEAN NOT NULL)",
+            "CREATE TABLE cipher_suites (cipher_id BIGINT PRIMARY KEY, scan_id BIGINT NOT NULL, protocol_name TEXT NOT NULL, cipher_name TEXT NOT NULL, key_exchange TEXT, authentication TEXT, encryption TEXT, mac TEXT, bits INTEGER, forward_secrecy BOOLEAN NOT NULL, strength TEXT NOT NULL)",
+            "CREATE TABLE certificates (cert_id BIGINT PRIMARY KEY, fingerprint_sha256 TEXT NOT NULL, subject TEXT NOT NULL, issuer TEXT NOT NULL, serial_number TEXT, not_before TIMESTAMPTZ NOT NULL, not_after TIMESTAMPTZ NOT NULL, signature_algorithm TEXT, public_key_algorithm TEXT, public_key_size INTEGER, san_domains TEXT[], is_ca BOOLEAN NOT NULL, key_usage TEXT[], extended_key_usage TEXT[], der_bytes BYTEA, created_at TIMESTAMPTZ NOT NULL)",
+            "CREATE TABLE scan_certificates (id BIGINT PRIMARY KEY, scan_id BIGINT NOT NULL, cert_id BIGINT NOT NULL, chain_position INTEGER NOT NULL)",
+            "CREATE TABLE vulnerabilities (vuln_id BIGINT PRIMARY KEY, scan_id BIGINT NOT NULL, vulnerability_type TEXT NOT NULL, severity TEXT NOT NULL, description TEXT, cve_id TEXT, affected_component TEXT)",
+            "CREATE TABLE ratings (rating_id BIGINT PRIMARY KEY, scan_id BIGINT NOT NULL, category TEXT NOT NULL, score INTEGER NOT NULL, grade TEXT, rationale TEXT)",
+        ] {
+            sqlx::query(ddl)
+                .execute(&pool)
+                .await
+                .expect("change-tracker table should be created");
+        }
+        for scan_id in [1_i64, 2] {
+            sqlx::query(
+                "INSERT INTO scans (scan_id, target_hostname, target_port, scan_timestamp) \
+                 VALUES ($1, 'example.test', 443, $2)",
+            )
+            .bind(scan_id)
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .expect("scan should be inserted");
+        }
+
+        let database = Arc::new(CipherRunDatabase::from_pool(DatabasePool::Postgres(
+            pool.clone(),
+        )));
+        let changes = ChangeTracker::new(database)
+            .detect_changes_between(1, 2)
+            .await
+            .expect("all PostgreSQL change sources should be readable");
+        assert!(changes.is_empty());
+
+        drop(pool);
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
+    }
 }
