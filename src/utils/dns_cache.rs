@@ -221,6 +221,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_with_cleanup_keeps_expired_entries_below_threshold() {
+        let cache = DnsCache::new(Duration::ZERO);
+        cache
+            .insert(
+                "expired.example".to_string(),
+                vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            )
+            .await;
+
+        assert!(cache.get_with_cleanup("expired.example").await.is_none());
+        assert_eq!(cache.size().await, 1);
+    }
+
+    #[tokio::test]
     async fn test_insert_cleans_expired_entries_at_capacity() {
         let cache = DnsCache::new(Duration::ZERO);
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
