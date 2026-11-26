@@ -624,6 +624,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_websocket_sends_periodic_ping_without_progress_messages() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 1,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("{url}/scan-ping"))
+            .await
+            .expect("scan websocket should connect");
+
+        let connected = next_text(&mut socket).await;
+        assert_eq!(connected["type"], "connected");
+        assert_eq!(connected["scan_id"], "scan-ping");
+
+        let ping = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("scan websocket should send a periodic ping")
+            .expect("scan websocket should remain open")
+            .expect("ping frame should be valid");
+        assert!(matches!(ping, ClientMessage::Ping(_)));
+
+        socket
+            .send(ClientMessage::Close(None))
+            .await
+            .expect("client close should send");
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
     async fn test_websocket_resumes_after_progress_receiver_lags() {
         let (tx, _) = broadcast::channel(1);
         let state = Arc::new(WsState {
