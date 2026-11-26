@@ -197,12 +197,19 @@ fn rating_label(rating: Option<&RatingSnapshot>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::certificates::parser::{CertificateChain, CertificateInfo};
+    use crate::certificates::validator::ValidationResult;
+    use crate::ciphers::CipherSuite;
+    use crate::ciphers::tester::{CipherCounts, ProtocolCipherSummary};
     use crate::protocols::{Protocol, ProtocolTestResult};
+    use crate::rating::grader::Grade;
+    use crate::rating::scoring::RatingResult;
+    use crate::scanner::{CertificateAnalysisResult, RatingResults};
     use crate::vulnerabilities::{Severity, VulnerabilityResult, VulnerabilityType};
+    use std::collections::HashMap;
 
-    #[test]
-    fn compare_ignores_runtime_but_reports_security_drift() {
-        let protocol = |protocol, supported| ProtocolTestResult {
+    fn test_protocol(protocol: Protocol, supported: bool) -> ProtocolTestResult {
+        ProtocolTestResult {
             protocol,
             supported,
             inconclusive: false,
@@ -213,19 +220,76 @@ mod tests {
             session_resumption_caching: None,
             session_resumption_tickets: None,
             secure_renegotiation: None,
-        };
+        }
+    }
+
+    fn test_cipher(name: &str) -> CipherSuite {
+        CipherSuite {
+            hexcode: "002f".to_string(),
+            openssl_name: name.to_string(),
+            iana_name: name.to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "RSA".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES-128-CBC".to_string(),
+            mac: "SHA256".to_string(),
+            bits: 128,
+            export: false,
+        }
+    }
+
+    fn test_rating(grade: Grade, score: u8) -> RatingResults {
+        RatingResults {
+            ssl_rating: Some(RatingResult {
+                grade,
+                score,
+                certificate_score: score,
+                protocol_score: score,
+                key_exchange_score: score,
+                cipher_strength_score: score,
+                warnings: Vec::new(),
+            }),
+        }
+    }
+
+    fn test_certificate(fingerprint: &str) -> CertificateAnalysisResult {
+        CertificateAnalysisResult {
+            chain: CertificateChain {
+                certificates: vec![CertificateInfo {
+                    fingerprint_sha256: Some(fingerprint.to_string()),
+                    ..Default::default()
+                }],
+                chain_length: 1,
+                chain_size_bytes: 1,
+            },
+            validation: ValidationResult {
+                valid: true,
+                issues: Vec::new(),
+                trust_chain_valid: true,
+                hostname_match: true,
+                not_expired: true,
+                signature_valid: true,
+                trusted_ca: None,
+                platform_trust: None,
+            },
+            revocation: None,
+        }
+    }
+
+    #[test]
+    fn compare_ignores_runtime_but_reports_security_drift() {
         let previous = ScanResults {
             target: "example.com:443".to_string(),
             scan_time_ms: 10,
-            protocols: vec![protocol(Protocol::TLS12, true)],
+            protocols: vec![test_protocol(Protocol::TLS12, true)],
             ..Default::default()
         };
         let current = ScanResults {
             target: previous.target.clone(),
             scan_time_ms: 99,
             protocols: vec![
-                protocol(Protocol::TLS12, true),
-                protocol(Protocol::TLS13, true),
+                test_protocol(Protocol::TLS12, true),
+                test_protocol(Protocol::TLS13, true),
             ],
             vulnerabilities: vec![VulnerabilityResult {
                 vuln_type: VulnerabilityType::Heartbleed,
@@ -256,5 +320,131 @@ mod tests {
         )
         .unwrap();
         assert!(!unchanged.has_changes());
+        assert_eq!(
+            unchanged.to_terminal(),
+            "No scan drift detected for example.com:443"
+        );
+    }
+
+    #[test]
+    fn compare_reports_cipher_finding_certificate_and_rating_changes() {
+        let mut previous_ciphers = HashMap::new();
+        previous_ciphers.insert(
+            Protocol::TLS12,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS12,
+                supported_ciphers: vec![test_cipher("AES128-SHA")],
+                server_ordered: false,
+                server_preference: Vec::new(),
+                preferred_cipher: None,
+                counts: CipherCounts::default(),
+                avg_handshake_time_ms: None,
+            },
+        );
+        let mut current_ciphers = HashMap::new();
+        current_ciphers.insert(
+            Protocol::TLS13,
+            ProtocolCipherSummary {
+                protocol: Protocol::TLS13,
+                supported_ciphers: vec![test_cipher("TLS_AES_128_GCM_SHA256")],
+                server_ordered: false,
+                server_preference: Vec::new(),
+                preferred_cipher: None,
+                counts: CipherCounts::default(),
+                avg_handshake_time_ms: None,
+            },
+        );
+
+        let previous = ScanResults {
+            target: "example.com:443".to_string(),
+            protocols: vec![
+                test_protocol(Protocol::TLS12, true),
+                test_protocol(Protocol::TLS10, false),
+            ],
+            ciphers: previous_ciphers,
+            certificate_chain: Some(test_certificate("old-fingerprint")),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            }],
+            rating: Some(test_rating(Grade::A, 95)),
+            ..Default::default()
+        };
+        let current = ScanResults {
+            target: previous.target.clone(),
+            protocols: vec![test_protocol(Protocol::TLS13, true)],
+            ciphers: current_ciphers,
+            certificate_chain: Some(test_certificate("new-fingerprint")),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: false,
+                inconclusive: true,
+                details: "inconclusive".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Medium,
+            }],
+            rating: Some(test_rating(Grade::B, 75)),
+            ..Default::default()
+        };
+
+        let diff = ScanDiff::compare(&previous, &current).unwrap();
+        assert_eq!(diff.protocols.added, ["TLS13"]);
+        assert_eq!(diff.protocols.removed, ["TLS12"]);
+        assert_eq!(diff.ciphers.added, ["TLS13:TLS_AES_128_GCM_SHA256"]);
+        assert_eq!(diff.ciphers.removed, ["TLS12:AES128-SHA"]);
+        assert_eq!(diff.findings.len(), 1);
+        assert_eq!(
+            diff.findings[0].previous_status.as_deref(),
+            Some("confirmed_vulnerable")
+        );
+        assert_eq!(
+            diff.findings[0].current_status.as_deref(),
+            Some("inconclusive")
+        );
+        assert_eq!(diff.findings[0].previous_severity.as_deref(), Some("high"));
+        assert_eq!(diff.findings[0].current_severity.as_deref(), Some("medium"));
+        assert_eq!(
+            diff.previous_certificate_fingerprint.as_deref(),
+            Some("old-fingerprint")
+        );
+        assert_eq!(
+            diff.current_certificate_fingerprint.as_deref(),
+            Some("new-fingerprint")
+        );
+        assert_eq!(diff.previous_rating.as_ref().unwrap().grade, "A");
+        assert_eq!(diff.current_rating.as_ref().unwrap().score, 75);
+
+        let rendered = diff.to_terminal();
+        assert!(rendered.contains("Protocols added: TLS13"));
+        assert!(rendered.contains("Ciphers removed: TLS12:AES128-SHA"));
+        assert!(rendered.contains("Finding CR-TLS-HEARTBLEED-001:"));
+        assert!(rendered.contains("Certificate fingerprint changed"));
+        assert!(rendered.contains("Rating: A (95) -> B (75)"));
+    }
+
+    #[test]
+    fn compare_rejects_different_targets() {
+        let previous = ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        let current = ScanResults {
+            target: "other.example:443".to_string(),
+            ..Default::default()
+        };
+
+        let error = ScanDiff::compare(&previous, &current)
+            .expect_err("scan drift cannot compare different targets");
+        assert!(
+            error
+                .to_string()
+                .contains("Cannot compare different targets")
+        );
     }
 }
