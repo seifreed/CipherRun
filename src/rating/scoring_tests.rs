@@ -562,6 +562,20 @@ fn test_cipher_strength_score_weak_cipher_penalty_thresholds() {
 }
 
 #[test]
+fn test_cipher_strength_score_without_weak_ciphers_has_no_weak_penalty() {
+    let ciphers = ciphers_with_counts(CipherCounts {
+        total: 100,
+        aead: 100,
+        ..Default::default()
+    });
+
+    assert_eq!(
+        RatingCalculator::calculate_cipher_strength_score(&ciphers),
+        100
+    );
+}
+
+#[test]
 fn test_certificate_grade_overrides_and_score_failures() {
     let protocols = [protocol_result(Protocol::TLS13, true, 1)];
     let ciphers = HashMap::new();
