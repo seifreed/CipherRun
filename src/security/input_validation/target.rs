@@ -189,6 +189,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
 
     struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
 
@@ -460,6 +461,10 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             assert!(validate_target("2001:::private-target", true).is_err());
         });
+        CapturedOutput(output.clone())
+            .make_writer()
+            .flush()
+            .expect("captured event writer should flush");
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
