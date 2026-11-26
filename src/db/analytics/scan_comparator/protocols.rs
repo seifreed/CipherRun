@@ -242,7 +242,7 @@ mod tests {
         let database = std::sync::Arc::new(crate::db::CipherRunDatabase::from_pool(
             DatabasePool::Postgres(pool.clone()),
         ));
-        let diff = ScanComparator::new(database)
+        let diff = ScanComparator::new(database.clone())
             .compare_protocols(1, 2)
             .await
             .expect("PostgreSQL protocols should compare");
@@ -253,6 +253,16 @@ mod tests {
             diff.preferred_change,
             Some((Some("TLS 1.2".to_string()), Some("TLS 1.3".to_string())))
         );
+
+        sqlx::query("DROP TABLE protocols")
+            .execute(&pool)
+            .await
+            .expect("test should remove the protocols table");
+        let error = ScanComparator::new(database)
+            .compare_protocols(1, 2)
+            .await
+            .expect_err("a missing PostgreSQL protocols table should fail comparison");
+        assert!(error.to_string().contains("Failed to fetch protocols"));
 
         drop(pool);
         sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
