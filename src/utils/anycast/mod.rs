@@ -1081,14 +1081,25 @@ mod tests {
         let results = AnycastScanResults {
             hostname: "example.com".to_string(),
             port: 443,
-            total_ips: 0,
-            successful_scans: 0,
-            ip_results: Vec::new(),
+            total_ips: 2,
+            successful_scans: 1,
+            ip_results: vec![
+                IpScanResult {
+                    ip: "192.0.2.1".parse().unwrap(),
+                    results: ScanResults::default(),
+                    error: Some("connection refused".to_string()),
+                },
+                IpScanResult {
+                    ip: "192.0.2.2".parse().unwrap(),
+                    results: ScanResults::default(),
+                    error: None,
+                },
+            ],
             anycast_detection: AnycastDetection {
-                is_anycast: false,
-                confidence: 0.0,
-                reasons: Vec::new(),
-                certificate_fingerprints: HashSet::new(),
+                is_anycast: true,
+                confidence: 0.5,
+                reasons: vec!["Different certificates detected".to_string()],
+                certificate_fingerprints: HashSet::from(["fp1".to_string(), "fp2".to_string()]),
                 cipher_preferences: HashMap::new(),
                 protocol_support: HashMap::new(),
             },
@@ -1098,7 +1109,7 @@ mod tests {
             .flush()
             .expect("captured log writer flush should succeed");
 
-        for fail_after in 0..64 {
+        for fail_after in 0..128 {
             let mut writer = FailingSummaryWriter {
                 fail_after,
                 writes: 0,
