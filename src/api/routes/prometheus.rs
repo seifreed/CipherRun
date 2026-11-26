@@ -144,6 +144,33 @@ cipherrun_scan_queue_metrics_available {}",
 mod tests {
     use super::*;
     use crate::api::config::ApiConfig;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct FailingQueue;
 
@@ -238,9 +265,20 @@ mod tests {
 
     #[tokio::test]
     async fn queue_counter_failures_are_not_exported_as_zero() {
+        use tracing::instrument::WithSubscriber;
+
         let mut state = AppState::new(ApiConfig::default()).unwrap();
         state.replace_job_queue(Arc::new(FailingQueue));
-        let response = metrics(State(Arc::new(state))).await.into_response();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let response = async { metrics(State(Arc::new(state))).await.into_response() }
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -249,5 +287,27 @@ mod tests {
         assert!(body.contains("cipherrun_scan_queue_metrics_available 0\n"));
         assert!(!body.contains("cipherrun_scans_active 0\n"));
         assert!(!body.contains("cipherrun_scans_queued 0\n"));
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events.len(), 2, "{output}");
+        for event in &events {
+            assert_eq!(
+                event["fields"]["event_name"],
+                "api.metrics.scan_state_collection_failed"
+            );
+            assert_eq!(event["fields"]["error_type"], "queue");
+            assert_eq!(event["fields"]["error_code"], "other");
+            assert!(!event.to_string().contains("queue unavailable"));
+        }
+        let mut operations: Vec<_> = events
+            .iter()
+            .map(|event| event["fields"]["operation"].as_str().unwrap())
+            .collect();
+        operations.sort_unstable();
+        assert_eq!(operations, ["active_scans", "queued_scans"]);
     }
 }
