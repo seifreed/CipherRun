@@ -227,22 +227,26 @@ impl CertificateValidator {
         }
 
         let bytes = std::fs::read(path)?;
-        let certificates = match openssl::x509::X509::stack_from_pem(&bytes) {
-            Ok(certs) => certs,
-            Err(_) => match openssl::x509::X509::from_pem(&bytes) {
-                Ok(cert) => vec![cert],
-                Err(_) => match openssl::x509::X509::from_der(&bytes) {
-                    Ok(cert) => vec![cert],
-                    Err(_) => {
-                        tracing::debug!(
-                            event_name = "certificate.ca_file.skipped",
-                            error_type = "parse_error",
-                            "Skipping additional CA file"
-                        );
-                        return Ok(());
-                    }
-                },
-            },
+        let certificates = openssl::x509::X509::stack_from_pem(&bytes)
+            .ok()
+            .filter(|certificates| !certificates.is_empty())
+            .or_else(|| {
+                openssl::x509::X509::from_pem(&bytes)
+                    .ok()
+                    .map(|cert| vec![cert])
+            })
+            .or_else(|| {
+                openssl::x509::X509::from_der(&bytes)
+                    .ok()
+                    .map(|cert| vec![cert])
+            });
+        let Some(certificates) = certificates else {
+            tracing::debug!(
+                event_name = "certificate.ca_file.skipped",
+                error_type = "parse_error",
+                "Skipping additional CA file"
+            );
+            return Ok(());
         };
 
         for certificate in certificates {
@@ -477,5 +481,52 @@ mod tests {
 
         assert!(err.to_string().contains("Additional CA file"));
         assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_additional_ca_loads_pem_and_der_and_skips_invalid_directory_entries() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let certified = rcgen::generate_simple_self_signed(vec!["ca.example".to_string()])
+            .expect("test certificate should generate");
+        let pem_path = temp_dir.path().join("ca.pem");
+        std::fs::write(&pem_path, certified.cert.pem()).expect("PEM should write");
+        let der_path = temp_dir.path().join("ca.der");
+        std::fs::write(&der_path, certified.cert.der()).expect("DER should write");
+        openssl::x509::X509::from_der(certified.cert.der())
+            .expect("OpenSSL should parse the DER fixture");
+        std::fs::write(temp_dir.path().join("notes.txt"), b"not a certificate")
+            .expect("invalid entry should write");
+
+        let pem_entries = CertificateValidator::load_additional_ca_entries(&pem_path)
+            .expect("PEM certificate should load");
+        assert_eq!(pem_entries.len(), 1);
+        assert!(!pem_entries[0].subject.is_empty());
+
+        let der_entries = CertificateValidator::load_additional_ca_entries(&der_path)
+            .expect("DER certificate should load");
+        assert_eq!(der_entries.len(), 1);
+        assert_eq!(der_entries[0].der, certified.cert.der().as_ref());
+
+        let directory_entries = CertificateValidator::load_additional_ca_entries(temp_dir.path())
+            .expect("directory should load its valid CA files");
+        assert_eq!(directory_entries.len(), 2);
+        assert!(
+            directory_entries
+                .iter()
+                .all(|entry| !entry.subject.is_empty())
+        );
+    }
+
+    #[test]
+    fn test_additional_ca_rejects_empty_directory_and_missing_file() {
+        let temp_dir = tempfile::tempdir().expect("test assertion should succeed");
+        let empty_directory = temp_dir.path().join("empty");
+        std::fs::create_dir(&empty_directory).expect("directory should create");
+        let error = CertificateValidator::load_additional_ca_entries(&empty_directory)
+            .expect_err("directory without CAs should fail");
+        assert!(error.to_string().contains("No CA certificates"));
+
+        let missing_file = temp_dir.path().join("missing.pem");
+        assert!(CertificateValidator::load_additional_ca_entries(&missing_file).is_err());
     }
 }
