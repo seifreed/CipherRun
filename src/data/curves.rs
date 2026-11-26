@@ -264,6 +264,23 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_database_fallback() {
+        let db = CurvesDatabase::empty();
+
+        assert_eq!(db.count(), 0);
+        assert!(db.recommended_curves().is_empty());
+    }
+
+    #[test]
+    fn test_parse_database_ignores_empty_and_comment_lines() {
+        let db = CurvesDatabase::parse("\n# curves\n0x00,0x1d - X25519 Curve25519\n")
+            .expect("empty lines and comments should be ignored");
+
+        assert_eq!(db.count(), 1);
+        assert!(db.get_by_name("x25519").is_some());
+    }
+
+    #[test]
     fn test_parse_database_rejects_invalid_entries() {
         for (data, expected) in [
             (
