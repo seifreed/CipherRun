@@ -259,10 +259,12 @@ mod tests {
     async fn test_lucky13_closed_handshake_is_inconclusive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            if let Ok((socket, _)) = listener.accept().await {
-                drop(socket);
-            }
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept the probe connection");
+            drop(socket);
         });
 
         let target = localhost_target(port);
@@ -272,6 +274,10 @@ mod tests {
 
         assert!(!result.cbc_supported);
         assert!(result.inconclusive, "{result:?}");
+        tokio::time::timeout(std::time::Duration::from_secs(1), server)
+            .await
+            .expect("test server should accept the probe connection")
+            .expect("test server task should complete");
     }
 
     #[tokio::test]
