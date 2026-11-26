@@ -411,6 +411,82 @@ mod tests {
         assert!(err.to_string().contains("messageID"));
     }
 
+    #[test]
+    fn test_read_ber_length_handles_short_long_incomplete_and_malformed_values() {
+        assert_eq!(
+            LdapNegotiator::read_ber_length(&[], 0, "test").unwrap(),
+            None
+        );
+        assert_eq!(
+            LdapNegotiator::read_ber_length(&[0x7f], 0, "test").unwrap(),
+            Some((127, 1))
+        );
+        assert_eq!(
+            LdapNegotiator::read_ber_length(&[0x82, 0x01], 0, "test").unwrap(),
+            None
+        );
+        assert!(
+            LdapNegotiator::read_ber_length(&[0x80], 0, "test")
+                .unwrap_err()
+                .to_string()
+                .contains("indefinite")
+        );
+
+        let mut overflow = vec![0x89];
+        overflow.extend([0xff; 9]);
+        assert!(
+            LdapNegotiator::read_ber_length(&overflow, 0, "test")
+                .unwrap_err()
+                .to_string()
+                .contains("overflow")
+        );
+    }
+
+    #[test]
+    fn test_ldap_parser_handles_incomplete_and_rejected_response_shapes() {
+        let success = [
+            0x30, 0x0c, 0x02, 0x01, 0x01, 0x78, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00,
+        ];
+        assert_eq!(LdapNegotiator::parse_starttls_response(&[]).unwrap(), None);
+        assert_eq!(
+            LdapNegotiator::parse_starttls_response(&success[..1]).unwrap(),
+            None
+        );
+        assert_eq!(
+            LdapNegotiator::parse_starttls_response(&success[..success.len() - 1]).unwrap(),
+            None
+        );
+        assert_eq!(
+            LdapNegotiator::parse_starttls_response(&[success.as_slice(), &[0]].concat())
+                .unwrap_err()
+                .to_string()
+                .contains("trailing bytes"),
+            true
+        );
+
+        let mut rejected = success;
+        rejected[9] = 2;
+        assert_eq!(
+            LdapNegotiator::parse_starttls_response(&rejected).unwrap(),
+            Some(false)
+        );
+
+        let cases: &[(&[u8], &str)] = &[
+            (&[0x30, 0x02, 0x01, 0x00], "missing messageID"),
+            (&[0x30, 0x03, 0x02, 0x00, 0x78], "zero length"),
+            (&[0x30, 0x03, 0x02, 0x01, 0x01], "extended response"),
+            (
+                &[0x30, 0x07, 0x02, 0x01, 0x01, 0x78, 0x02, 0x04, 0x00],
+                "missing resultCode",
+            ),
+        ];
+        for (response, expected) in cases {
+            let err = LdapNegotiator::parse_starttls_response(response)
+                .expect_err("malformed response should fail");
+            assert!(err.to_string().contains(expected), "{err}");
+        }
+    }
+
     #[tokio::test]
     async fn test_ldap_negotiate_starttls_succeeds_with_fragmented_response() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
