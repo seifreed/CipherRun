@@ -219,6 +219,129 @@ mod tests {
         assert_eq!(builder.max_proto_version(), Some(SslVersion::TLS1_2));
     }
 
+    #[tokio::test]
+    async fn send_client_hello_returns_partial_response_after_peer_closes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut hello = [0; 1];
+            tokio::io::AsyncReadExt::read_exact(&mut socket, &mut hello)
+                .await
+                .expect("client hello should arrive");
+            socket
+                .write_all(&[0x16, 0x03, 0x03])
+                .await
+                .expect("partial TLS response should be sent");
+            socket
+                .shutdown()
+                .await
+                .expect("server write side should close");
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let response = IntoleranceTester::new(target)
+            .send_client_hello(&[0x01])
+            .await
+            .expect("partial response should be returned on EOF");
+        server.await.expect("server task should complete");
+        assert_eq!(response, [0x16, 0x03, 0x03]);
+    }
+
+    #[tokio::test]
+    async fn send_client_hello_reports_timeout_without_response_bytes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut hello = [0; 1];
+            tokio::io::AsyncReadExt::read_exact(&mut socket, &mut hello)
+                .await
+                .expect("client hello should arrive");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let mut tester = IntoleranceTester::new(target);
+        tester.read_timeout = Duration::from_millis(10);
+        assert!(matches!(
+            tester.send_client_hello(&[0x01]).await,
+            Err(crate::TlsError::Timeout { .. })
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn send_client_hello_keeps_partial_data_when_response_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut hello = [0; 1];
+            tokio::io::AsyncReadExt::read_exact(&mut socket, &mut hello)
+                .await
+                .expect("client hello should arrive");
+            socket
+                .write_all(&[0x16])
+                .await
+                .expect("partial response should be sent");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let mut tester = IntoleranceTester::new(target);
+        tester.read_timeout = Duration::from_millis(10);
+        assert_eq!(
+            tester
+                .send_client_hello(&[0x01])
+                .await
+                .expect("partial bytes should survive response timeout"),
+            [0x16]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn send_client_hello_stops_at_its_bounded_response_buffer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("client should connect");
+            let mut hello = [0; 1];
+            tokio::io::AsyncReadExt::read_exact(&mut socket, &mut hello)
+                .await
+                .expect("client hello should arrive");
+            socket
+                .write_all(&vec![0x16; 70 * 1024])
+                .await
+                .expect("large response should be sent");
+            socket
+                .shutdown()
+                .await
+                .expect("server write side should close");
+        });
+
+        let target = Target::with_ips("example.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("target should build");
+        let response = IntoleranceTester::new(target)
+            .send_client_hello(&[0x01])
+            .await
+            .expect("bounded response should be returned");
+        server.await.expect("server task should complete");
+        assert_eq!(response.len(), crate::constants::BUFFER_SIZE_MAX_TLS_RECORD);
+    }
+
     #[cfg_attr(windows, ignore = "TCP reset semantics differ on Windows")]
     #[tokio::test]
     async fn test_send_and_read_alert_rejects_truncated_alert() {
