@@ -311,6 +311,17 @@ mod tests {
     }
 
     #[test]
+    fn test_save_job_reports_persist_failure_without_replacing_directory() {
+        let (temp_dir, storage) = temp_storage();
+        let job = test_job();
+        let destination = temp_dir.path().join(format!("{}.json", job.id));
+        std::fs::create_dir(&destination).expect("destination directory should be created");
+
+        assert!(storage.save_job(&job).is_err());
+        assert!(destination.is_dir());
+    }
+
+    #[test]
     fn test_load_all_jobs_reports_corrupt_job_file() {
         let (temp_dir, storage) = temp_storage();
         let job_id = Uuid::new_v4().to_string();
