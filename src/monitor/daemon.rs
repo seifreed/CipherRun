@@ -1268,10 +1268,34 @@ mod tests {
             .await
             .expect("inventory should accept the configured domain");
 
+        let output = Arc::new(StdMutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
         daemon
             .run_scan_cycle()
+            .with_subscriber(tracing::Dispatch::new(subscriber))
             .await
             .expect("a domain validation failure should not abort the scan cycle");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| {
+                event["fields"]["event_name"] == "monitor.target_validation.failed"
+                    && event["fields"]["error_type"] == "target_validation"
+                    && event["fields"]["outcome"] == "failed"
+                    && event["fields"]["duration_ms"].is_number()
+            }),
+            "{output}"
+        );
+        assert!(!output.contains("127.0.0.1"));
 
         let stats = daemon.stats().await;
         assert_eq!(stats.total_domains, 1);
