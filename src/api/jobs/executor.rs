@@ -2220,6 +2220,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn captured_log_writer_flushes_successfully() {
+        let mut writer = CapturedWriter(Arc::new(std::sync::Mutex::new(Vec::new())));
+
+        std::io::Write::flush(&mut writer).expect("captured writer flush is infallible");
+    }
+
     #[tokio::test]
     async fn repeated_dequeue_failures_emit_one_event_per_failure_streak() {
         use tracing::instrument::WithSubscriber;
