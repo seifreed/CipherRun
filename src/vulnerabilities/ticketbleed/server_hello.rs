@@ -156,6 +156,22 @@ mod tests {
     }
 
     #[test]
+    fn detects_only_session_ids_that_extend_the_client_marker() {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.push((SESSION_ID_MARKER.len() + 1) as u8);
+        body.extend_from_slice(&SESSION_ID_MARKER);
+        body.push(0xaa);
+        assert!(detect_memory_leak(&handshake(0x02, &body)).unwrap());
+
+        let mut marker_only_body = vec![0x03, 0x03];
+        marker_only_body.extend_from_slice(&[0; 32]);
+        marker_only_body.push(SESSION_ID_MARKER.len() as u8);
+        marker_only_body.extend_from_slice(&SESSION_ID_MARKER);
+        assert!(!detect_memory_leak(&handshake(0x02, &marker_only_body)).unwrap());
+    }
+
+    #[test]
     fn rejects_truncated_record_and_handshake_headers() {
         assert!(!detect_memory_leak(&[0x15, 0x03]).unwrap());
         parse_error(&[0x16, 0x03], "record header truncated");
