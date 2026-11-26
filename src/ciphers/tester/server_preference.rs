@@ -303,3 +303,105 @@ impl CipherTester {
         Ok(Some(cipher))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::test_support::example_com_loopback_target;
+
+    fn tester() -> CipherTester {
+        CipherTester::new(example_com_loopback_target(443))
+    }
+
+    fn cipher(hexcode: &str) -> CipherSuite {
+        CipherSuite {
+            hexcode: hexcode.to_string(),
+            openssl_name: "ECDHE-RSA-AES128-GCM-SHA256".to_string(),
+            iana_name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_string(),
+            protocol: "TLSv1.2".to_string(),
+            key_exchange: "ECDHE".to_string(),
+            authentication: "RSA".to_string(),
+            encryption: "AES128-GCM".to_string(),
+            mac: "AEAD".to_string(),
+            bits: 128,
+            export: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn preference_probe_skips_empty_and_single_cipher_lists() {
+        assert!(
+            tester()
+                .determine_server_preference(Protocol::TLS12, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            tester()
+                .determine_server_preference(Protocol::TLS12, &[cipher("c02f")])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn preference_probe_rejects_invalid_cipher_hexcode_before_network_access() {
+        let err = tester()
+            .determine_server_preference(Protocol::TLS12, &[cipher("not-hex")])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid cipher hexcode"));
+    }
+
+    #[tokio::test]
+    async fn handshake_only_rejects_invalid_cipher_hexcode_before_network_access() {
+        let err = tester()
+            .test_cipher_handshake_only(&cipher("xyz"), Protocol::TLS12, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid cipher hexcode"));
+    }
+
+    #[test]
+    fn parses_server_hello_cipher_and_rejects_bad_or_truncated_records() {
+        assert_eq!(
+            CipherTester::parse_server_hello_cipher(
+                &[0; SERVER_HELLO_MIN_SIZE],
+                SERVER_HELLO_MIN_SIZE - 1
+            )
+            .unwrap(),
+            None
+        );
+
+        let mut response = vec![0; CIPHER_SUITE_BASE_OFFSET + 4];
+        response[0] = CONTENT_TYPE_HANDSHAKE;
+        response[5] = HANDSHAKE_TYPE_SERVER_HELLO;
+        response[SESSION_ID_LENGTH_OFFSET] = 2;
+        response[CIPHER_SUITE_BASE_OFFSET + 2..CIPHER_SUITE_BASE_OFFSET + 4]
+            .copy_from_slice(&0xc02f_u16.to_be_bytes());
+        assert_eq!(
+            CipherTester::parse_server_hello_cipher(&response, response.len()).unwrap(),
+            Some(0xc02f)
+        );
+
+        let mut bad_header = response.clone();
+        bad_header[0] = 0;
+        assert!(CipherTester::parse_server_hello_cipher(&bad_header, bad_header.len()).is_err());
+
+        let mut bad_session_id = response.clone();
+        bad_session_id[SESSION_ID_LENGTH_OFFSET] = 33;
+        assert!(
+            CipherTester::parse_server_hello_cipher(&bad_session_id, bad_session_id.len()).is_err()
+        );
+        assert!(CipherTester::parse_server_hello_cipher(&response, response.len() + 1).is_err());
+
+        let mut truncated_cipher = response;
+        truncated_cipher.truncate(CIPHER_SUITE_BASE_OFFSET + 1);
+        assert!(
+            CipherTester::parse_server_hello_cipher(&truncated_cipher, truncated_cipher.len())
+                .is_err()
+        );
+    }
+}
