@@ -22,6 +22,27 @@ use tracing_subscriber::{
 static SAFE_PANIC_HOOK: Once = Once::new();
 static LOGGING_INITIALIZATION: Mutex<()> = Mutex::new(());
 
+fn report_subscriber_reused(requested_file_destination: bool) {
+    tracing::info!(
+        event_name = "logging.subscriber.reused",
+        requested_file_destination,
+        outcome = "existing_subscriber",
+        "Using the already initialized tracing subscriber"
+    );
+}
+
+fn report_subscriber_initialized(json: bool, file_destination_enabled: bool, drop_monitor: bool) {
+    tracing::info!(
+        event_name = "logging.subscriber.initialized",
+        operation = "initialize",
+        outcome = "started",
+        format = if json { "json" } else { "text" },
+        file_destination_enabled,
+        drop_monitor_enabled = drop_monitor,
+        "Tracing subscriber initialized"
+    );
+}
+
 /// Replace Rust's default panic hook, which prints the caller-controlled payload.
 pub fn install_safe_panic_hook() {
     SAFE_PANIC_HOOK.call_once(|| {
@@ -55,12 +76,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let json = json_logs_enabled(std::env::var("CIPHERRUN_LOG_FORMAT").ok().as_deref());
     if tracing::dispatcher::has_been_set() {
-        tracing::info!(
-            event_name = "logging.subscriber.reused",
-            requested_file_destination = args.output.logfile.is_some(),
-            outcome = "existing_subscriber",
-            "Using the already initialized tracing subscriber"
-        );
+        report_subscriber_reused(args.output.logfile.is_some());
         return Ok(LoggingGuard {
             writer_guard: None,
             dropped_log_lines: None,
@@ -198,15 +214,7 @@ pub fn initialize(args: &Args) -> Result<LoggingGuard> {
     }
 
     let drop_monitor = start_drop_monitor(dropped_log_lines.clone(), json);
-    tracing::info!(
-        event_name = "logging.subscriber.initialized",
-        operation = "initialize",
-        outcome = "started",
-        format = if json { "json" } else { "text" },
-        file_destination_enabled,
-        drop_monitor_enabled = drop_monitor.is_some(),
-        "Tracing subscriber initialized"
-    );
+    report_subscriber_initialized(json, file_destination_enabled, drop_monitor.is_some());
     Ok(LoggingGuard {
         writer_guard: Some(writer_guard),
         dropped_log_lines: Some(dropped_log_lines),
@@ -603,8 +611,8 @@ mod tests {
         LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
         format_log_file_write_fallback_event, install_safe_panic_hook, is_sqlx_query,
         join_drop_monitor, json_logs_enabled, monitor_dropped_log_lines,
-        report_drop_monitor_start_failure, report_panic, resolve_log_filter, rolling_log_file,
-        write_to_destinations,
+        report_drop_monitor_start_failure, report_panic, report_subscriber_initialized,
+        report_subscriber_reused, resolve_log_filter, rolling_log_file, write_to_destinations,
     };
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -648,6 +656,41 @@ mod tests {
         assert_eq!(event["fields"]["source_line"], 42);
         assert_eq!(event["fields"]["outcome"], "panicked");
         assert!(!serialized.contains("private-panic-payload"));
+    }
+
+    #[test]
+    fn subscriber_lifecycle_events_have_stable_structured_fields() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            report_subscriber_reused(true);
+            report_subscriber_initialized(true, true, false);
+        });
+
+        let serialized = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let events: Vec<serde_json::Value> = serialized
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "logging.subscriber.reused"
+        );
+        assert_eq!(events[0]["fields"]["requested_file_destination"], true);
+        assert_eq!(events[0]["fields"]["outcome"], "existing_subscriber");
+        assert_eq!(
+            events[1]["fields"]["event_name"],
+            "logging.subscriber.initialized"
+        );
+        assert_eq!(events[1]["fields"]["format"], "json");
+        assert_eq!(events[1]["fields"]["file_destination_enabled"], true);
+        assert_eq!(events[1]["fields"]["drop_monitor_enabled"], false);
     }
 
     #[test]
