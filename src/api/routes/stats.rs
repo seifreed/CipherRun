@@ -298,6 +298,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_user_stats_maps_scoped_database_failure_to_internal_error() {
+        let state = build_state_with_db().await;
+        state.db_pool.as_ref().unwrap().close().await;
+
+        let error = get_stats_for_auth(
+            State(state),
+            axum::Extension(AuthExtension {
+                permission: Permission::User,
+                key_id: "alice-key".to_string(),
+                principal_id: "alice".to_string(),
+                tenant_id: Some("tenant-a".to_string()),
+            }),
+        )
+        .await
+        .expect_err("a closed database should fail the scoped domain query");
+
+        assert!(matches!(error, ApiError::Internal(_)));
+    }
+
+    #[tokio::test]
     async fn test_get_stats_redacts_configured_db_failure() {
         let state = build_state_with_db().await;
         let pool = state.db_pool.as_ref().unwrap().clone();
