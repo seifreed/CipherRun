@@ -135,8 +135,34 @@ mod tests {
     use axum::{Router, body::Body, middleware, routing::get};
     #[cfg(feature = "otel")]
     use opentelemetry::trace::TraceContextExt;
+    use std::io::Write;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use tower::ServiceExt;
+
+    #[derive(Clone)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
 
     #[tokio::test]
     async fn request_id_matches_audit_event_and_path_is_route_template() {
@@ -171,6 +197,54 @@ mod tests {
         assert!(!event.path.contains("private.example"));
         assert_eq!(stats.http_responses_5xx, 1);
         assert_eq!(stats.total_responses, 1);
+    }
+
+    #[tokio::test]
+    async fn completed_request_emits_structured_event_with_safe_route_context() {
+        use tracing::instrument::WithSubscriber;
+
+        let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
+        let app = Router::new()
+            .route(
+                "/observable/{domain}",
+                get(|| async { axum::http::StatusCode::OK }),
+            )
+            .layer(middleware::from_fn_with_state(state, metrics));
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/observable/private.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "api.request.completed");
+        assert_eq!(event["fields"]["request_id"], request_id);
+        assert_eq!(event["fields"]["method"], "GET");
+        assert_eq!(event["fields"]["path"], "/observable/{domain}");
+        assert_eq!(event["fields"]["status"], 200);
+        assert!(event["fields"]["duration_ms"].is_number());
+        assert!(!output.contains("private.example"));
     }
 
     #[tokio::test]
@@ -263,33 +337,7 @@ mod tests {
     #[cfg(feature = "otel")]
     #[tokio::test]
     async fn rejected_trace_parent_is_logged_without_header_value() {
-        use std::io::Write;
-        use std::sync::Mutex;
         use tracing::instrument::WithSubscriber;
-
-        #[derive(Clone)]
-        struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
-
-        struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
-
-        impl Write for CapturedWriter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutput {
-            type Writer = CapturedWriter;
-
-            fn make_writer(&'a self) -> Self::Writer {
-                CapturedWriter(self.0.clone())
-            }
-        }
 
         let state = Arc::new(AppState::new(ApiConfig::default()).unwrap());
         let app = Router::new()
