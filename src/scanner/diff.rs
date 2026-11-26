@@ -310,6 +310,8 @@ mod tests {
             Some("confirmed_vulnerable")
         );
         assert!(diff.has_changes());
+        let rendered = diff.to_terminal();
+        assert!(!rendered.contains("Rating:"));
 
         let unchanged = ScanDiff::compare(
             &previous,
