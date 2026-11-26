@@ -62,28 +62,23 @@ impl ComplianceResponseFormat {
         framework: &ComplianceFramework,
         report: &ComplianceReport,
         detailed: bool,
-    ) -> Result<Response, ApiError> {
+    ) -> Response {
         match self {
             Self::Json => {
-                Ok(Json(present_compliance_report(framework, report, detailed)).into_response())
+                Json(present_compliance_report(framework, report, detailed)).into_response()
             }
-            Self::Terminal => Ok((
+            Self::Terminal => (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
                 Reporter::to_terminal(report),
             )
-                .into_response()),
-            Self::Csv => Ok((
+                .into_response(),
+            Self::Csv => (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/csv; charset=utf-8")],
-                Reporter::to_csv(report).map_err(|_| {
-                    ApiError::internal_with_diagnostic(
-                        "render_compliance_csv",
-                        "serialization_error",
-                    )
-                })?,
+                Reporter::to_csv_content(report),
             )
-                .into_response()),
+                .into_response(),
         }
     }
 }
@@ -238,7 +233,7 @@ pub async fn check_compliance(
     let (_assessment, report) =
         compliance_adapter::run_compliance_check_with_defaults(&framework, target).await?;
 
-    format.render(&framework, &report, query.detailed)
+    Ok(format.render(&framework, &report, query.detailed))
 }
 
 #[cfg(test)]
@@ -393,9 +388,7 @@ mod tests {
         let framework = test_framework();
         let report = test_report();
 
-        let response = ComplianceResponseFormat::Json
-            .render(&framework, &report, true)
-            .expect("json render should succeed");
+        let response = ComplianceResponseFormat::Json.render(&framework, &report, true);
 
         let content_type = response
             .headers()
@@ -418,9 +411,7 @@ mod tests {
         let framework = test_framework();
         let report = test_report();
 
-        let response = ComplianceResponseFormat::Terminal
-            .render(&framework, &report, true)
-            .expect("terminal render should succeed");
+        let response = ComplianceResponseFormat::Terminal.render(&framework, &report, true);
 
         let content_type = response
             .headers()
@@ -442,9 +433,7 @@ mod tests {
         let framework = test_framework();
         let report = test_report();
 
-        let response = ComplianceResponseFormat::Csv
-            .render(&framework, &report, true)
-            .expect("csv render should succeed");
+        let response = ComplianceResponseFormat::Csv.render(&framework, &report, true);
 
         let content_type = response
             .headers()

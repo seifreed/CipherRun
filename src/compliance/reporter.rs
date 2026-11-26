@@ -175,6 +175,10 @@ impl Reporter {
 
     /// Generate CSV report
     pub fn to_csv(report: &ComplianceReport) -> Result<String> {
+        Ok(Self::to_csv_content(report))
+    }
+
+    pub(crate) fn to_csv_content(report: &ComplianceReport) -> String {
         let mut csv = String::new();
 
         // Header
@@ -211,7 +215,7 @@ impl Reporter {
             ));
         }
 
-        Ok(csv)
+        csv
     }
 
     /// Generate HTML report
@@ -402,7 +406,7 @@ mod tests {
         let framework = test_framework();
         let report = finalized_report(&framework);
 
-        let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
+        let csv = Reporter::to_csv(&report).expect("CSV report generation is infallible");
         assert!(csv.contains("Requirement ID,Name,Category"));
     }
 
@@ -428,7 +432,7 @@ mod tests {
         });
         report.finalize();
 
-        let csv = Reporter::to_csv(&report).expect("test assertion should succeed");
+        let csv = Reporter::to_csv(&report).expect("CSV report generation is infallible");
         assert!(csv.contains("\"'=REQ\",\"'+Name\",\"'@Category\""));
         assert!(csv.contains("\"'-Weak Protocol\""));
         assert!(csv.contains("\"'=TLS 1.0 enabled\""));
