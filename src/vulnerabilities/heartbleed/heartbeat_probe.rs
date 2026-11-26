@@ -1,21 +1,17 @@
 use super::HeartbleedResult;
+use crate::Result;
 use crate::constants::{CONTENT_TYPE_HEARTBEAT, HEARTBEAT_REQUEST, VERSION_TLS_1_2};
-use crate::{Result, TlsError};
 
 const CLAIMED_PAYLOAD_LEN: u16 = 0x4000;
-const CLAIMED_RECORD_BODY_LEN: usize = 3 + CLAIMED_PAYLOAD_LEN as usize;
+const CLAIMED_RECORD_BODY_LEN: u16 = CLAIMED_PAYLOAD_LEN + 3;
 const MIN_SUSPICIOUS_RESPONSE: usize = 16;
 const WARNING_THRESHOLD: usize = 32;
 
 pub(super) const BYTES_SENT: usize = 8;
 
 pub(super) fn malicious_request() -> Result<Vec<u8>> {
-    let heartbeat_msg_len =
-        u16::try_from(CLAIMED_RECORD_BODY_LEN).map_err(|_| TlsError::ParseError {
-            message: "Heartbleed heartbeat message length too large".to_string(),
-        })?;
     let version = VERSION_TLS_1_2.to_be_bytes();
-    let heartbeat_msg_len = heartbeat_msg_len.to_be_bytes();
+    let heartbeat_msg_len = CLAIMED_RECORD_BODY_LEN.to_be_bytes();
 
     Ok(vec![
         CONTENT_TYPE_HEARTBEAT,
@@ -91,7 +87,7 @@ mod tests {
         assert_eq!(request.len(), BYTES_SENT);
         assert_eq!(request[0], CONTENT_TYPE_HEARTBEAT);
         assert_eq!(
-            u16::from_be_bytes([request[3], request[4]]) as usize,
+            u16::from_be_bytes([request[3], request[4]]),
             CLAIMED_RECORD_BODY_LEN
         );
         assert_eq!(
@@ -122,6 +118,17 @@ mod tests {
         assert!(result.vulnerable);
         assert!(result.tested);
         assert!(result.details.contains("manual verification recommended"));
+    }
+
+    #[test]
+    fn valid_short_heartbeat_response_does_not_meet_suspicious_threshold() {
+        let response = [0x18, 0x03, 0x03, 0x00, 0x03, 0x02, 0x00, 0x00];
+
+        let result = classify_response(&response);
+
+        assert!(!result.vulnerable);
+        assert!(!result.tested);
+        assert!(result.details.contains("threshold: 16"));
     }
 
     #[test]
