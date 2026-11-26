@@ -614,6 +614,73 @@ fn test_aggregate_ciphers_conservative_is_stable_and_conservative() {
 }
 
 #[test]
+fn test_aggregate_ciphers_preserves_matching_server_preference_and_deduplicates() {
+    let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+    let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
+    let preferred = make_cipher("AES128-SHA", 128, "RSA", "AES-128-CBC");
+    let additional = make_cipher("AES256-SHA", 256, "RSA", "AES-256-CBC");
+    let preference = vec!["0x002F".to_string(), "0x0035".to_string()];
+
+    let mut first = make_summary(Protocol::TLS12, vec![preferred.clone(), additional.clone()]);
+    first.server_ordered = true;
+    first.server_preference = preference.clone();
+    first.preferred_cipher = Some(preferred.clone());
+
+    let mut second = make_summary(Protocol::TLS12, vec![preferred.clone()]);
+    second.server_ordered = true;
+    second.server_preference = preference.clone();
+    second.preferred_cipher = Some(preferred.clone());
+
+    let mut first_ciphers = HashMap::new();
+    first_ciphers.insert(Protocol::TLS12, first);
+    let mut second_ciphers = HashMap::new();
+    second_ciphers.insert(Protocol::TLS12, second);
+
+    let mut results = HashMap::new();
+    results.insert(
+        ip1,
+        successful_scan(
+            ip1,
+            make_scan_result(Vec::new(), first_ciphers, "fp1", Grade::A, 90, Vec::new()),
+            100,
+        ),
+    );
+    results.insert(
+        ip2,
+        successful_scan(
+            ip2,
+            make_scan_result(Vec::new(), second_ciphers, "fp2", Grade::A, 90, Vec::new()),
+            120,
+        ),
+    );
+
+    let aggregated = ConservativeAggregator::new(results, Vec::new()).aggregate();
+    let summary = aggregated
+        .ciphers
+        .get(&Protocol::TLS12)
+        .expect("TLS12 summary should exist");
+
+    assert!(summary.server_ordered);
+    assert_eq!(summary.server_preference, preference);
+    assert_eq!(
+        summary
+            .preferred_cipher
+            .as_ref()
+            .map(|cipher| cipher.openssl_name.as_str()),
+        Some("AES128-SHA")
+    );
+    assert_eq!(
+        summary
+            .supported_ciphers
+            .iter()
+            .map(|cipher| cipher.openssl_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["AES128-SHA", "AES256-SHA"]
+    );
+    assert_eq!(summary.avg_handshake_time_ms, None);
+}
+
+#[test]
 fn test_aggregate_ciphers_saturates_overflowing_handshake_average() {
     let ip1: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
     let ip2: IpAddr = Ipv4Addr::new(127, 0, 0, 2).into();
