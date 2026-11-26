@@ -27,22 +27,26 @@ pub fn install_safe_panic_hook() {
     SAFE_PANIC_HOOK.call_once(|| {
         std::panic::set_hook(Box::new(|info| {
             let source_line = info.location().map_or(0, std::panic::Location::line);
-            if tracing::dispatcher::has_been_set() {
-                tracing::error!(
-                    event_name = "process.panic",
-                    error_type = "panic",
-                    error_code = "panic_unwind",
-                    source_line,
-                    outcome = "panicked",
-                    "Process panicked; panic payload omitted"
-                );
-            } else {
-                eprintln!(
-                    "ERROR process.panic error_type=panic error_code=panic_unwind source_line={source_line} outcome=panicked message=\"Panic payload omitted\""
-                );
-            }
+            report_panic(source_line, tracing::dispatcher::has_been_set());
         }));
     });
+}
+
+fn report_panic(source_line: u32, tracing_subscriber_installed: bool) {
+    if tracing_subscriber_installed {
+        tracing::error!(
+            event_name = "process.panic",
+            error_type = "panic",
+            error_code = "panic_unwind",
+            source_line,
+            outcome = "panicked",
+            "Process panicked; panic payload omitted"
+        );
+    } else {
+        eprintln!(
+            "ERROR process.panic error_type=panic error_code=panic_unwind source_line={source_line} outcome=panicked message=\"Panic payload omitted\""
+        );
+    }
 }
 
 pub fn initialize(args: &Args) -> Result<LoggingGuard> {
@@ -599,7 +603,7 @@ mod tests {
         LogWriter, SafeTextFormat, format_dropped_log_event, format_log_file_fallback_event,
         format_log_file_write_fallback_event, install_safe_panic_hook, is_sqlx_query,
         join_drop_monitor, json_logs_enabled, monitor_dropped_log_lines,
-        report_drop_monitor_start_failure, resolve_log_filter, rolling_log_file,
+        report_drop_monitor_start_failure, report_panic, resolve_log_filter, rolling_log_file,
         write_to_destinations,
     };
     use std::io::Write;
@@ -624,6 +628,26 @@ mod tests {
         }
         install_safe_panic_hook();
         panic!("private-panic-payload");
+    }
+
+    #[test]
+    fn panic_reporting_uses_safe_structured_fields() {
+        let output = Buffer(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(output.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || report_panic(42, true));
+
+        let serialized = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(serialized.trim()).unwrap();
+        assert_eq!(event["fields"]["event_name"], "process.panic");
+        assert_eq!(event["fields"]["error_code"], "panic_unwind");
+        assert_eq!(event["fields"]["source_line"], 42);
+        assert_eq!(event["fields"]["outcome"], "panicked");
+        assert!(!serialized.contains("private-panic-payload"));
     }
 
     #[test]
