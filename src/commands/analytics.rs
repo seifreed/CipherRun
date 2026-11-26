@@ -242,11 +242,20 @@ mod tests {
         let config = format!(
             "[database]\n\
 type = \"sqlite\"\n\
-path = \"{}\"\n",
-            db_path.display()
+path = {}\n",
+            toml::Value::String(db_path.to_string_lossy().into_owned())
         );
         std::fs::write(&config_path, config).expect("test assertion should succeed");
         config_path
+    }
+
+    #[test]
+    fn test_analytics_temp_db_config_escapes_windows_paths() {
+        let path = r"C:\Users\runner\AppData\Local\Temp\analytics.db";
+        let config = format!("path = {}", toml::Value::String(path.to_string()));
+        let parsed: toml::Table =
+            toml::from_str(&config).expect("Windows path should be valid TOML");
+        assert_eq!(parsed["path"].as_str(), Some(path));
     }
 
     #[tokio::test]
