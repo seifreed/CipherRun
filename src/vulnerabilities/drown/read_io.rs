@@ -216,6 +216,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+            let (close_tx, close_rx) = tokio::sync::oneshot::channel();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 if !response.is_empty() {
@@ -224,20 +225,22 @@ mod tests {
                 accepted_tx
                     .send(())
                     .expect("test should observe accepted peer");
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                close_rx
+                    .await
+                    .expect("test should signal after the read timeout");
             });
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
             accepted_rx
                 .await
                 .expect("test server should accept the probe connection");
-            assert_eq!(
-                read_complete_sslv2_record(&mut stream, &mut [0; 8])
-                    .await
-                    .unwrap(),
-                expected
-            );
-            server.abort();
-            assert!(server.await.unwrap_err().is_cancelled());
+            let read = read_complete_sslv2_record(&mut stream, &mut [0; 8])
+                .await
+                .unwrap();
+            assert_eq!(read, expected);
+            close_tx
+                .send(())
+                .expect("test server should still be waiting for the close signal");
+            server.await.unwrap();
         }
     }
 
