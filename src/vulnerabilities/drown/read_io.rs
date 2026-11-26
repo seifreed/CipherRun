@@ -296,4 +296,25 @@ mod tests {
             ErrorKind::PermissionDenied
         );
     }
+
+    #[tokio::test]
+    async fn partial_record_stops_on_recoverable_read_errors() {
+        for kind in [
+            ErrorKind::TimedOut,
+            ErrorKind::WouldBlock,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::ConnectionReset,
+        ] {
+            let mut reader =
+                ScriptedReader(VecDeque::from([Ok(vec![0x80]), Err(io::Error::from(kind))]));
+
+            assert_eq!(
+                read_complete_sslv2_record(&mut reader, &mut [0; 8])
+                    .await
+                    .unwrap(),
+                1,
+                "partial record should be returned for {kind:?}"
+            );
+        }
+    }
 }
