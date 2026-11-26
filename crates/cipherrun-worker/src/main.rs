@@ -125,6 +125,26 @@ mod tests {
     }
 
     #[test]
+    fn worker_duration_saturates_when_milliseconds_exceed_u64() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+
+        let exit = tracing::subscriber::with_default(subscriber, || {
+            finish_worker(Ok(()), std::time::Duration::MAX)
+        });
+
+        assert_eq!(exit, ExitCode::SUCCESS);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(event["fields"]["duration_ms"], u64::MAX);
+    }
+
+    #[test]
     fn worker_failure_is_structured_and_redacted() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
