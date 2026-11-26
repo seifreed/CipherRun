@@ -1055,6 +1055,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_websocket_handler_requires_ticket_when_api_key_is_absent() {
+        let state = build_state();
+        let (base_url, shutdown) = start_ticket_ws_test_server(state).await;
+        let error = connect_async(format!("{base_url}/missing/stream"))
+            .await
+            .expect_err("a stream without an API key or ticket must be rejected");
+
+        match error {
+            WsError::Http(response) => assert_eq!(response.status(), StatusCode::UNAUTHORIZED),
+            other => panic!("unexpected websocket error: {other}"),
+        }
+
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
     async fn test_websocket_handler_returns_not_found_for_missing_scan() {
         let state = build_state();
         let (base_url, shutdown) = start_ws_test_server(state).await;
