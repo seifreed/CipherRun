@@ -5,6 +5,7 @@ use crate::Result;
 use crate::error::TlsError;
 use crate::utils::network::build_system_resolver;
 use crate::utils::sni_generator::SniGenerator;
+use hickory_resolver::TokioResolver;
 use hickory_resolver::proto::rr::RData;
 use std::future::Future;
 use std::net::IpAddr;
@@ -18,7 +19,10 @@ impl ReversePtrLookup {
         let resolver = build_system_resolver().map_err(|error| TlsError::ConfigError {
             message: format!("Failed to initialize DNS resolver: {error}"),
         })?;
+        Self::lookup_ptr_with_resolver(&resolver, ip).await
+    }
 
+    async fn lookup_ptr_with_resolver(resolver: &TokioResolver, ip: &IpAddr) -> Result<String> {
         let lookup =
             resolver
                 .reverse_lookup(*ip)
@@ -161,12 +165,19 @@ impl ReversePtrLookup {
         let resolver = build_system_resolver().map_err(|error| TlsError::ConfigError {
             message: format!("Failed to initialize DNS resolver: {error}"),
         })?;
+        Self::validate_ptr_forward_match_with_resolver(ip, &hostname, &resolver).await
+    }
 
+    async fn validate_ptr_forward_match_with_resolver(
+        ip: &IpAddr,
+        hostname: &str,
+        resolver: &TokioResolver,
+    ) -> Result<bool> {
         match ip {
             IpAddr::V4(_) => {
-                let lookup = resolver.ipv4_lookup(&hostname).await.map_err(|e| {
+                let lookup = resolver.ipv4_lookup(hostname).await.map_err(|e| {
                     TlsError::DnsResolutionFailed {
-                        hostname: hostname.clone(),
+                        hostname: hostname.to_string(),
                         source: std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()),
                     }
                 })?;
@@ -185,9 +196,9 @@ impl ReversePtrLookup {
                 }
             }
             IpAddr::V6(_) => {
-                let lookup = resolver.ipv6_lookup(&hostname).await.map_err(|e| {
+                let lookup = resolver.ipv6_lookup(hostname).await.map_err(|e| {
                     TlsError::DnsResolutionFailed {
-                        hostname: hostname.clone(),
+                        hostname: hostname.to_string(),
                         source: std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()),
                     }
                 })?;
@@ -214,6 +225,86 @@ impl ReversePtrLookup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig};
+    use hickory_resolver::net::runtime::TokioRuntimeProvider;
+    use hickory_resolver::proto::op::Message;
+    use hickory_resolver::proto::rr::{Name, Record, RecordType, rdata};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    async fn local_resolver_for(
+        ptr_name: Option<&str>,
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+    ) -> TokioResolver {
+        let socket = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("local DNS socket should bind");
+        let address = socket
+            .local_addr()
+            .expect("local DNS socket should have an address");
+        let ptr_name = ptr_name.map(str::to_owned);
+        tokio::spawn(async move {
+            let mut buffer = [0; 2048];
+            loop {
+                let Ok((length, peer)) = socket.recv_from(&mut buffer).await else {
+                    return;
+                };
+                let Ok(query) = Message::from_vec(&buffer[..length]) else {
+                    continue;
+                };
+                let mut response = Message::response(query.metadata.id, query.metadata.op_code);
+                response.add_queries(query.queries.iter().cloned());
+                for question in &query.queries {
+                    let answer = match question.query_type() {
+                        RecordType::PTR => ptr_name.as_ref().map(|name| {
+                            Record::from_rdata(
+                                question.name().clone(),
+                                60,
+                                RData::PTR(rdata::PTR(
+                                    Name::from_ascii(name).expect("valid fixture DNS name"),
+                                )),
+                            )
+                        }),
+                        RecordType::A => Some(Record::from_rdata(
+                            question.name().clone(),
+                            60,
+                            RData::A(rdata::A(ipv4)),
+                        )),
+                        RecordType::AAAA => Some(Record::from_rdata(
+                            question.name().clone(),
+                            60,
+                            RData::AAAA(rdata::AAAA(ipv6)),
+                        )),
+                        _ => None,
+                    };
+                    if let Some(answer) = answer {
+                        response.add_answer(answer);
+                    }
+                }
+                if let Ok(bytes) = response.to_vec() {
+                    let _ = socket.send_to(&bytes, peer).await;
+                }
+            }
+        });
+
+        let SocketAddr::V4(address) = address else {
+            unreachable!("local DNS server uses IPv4");
+        };
+        let mut udp = ConnectionConfig::udp();
+        udp.port = address.port();
+        let config = ResolverConfig::from_parts(
+            None,
+            Vec::new(),
+            vec![NameServerConfig::new(
+                IpAddr::V4(*address.ip()),
+                false,
+                vec![udp],
+            )],
+        );
+        TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .build()
+            .expect("local DNS resolver should build")
+    }
 
     #[test]
     fn test_construct_reverse_query_name_ipv4() {
@@ -379,6 +470,57 @@ mod tests {
         .await;
 
         assert!(SniGenerator::is_valid_hostname(&hostname));
+    }
+
+    #[tokio::test]
+    async fn local_dns_exercises_ptr_and_forward_match_for_both_ip_families() {
+        let ipv4 = Ipv4Addr::new(192, 0, 2, 1);
+        let ipv6 = "2001:db8::1".parse().expect("valid IPv6 address");
+        let resolver = local_resolver_for(Some("ptr.example.com."), ipv4, ipv6).await;
+
+        let hostname = ReversePtrLookup::lookup_ptr_with_resolver(&resolver, &ipv4.into())
+            .await
+            .expect("PTR response should produce a hostname");
+        assert_eq!(hostname, "ptr.example.com");
+        assert!(
+            ReversePtrLookup::validate_ptr_forward_match_with_resolver(
+                &ipv4.into(),
+                &hostname,
+                &resolver
+            )
+            .await
+            .expect("matching A record should validate")
+        );
+        assert!(
+            !ReversePtrLookup::validate_ptr_forward_match_with_resolver(
+                &"192.0.2.2".parse().expect("valid IPv4 address"),
+                &hostname,
+                &resolver
+            )
+            .await
+            .expect("non-matching forward address should be rejected")
+        );
+
+        let invalid_resolver = local_resolver_for(Some("invalid_hostname."), ipv4, ipv6).await;
+        assert!(matches!(
+            ReversePtrLookup::lookup_ptr_with_resolver(&invalid_resolver, &ipv4.into()).await,
+            Err(TlsError::InvalidInput { .. })
+        ));
+
+        let empty_resolver = local_resolver_for(None, ipv4, ipv6).await;
+        assert!(matches!(
+            ReversePtrLookup::lookup_ptr_with_resolver(&empty_resolver, &ipv4.into()).await,
+            Err(TlsError::DnsResolutionFailed { .. })
+        ));
+        assert!(
+            ReversePtrLookup::validate_ptr_forward_match_with_resolver(
+                &ipv6.into(),
+                &hostname,
+                &resolver
+            )
+            .await
+            .expect("matching AAAA record should validate")
+        );
     }
 
     // Note: Actual PTR lookups require network access and working DNS
