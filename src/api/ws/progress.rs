@@ -654,6 +654,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_websocket_receives_client_frames_until_close() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("{url}/scan-input"))
+            .await
+            .expect("scan websocket should connect");
+
+        let connected = next_text(&mut socket).await;
+        assert_eq!(connected["type"], "connected");
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("scan websocket should subscribe to progress");
+
+        for frame in [
+            ClientMessage::Ping(vec![1].into()),
+            ClientMessage::Text("client command".into()),
+            ClientMessage::Binary(vec![2].into()),
+            ClientMessage::Pong(vec![3].into()),
+            ClientMessage::Close(None),
+        ] {
+            socket.send(frame).await.expect("client frame should send");
+        }
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while tx.receiver_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("handler should stop after processing the client close");
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
     async fn test_websocket_resumes_after_progress_receiver_lags() {
         let (tx, _) = broadcast::channel(1);
         let state = Arc::new(WsState {
