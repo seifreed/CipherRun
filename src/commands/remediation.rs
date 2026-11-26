@@ -202,4 +202,30 @@ mod tests {
             .expect_err("directory cannot be replaced by a file");
         assert!(matches!(error, crate::TlsError::FileSystemError { .. }));
     }
+
+    #[tokio::test]
+    async fn execute_reads_scan_and_writes_remediation_to_configured_path() {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let input = dir.path().join("scan.json");
+        std::fs::write(
+            &input,
+            include_str!("../../fixtures/scan-results/1.1-potential-exposure.json"),
+        )
+        .expect("scan fixture should be written");
+        let output = dir.path().join("remediation.conf");
+        let command =
+            RemediationCommand::new(input, "nginx".to_string(), Some(output.clone()), false);
+
+        let exit = command
+            .execute()
+            .await
+            .expect("remediation should be written");
+
+        assert!(exit.is_success());
+        assert!(
+            std::fs::read_to_string(output)
+                .expect("remediation output should be readable")
+                .contains("ssl_protocols TLSv1.2 TLSv1.3;")
+        );
+    }
 }
