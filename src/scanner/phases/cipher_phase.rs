@@ -266,6 +266,45 @@ mod tests {
         assert!(context.results.ciphers.is_empty());
     }
 
+    #[tokio::test]
+    async fn execute_skips_unsupported_protocols_and_quic() {
+        let target = example_com_loopback_target(443);
+        let args = Arc::new(ScanRequest::default());
+        let mut context = ScanContext::new(target, args, None, None);
+        context.results.protocols = vec![
+            ProtocolTestResult {
+                protocol: Protocol::TLS12,
+                supported: false,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+            ProtocolTestResult {
+                protocol: Protocol::QUIC,
+                supported: true,
+                inconclusive: false,
+                preferred: false,
+                ciphers_count: 0,
+                handshake_time_ms: None,
+                heartbeat_enabled: None,
+                session_resumption_caching: None,
+                session_resumption_tickets: None,
+                secure_renegotiation: None,
+            },
+        ];
+
+        CipherPhase::new()
+            .execute(&mut context)
+            .await
+            .expect("filtered protocols should not perform network probes");
+        assert!(context.results.ciphers.is_empty());
+    }
+
     #[test]
     fn test_configure_tester_with_flags() {
         let target = example_com_loopback_target(443);
