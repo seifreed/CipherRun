@@ -218,6 +218,49 @@ async fn test_connect_with_timeout_maps_connection_refused() {
     }
 }
 
+#[tokio::test]
+async fn connect_with_starttls_without_protocol_returns_plain_tcp_stream() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(b"ready").await.unwrap();
+    });
+
+    let target = Target::with_ips("localhost".to_string(), addr.port(), vec![addr.ip()]).unwrap();
+    let mut stream =
+        connect_with_starttls_target(addr, Duration::from_secs(1), None, &target, None, false)
+            .await
+            .expect("no STARTTLS protocol should leave a plain TCP stream");
+    let mut greeting = [0; 5];
+    stream.read_exact(&mut greeting).await.unwrap();
+    assert_eq!(&greeting, b"ready");
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn connect_with_starttls_maps_negotiation_failure() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+    });
+
+    let err = connect_with_starttls(
+        addr,
+        Duration::from_secs(1),
+        Some(crate::starttls::StarttlsProtocol::SMTP),
+        "example.test",
+        false,
+    )
+    .await
+    .expect_err("a closed plaintext connection should fail STARTTLS negotiation");
+    assert!(matches!(err, crate::TlsError::StarttlsError { .. }));
+    server.await.unwrap();
+}
+
 #[test]
 fn test_split_target_host_port_rejects_extra_colons() {
     let err = split_target_host_port("example.com:443:extra")
