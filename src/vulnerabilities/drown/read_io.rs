@@ -189,14 +189,21 @@ mod tests {
         for (response, expected) in [(&[][..], 0), (&[0x80][..], 1)] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
+            let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 if !response.is_empty() {
                     stream.write_all(response).await.unwrap();
                 }
+                accepted_tx
+                    .send(())
+                    .expect("test should observe accepted peer");
                 tokio::time::sleep(Duration::from_secs(10)).await;
             });
             let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            accepted_rx
+                .await
+                .expect("test server should accept the probe connection");
             assert_eq!(
                 read_complete_sslv2_record(&mut stream, &mut [0; 8])
                     .await
@@ -204,6 +211,7 @@ mod tests {
                 expected
             );
             server.abort();
+            assert!(server.await.unwrap_err().is_cancelled());
         }
     }
 
