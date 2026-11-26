@@ -424,6 +424,15 @@ impl ScanExecutor {
             }
         };
 
+        self.finalize_scan(queue, job, scan_result).await;
+    }
+
+    async fn finalize_scan(
+        &self,
+        queue: Arc<dyn JobQueue>,
+        mut job: ScanJob,
+        scan_result: Result<ScanResults>,
+    ) {
         // Resolve the scan outcome and the in-queue job state, but defer
         // recording completed/failed stats until the authoritative final update
         // below. A cancellation racing in between the check here and that update
@@ -1318,6 +1327,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finalizing_success_persists_results_and_records_completion() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.principal_id = "principal-1".to_string();
+        job.tenant_id = Some("tenant-1".to_string());
+        job.mark_started();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let stats = Arc::new(RwLock::new(ApiStats::default()));
+        let store = Arc::new(RecordingResultsStore(AtomicUsize::new(0)));
+        let executor = ScanExecutor::new(queue.clone(), 1)
+            .with_stats(stats.clone())
+            .with_results_store(store.clone());
+        let mut progress = executor.subscribe_progress();
+        let results = ScanResults {
+            target: job.target.clone(),
+            ..Default::default()
+        };
+
+        executor.finalize_scan(queue, job, Ok(results)).await;
+
+        let message = progress
+            .try_recv()
+            .expect("successful finalization should publish completion");
+        assert_eq!(message.msg_type, "completed");
+        assert_eq!(store.0.load(Ordering::SeqCst), 1);
+        assert_eq!(stats.read().await.completed_scans, 1);
+        assert_eq!(stats.read().await.failed_scans, 0);
+    }
+
+    #[tokio::test]
+    async fn finalizing_store_failure_marks_scan_failed_without_logging_details() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_started();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let stats = Arc::new(RwLock::new(ApiStats::default()));
+        let executor = ScanExecutor::new(queue.clone(), 1)
+            .with_stats(stats.clone())
+            .with_results_store(Arc::new(FailingResultsStore));
+        let mut progress = executor.subscribe_progress();
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let results = ScanResults {
+            target: job.target.clone(),
+            ..Default::default()
+        };
+
+        executor
+            .finalize_scan(queue, job, Ok(results))
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        let message = progress
+            .try_recv()
+            .expect("storage failure should publish a failed outcome");
+        assert_eq!(message.msg_type, "failed");
+        assert_eq!(stats.read().await.failed_scans, 1);
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("scan_job.result_persist_failed"),
+            "{output}"
+        );
+        assert!(!output.contains("private store detail"), "{output}");
+    }
+
+    #[tokio::test]
     async fn initial_status_check_failure_is_logged_without_backend_details() {
         use tracing::instrument::WithSubscriber;
 
@@ -2162,6 +2263,15 @@ mod tests {
         async fn store_scan(&self, _scan: &PersistedScan) -> Result<i64> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(42)
+        }
+    }
+
+    struct FailingResultsStore;
+
+    #[async_trait::async_trait]
+    impl ScanResultsStore for FailingResultsStore {
+        async fn store_scan(&self, _scan: &PersistedScan) -> Result<i64> {
+            Err(TlsError::Other("private store detail".to_string()))
         }
     }
 
