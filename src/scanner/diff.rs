@@ -429,6 +429,68 @@ mod tests {
     }
 
     #[test]
+    fn compare_reports_added_and_removed_findings() {
+        let previous = ScanResults {
+            target: "example.com:443".to_string(),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Heartbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::Critical,
+            }],
+            ..Default::default()
+        };
+        let current = ScanResults {
+            target: previous.target.clone(),
+            vulnerabilities: vec![VulnerabilityResult {
+                vuln_type: VulnerabilityType::Ticketbleed,
+                vulnerable: true,
+                inconclusive: false,
+                details: "confirmed".to_string(),
+                cve: None,
+                cwe: None,
+                severity: Severity::High,
+            }],
+            ..Default::default()
+        };
+
+        let diff = ScanDiff::compare(&previous, &current).unwrap();
+
+        assert_eq!(diff.findings.len(), 2);
+        let added = diff
+            .findings
+            .iter()
+            .find(|finding| finding.finding_id == "CR-TLS-TICKETBLEED-001")
+            .unwrap();
+        assert_eq!(added.previous_status, None);
+        assert_eq!(
+            added.current_status.as_deref(),
+            Some("confirmed_vulnerable")
+        );
+        let removed = diff
+            .findings
+            .iter()
+            .find(|finding| finding.finding_id == "CR-TLS-HEARTBLEED-001")
+            .unwrap();
+        assert_eq!(
+            removed.previous_status.as_deref(),
+            Some("confirmed_vulnerable")
+        );
+        assert_eq!(removed.current_status, None);
+
+        let rendered = diff.to_terminal();
+        assert!(
+            rendered.contains("Finding CR-TLS-TICKETBLEED-001: missing -> confirmed_vulnerable")
+        );
+        assert!(
+            rendered.contains("Finding CR-TLS-HEARTBLEED-001: confirmed_vulnerable -> missing")
+        );
+    }
+
+    #[test]
     fn compare_rejects_different_targets() {
         let previous = ScanResults {
             target: "example.com:443".to_string(),
