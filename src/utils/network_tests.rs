@@ -709,16 +709,26 @@ fn test_default_starttls_protocol_additional_ports() {
 #[test]
 fn test_starttls_port_and_protocol_mappings() {
     assert!(is_starttls_port(21));
+    assert!(is_starttls_port(110));
+    assert!(is_starttls_port(119));
     assert!(is_starttls_port(389));
     assert!(is_starttls_port(587));
     assert!(is_starttls_port(4190));
+    assert!(is_starttls_port(5222));
+    assert!(is_starttls_port(5269));
     assert!(is_starttls_port(24));
     assert!(is_starttls_port(23));
+    assert!(is_starttls_port(5432));
     assert_eq!(default_starttls_protocol(21), Some("ftp"));
+    assert_eq!(default_starttls_protocol(110), Some("pop3"));
+    assert_eq!(default_starttls_protocol(119), Some("nntp"));
     assert_eq!(default_starttls_protocol(389), Some("ldap"));
     assert_eq!(default_starttls_protocol(465), None);
     assert_eq!(default_starttls_protocol(24), Some("lmtp"));
     assert_eq!(default_starttls_protocol(23), Some("telnet"));
+    assert_eq!(default_starttls_protocol(5222), Some("xmpp"));
+    assert_eq!(default_starttls_protocol(5269), Some("xmpp-server"));
+    assert_eq!(default_starttls_protocol(5432), Some("postgres"));
 }
 
 #[test]
