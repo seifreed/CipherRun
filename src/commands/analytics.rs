@@ -301,6 +301,54 @@ path = \"{}\"\n",
         assert!(cmd.execute().await.is_err());
     }
 
+    #[tokio::test]
+    async fn test_analytics_empty_database_operations_report_expected_outcomes() {
+        let config = create_temp_db_config();
+        for (operation, json) in [
+            ("changes", false),
+            ("changes", true),
+            ("trends", false),
+            ("trends", true),
+            ("dashboard", false),
+        ] {
+            let mut args = Args::default();
+            args.database.config = Some(config.clone());
+            args.output.json_pretty = json;
+            match operation {
+                "changes" => args.changes = Some("example.com:443:7".to_string()),
+                "trends" => args.trends = Some("example.com:443:7".to_string()),
+                "dashboard" => args.dashboard = Some("example.com:443:7".to_string()),
+                _ => unreachable!(),
+            }
+
+            let result = AnalyticsCommand::new(args).execute().await;
+            if (operation == "trends" && json) || operation == "dashboard" {
+                assert!(
+                    result
+                        .expect_err("operation requires scan history")
+                        .to_string()
+                        .contains("No scans found")
+                );
+            } else {
+                result.unwrap_or_else(|error| {
+                    panic!("{operation} should work with empty history: {error}")
+                });
+            }
+        }
+
+        let mut args = Args::default();
+        args.database.config = Some(config);
+        args.compare = Some("1:2".to_string());
+        assert!(
+            AnalyticsCommand::new(args)
+                .execute()
+                .await
+                .expect_err("unknown scans should fail comparison")
+                .to_string()
+                .contains("not found")
+        );
+    }
+
     #[test]
     fn test_analytics_json_output_uses_export_guards() {
         let dir = tempfile::tempdir().expect("tempdir should be created");
