@@ -375,6 +375,42 @@ fn test_grease_partial_inconclusive_does_not_report_tolerant() {
 }
 
 #[test]
+fn grease_connection_errors_are_recorded_and_finalized_as_inconclusive() {
+    let tester = loopback_tester();
+    let mut result = grease_result(false, false, false, &[], &[], &[]);
+
+    tester.record_grease_test(
+        &mut result,
+        "GREASE extensions",
+        Err(crate::TlsError::Other("peer closed connection".to_string())),
+    );
+
+    assert!(result.direct_grease_test_performed);
+    assert_eq!(
+        result.tests_performed,
+        ["GREASE extensions (error: peer closed connection)"]
+    );
+    assert!(result.details[0].contains("connection error"));
+    GreaseTester::finalize_grease_result(&mut result);
+    assert!(!result.tolerates_grease);
+    assert!(result.inconclusive);
+}
+
+#[test]
+fn grease_finalization_without_evidence_fails_closed() {
+    let mut no_tests = grease_result(false, false, false, &[], &[], &[]);
+    GreaseTester::finalize_grease_result(&mut no_tests);
+    assert!(!no_tests.tolerates_grease);
+    assert!(no_tests.inconclusive);
+    assert_eq!(no_tests.issues, ["No GREASE tests were performed"]);
+
+    let mut empty_outcome = grease_result(false, false, true, &[], &[], &[]);
+    GreaseTester::finalize_grease_result(&mut empty_outcome);
+    assert!(!empty_outcome.tolerates_grease);
+    assert!(empty_outcome.inconclusive);
+}
+
+#[test]
 fn test_grease_all_category_inconclusive_ignores_baseline_success_detail() {
     let tester = loopback_tester();
     let mut result = grease_result(
