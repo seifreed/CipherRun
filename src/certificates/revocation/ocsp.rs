@@ -1,5 +1,6 @@
 use super::{
-    RevocationChecker, RevocationStatus, http::validate_revocation_http_url, parse_x509_der_exact,
+    RevocationChecker, RevocationStatus, http::ValidatedRevocationHttp,
+    http::validate_revocation_http_url, parse_x509_der_exact,
 };
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
@@ -82,7 +83,16 @@ impl RevocationChecker {
         ocsp_url: &str,
     ) -> Result<RevocationStatus> {
         let validated = validate_revocation_http_url(ocsp_url, self.check_timeout).await?;
+        self.check_ocsp_with_validated_http(cert, issuer, validated)
+            .await
+    }
 
+    async fn check_ocsp_with_validated_http(
+        &self,
+        cert: &CertificateInfo,
+        issuer: Option<&CertificateInfo>,
+        validated: ValidatedRevocationHttp,
+    ) -> Result<RevocationStatus> {
         // Build OCSP request
         let request_body = self.build_ocsp_request(cert, issuer)?;
 
@@ -363,6 +373,54 @@ impl RevocationChecker {
 mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use url::Url;
+
+    async fn local_ocsp_responder(
+        response: Option<&'static [u8]>,
+    ) -> (ValidatedRevocationHttp, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("loopback listener should have an address");
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("OCSP client should connect");
+            let mut stream = BufReader::new(stream);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let read = stream
+                    .read_until(b'\n', &mut line)
+                    .await
+                    .expect("OCSP request headers should be readable");
+                if read == 0 || line == b"\r\n" {
+                    break;
+                }
+            }
+
+            if let Some(response) = response {
+                stream
+                    .get_mut()
+                    .write_all(response)
+                    .await
+                    .expect("OCSP response should be writable");
+            }
+        });
+        let url = Url::parse(&format!("http://{address}/ocsp")).expect("loopback URL should parse");
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test client should build");
+        (ValidatedRevocationHttp { url, client }, task)
+    }
+
+    fn valid_ocsp_certificate() -> CertificateInfo {
+        cert_with_raw_extension_der("1.2.3.4", b"\x05\x00")
+    }
 
     fn aia_with_location(tag: u8, location: &str) -> Vec<u8> {
         aia_with_method(0x01, tag, location)
@@ -653,5 +711,121 @@ mod tests {
                 "unsafe responder URL should be rejected before the HTTP request: {url}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_with_validated_http_rejects_responder_status() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_ocsp_responder(Some(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ))
+        .await;
+        let cert = valid_ocsp_certificate();
+
+        let error = checker
+            .check_ocsp_with_validated_http(&cert, Some(&cert), validated)
+            .await
+            .expect_err("non-success OCSP status should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("OCSP responder returned error: 503")
+        );
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_with_validated_http_reads_and_parses_response_body() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_ocsp_responder(Some(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n\xff",
+        ))
+        .await;
+        let cert = valid_ocsp_certificate();
+
+        let error = checker
+            .check_ocsp_with_validated_http(&cert, Some(&cert), validated)
+            .await
+            .expect_err("malformed OCSP response body should fail parsing");
+        assert!(error.to_string().contains("Failed to parse OCSP response"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_with_validated_http_rejects_oversized_body() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_ocsp_responder(Some(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1048577\r\nConnection: close\r\n\r\n",
+        ))
+        .await;
+        let cert = valid_ocsp_certificate();
+
+        let error = checker
+            .check_ocsp_with_validated_http(&cert, Some(&cert), validated)
+            .await
+            .expect_err("oversized OCSP response should fail");
+        assert!(error.to_string().contains("OCSP response too large"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_with_validated_http_reports_transport_failure() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_ocsp_responder(None).await;
+        let cert = valid_ocsp_certificate();
+
+        let error = checker
+            .check_ocsp_with_validated_http(&cert, Some(&cert), validated)
+            .await
+            .expect_err("closed responder connection should fail");
+        assert!(error.to_string().contains("OCSP HTTP request failed"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn test_check_ocsp_with_validated_http_reports_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("loopback listener should have an address");
+        let responder = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("OCSP client should connect");
+            let mut stream = BufReader::new(stream);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let read = stream
+                    .read_until(b'\n', &mut line)
+                    .await
+                    .expect("OCSP request headers should be readable");
+                if read == 0 || line == b"\r\n" {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        });
+        let url = Url::parse(&format!("http://{address}/ocsp")).expect("loopback URL should parse");
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test client should build");
+        let checker = RevocationChecker {
+            check_timeout: Duration::from_millis(200),
+            phone_out_enabled: false,
+        };
+        let cert = valid_ocsp_certificate();
+
+        let error = checker
+            .check_ocsp_with_validated_http(
+                &cert,
+                Some(&cert),
+                ValidatedRevocationHttp { url, client },
+            )
+            .await
+            .expect_err("unresponsive responder should time out");
+        assert!(error.to_string().contains("timed out"));
+        responder.abort();
     }
 }
