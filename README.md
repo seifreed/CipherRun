@@ -346,6 +346,8 @@ Scan comparison lookup tests cover SQLite query failures and exercise PostgreSQL
 lookups plus missing-table error mapping in the CI PostgreSQL service.
 Early Data fixtures also exercise TLS 1.2-only servers, empty probe-address lists,
 and connection-refusal outcomes without external network access.
+GREASE merge tests cover rejection precedence and preservation of the first
+inconclusive outcome; the baseline probe reports only success or an actionable error.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 JARM emits one `DEBUG` completion summary with probe count, inconclusive count,

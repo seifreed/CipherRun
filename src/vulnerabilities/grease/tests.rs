@@ -92,6 +92,23 @@ fn test_grease_merge_preserves_bad_or_unclear_address() {
         GreaseTestOutcome::Inconclusive("timeout".to_string()).merge(GreaseTestOutcome::Rejected),
         GreaseTestOutcome::Rejected
     );
+    assert_eq!(
+        GreaseTestOutcome::Rejected.merge(GreaseTestOutcome::Tolerated),
+        GreaseTestOutcome::Rejected
+    );
+    assert_eq!(
+        GreaseTestOutcome::Rejected.merge(GreaseTestOutcome::Inconclusive("timeout".to_string())),
+        GreaseTestOutcome::Rejected
+    );
+    assert_eq!(
+        GreaseTestOutcome::Inconclusive("first error".to_string())
+            .merge(GreaseTestOutcome::Tolerated),
+        GreaseTestOutcome::Inconclusive("first error".to_string())
+    );
+    assert_eq!(
+        GreaseTestOutcome::Tolerated.merge(GreaseTestOutcome::Tolerated),
+        GreaseTestOutcome::Tolerated
+    );
 }
 
 #[test]
@@ -252,8 +269,10 @@ async fn test_grease_baseline_ignores_certificate_validation_errors() {
     .unwrap();
 
     let tester = GreaseTester::new(target);
-    let baseline_ok = tester.test_baseline_connection().await.unwrap();
-    assert!(baseline_ok);
+    tester
+        .test_baseline_connection()
+        .await
+        .expect("a successful baseline handshake should be accepted");
 }
 
 #[tokio::test]

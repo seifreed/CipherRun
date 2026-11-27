@@ -109,19 +109,11 @@ impl GreaseTester {
         };
 
         // Baseline connection with standard ClientHello
-        let baseline_ok = match self.test_baseline_connection().await {
-            Ok(true) => {
+        match self.test_baseline_connection().await {
+            Ok(()) => {
                 result
                     .details
                     .push("✓ Baseline connection successful".to_string());
-                true
-            }
-            Ok(false) => {
-                result.inconclusive = true;
-                result
-                    .issues
-                    .push("Baseline connection failed - cannot test GREASE".to_string());
-                return Ok(result);
             }
             Err(e) => {
                 result.inconclusive = true;
@@ -130,10 +122,6 @@ impl GreaseTester {
                     .push(format!("Baseline connection error: {}", e));
                 return Ok(result);
             }
-        };
-
-        if !baseline_ok {
-            return Ok(result);
         }
 
         // Run each GREASE category test
@@ -257,12 +245,11 @@ impl GreaseTester {
     }
 
     /// Test baseline TLS connection (no GREASE)
-    async fn test_baseline_connection(&self) -> Result<bool> {
+    async fn test_baseline_connection(&self) -> Result<()> {
         let mut last_error = None;
         for addr in self.probe_addrs()? {
             match self.test_baseline_connection_addr(addr).await {
-                Ok(true) => return Ok(true),
-                Ok(false) => {}
+                Ok(()) => return Ok(()),
                 Err(e) => last_error = Some(e.to_string()),
             }
         }
@@ -274,7 +261,7 @@ impl GreaseTester {
         )))
     }
 
-    async fn test_baseline_connection_addr(&self, addr: std::net::SocketAddr) -> Result<bool> {
+    async fn test_baseline_connection_addr(&self, addr: std::net::SocketAddr) -> Result<()> {
         let stream =
             crate::utils::network::connect_with_timeout(addr, TLS_HANDSHAKE_TIMEOUT, None).await?;
 
@@ -299,7 +286,7 @@ impl GreaseTester {
         )
         .await
         {
-            Ok(Ok(_)) => Ok(true),
+            Ok(Ok(_)) => Ok(()),
             Ok(Err(error)) => Err(crate::TlsError::InvalidHandshake {
                 details: format!("GREASE baseline TLS handshake failed: {}", error),
             }),
