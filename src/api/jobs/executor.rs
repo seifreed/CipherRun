@@ -1070,6 +1070,28 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Notify;
 
+    #[test]
+    fn webhook_retry_policy_retries_transient_statuses_only() {
+        for status in [
+            StatusCode::REQUEST_TIMEOUT,
+            StatusCode::TOO_EARLY,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert!(is_retryable_webhook_status(status), "{status}");
+        }
+
+        for status in [
+            StatusCode::OK,
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::NOT_FOUND,
+        ] {
+            assert!(!is_retryable_webhook_status(status), "{status}");
+        }
+    }
+
     #[tokio::test]
     async fn shutdown_reports_a_closed_signal_channel() {
         let mut executor = ScanExecutor::new(Arc::new(super::super::InMemoryJobQueue::new(1)), 1);
