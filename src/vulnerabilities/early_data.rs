@@ -549,6 +549,24 @@ mod tests {
             .with_single_cert(vec![cert_der], key_der)
             .unwrap();
         server_config.max_early_data_size = max_early_data_size;
+        spawn_tls_server(server_config).await
+    }
+
+    async fn spawn_tls12_server() -> SocketAddr {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+        let server_config =
+            rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+                .with_no_client_auth()
+                .with_single_cert(vec![cert_der], key_der)
+                .unwrap();
+        spawn_tls_server(server_config).await
+    }
+
+    async fn spawn_tls_server(server_config: rustls::ServerConfig) -> SocketAddr {
         let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -587,6 +605,93 @@ mod tests {
         let status = tester.probe_zero_rtt_early_data().await.unwrap();
 
         assert_eq!(status, EarlyDataSupportStatus::NotSupported);
+    }
+
+    #[tokio::test]
+    async fn test_probe_zero_rtt_without_socket_addresses_is_inconclusive() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let target = Target {
+            hostname: "example.com".to_string(),
+            port: 443,
+            ip_addresses: Vec::new(),
+        };
+
+        let status = EarlyDataTester::new(&target)
+            .probe_zero_rtt_early_data()
+            .await
+            .expect("an empty address list should be an inconclusive probe");
+
+        assert_eq!(status, EarlyDataSupportStatus::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn test_max_early_data_size_is_not_supported_on_tls12_only_server() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls12_server().await;
+        let target = localhost_target(addr.port());
+
+        let info = EarlyDataTester::new(&target)
+            .get_max_early_data_size()
+            .await
+            .expect("TLS 1.2 should complete without a 0-RTT result");
+
+        assert!(!info.tls13_supported);
+        assert!(!info.early_data_supported);
+        assert!(info.max_early_data_size.is_none());
+        assert!(!info.is_estimated);
+        assert!(!info.inconclusive);
+    }
+
+    #[tokio::test]
+    async fn replay_test_reports_tls12_as_not_applicable() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls12_server().await;
+        let target = localhost_target(addr.port());
+
+        let result = EarlyDataTester::new(&target)
+            .test_replay_attack()
+            .await
+            .expect("TLS 1.2 should produce a completed not-applicable result");
+
+        assert!(!result.tested);
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+        assert!(result.details.contains("does not support TLS 1.3"));
+    }
+
+    #[tokio::test]
+    async fn test_warm_up_session_reports_connection_refusal() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let target = localhost_target(addr.port());
+        let tester = EarlyDataTester::new(&target);
+        let config = Arc::new(crate::utils::insecure_tls::insecure_client_config());
+        let domain = crate::utils::network::server_name_for_hostname("localhost").unwrap();
+
+        let error = tester
+            .warm_up_session(addr, &config, domain)
+            .await
+            .expect_err("a refused connection should fail the warm-up session");
+
+        assert!(error.to_string().contains("Connection refused"));
+    }
+
+    #[tokio::test]
+    async fn resumed_probe_reports_connection_refusal_as_inconclusive() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let target = localhost_target(addr.port());
+        let tester = EarlyDataTester::new(&target);
+        let config = Arc::new(crate::utils::insecure_tls::insecure_client_config());
+        let domain = crate::utils::network::server_name_for_hostname("localhost").unwrap();
+
+        let status = tester.probe_resumed_early_data(addr, &config, domain).await;
+
+        assert_eq!(status, EarlyDataSupportStatus::Inconclusive);
     }
 
     #[tokio::test]

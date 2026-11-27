@@ -344,6 +344,8 @@ Scheduler tests also cover the `Default` constructor and windows whose duration 
 representable but whose resulting UTC timestamp overflows the calendar range.
 Scan comparison lookup tests cover SQLite query failures and exercise PostgreSQL
 lookups plus missing-table error mapping in the CI PostgreSQL service.
+Early Data fixtures also exercise TLS 1.2-only servers, empty probe-address lists,
+and connection-refusal outcomes without external network access.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
