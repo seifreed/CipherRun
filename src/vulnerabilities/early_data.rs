@@ -748,6 +748,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_max_early_data_size_stays_empty_when_tls13_rejects_early_data() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls13_server(0).await;
+        let target = localhost_target(addr.port());
+        let tester = EarlyDataTester::new(&target);
+
+        let info = tester
+            .get_max_early_data_size()
+            .await
+            .expect("TLS 1.3 and early-data probes should complete");
+
+        assert!(info.tls13_supported);
+        assert!(!info.early_data_supported);
+        assert!(info.max_early_data_size.is_none());
+        assert!(!info.inconclusive);
+    }
+
+    #[tokio::test]
     #[ignore] // Requires network access
     async fn test_early_data_detection() {
         let target = Target::with_ips(
