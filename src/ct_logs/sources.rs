@@ -337,13 +337,6 @@ async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
                 "Invalid CT log host: private/local host".to_string(),
             ));
         }
-        if let Ok(ip) = host.parse::<IpAddr>()
-            && is_private_ip(&ip)
-        {
-            return Err(TlsError::Other(format!(
-                "Invalid CT log host: private/internal IP {ip}"
-            )));
-        }
     }
     let parsed = url::Url::parse(url).map_err(|error| TlsError::Other(format!("{error}")))?;
     let raw_host = parsed
@@ -356,10 +349,11 @@ async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
         .await
         .map_err(|error| TlsError::Other(format!("Failed to resolve CT log host {host}: {error}")))?
         .collect();
-    if addrs.is_empty() {
-        return Ok(false);
-    }
-    Ok(addrs.iter().all(|addr| !is_private_ip(&addr.ip())))
+    Ok(resolved_addresses_are_public(&addrs))
+}
+
+fn resolved_addresses_are_public(addrs: &[std::net::SocketAddr]) -> bool {
+    !addrs.is_empty() && addrs.iter().all(|addr| !is_private_ip(&addr.ip()))
 }
 
 impl Default for SourceManager {
@@ -458,6 +452,28 @@ mod tests {
                 )
                 .await
                 .expect("oversized HTTP fixture response should be written");
+        });
+        format!("http://{address}/log-list.json")
+    }
+
+    async fn serve_truncated_ct_log_response() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local HTTP fixture should bind");
+        let address = listener
+            .local_addr()
+            .expect("local HTTP fixture should have an address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("HTTP client should connect to local fixture");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"operators\":[]}")
+                .await
+                .expect("truncated HTTP fixture response should be written");
         });
         format!("http://{address}/log-list.json")
     }
@@ -636,6 +652,19 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn fetch_sources_reports_a_truncated_response_body() {
+        let truncated_url = serve_truncated_ct_log_response().await;
+        let mut manager = SourceManager::new();
+
+        let error = manager
+            .fetch_sources_from(&truncated_url, |_| std::future::ready(Ok(true)))
+            .await
+            .expect_err("a truncated CT log-list body should fail");
+
+        assert!(error.to_string().contains("Failed to read CT log list"));
+    }
+
     #[test]
     fn test_is_valid_ct_log_url_rejects_unsafe_urls() {
         assert!(is_valid_ct_log_url("https://ct.example.com"));
@@ -709,6 +738,25 @@ mod tests {
     }
 
     #[test]
+    fn resolved_addresses_must_be_nonempty_and_public() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        assert!(!resolved_addresses_are_public(&[]));
+        assert!(resolved_addresses_are_public(&[SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            443,
+        )]));
+        assert!(!resolved_addresses_are_public(&[SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            443,
+        )]));
+        assert!(!resolved_addresses_are_public(&[SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            443,
+        )]));
+    }
+
+    #[test]
     fn test_source_manager_updates_and_failures() {
         let mut manager = SourceManager::new();
         manager.sources.insert(
@@ -729,6 +777,8 @@ mod tests {
 
         manager.update_tree_size("log1", 42);
         assert_eq!(manager.get_source("log1").unwrap().tree_size, 42);
+        manager.update_tree_size("missing", 99);
+        assert_eq!(manager.get_source("log1").unwrap().tree_size, 42);
 
         manager.mark_source_failed("log1", "oops".to_string());
         let source = manager.get_source("log1").unwrap();
@@ -736,9 +786,14 @@ mod tests {
         assert!(source.last_error.as_deref().unwrap_or("").contains("oops"));
 
         manager.mark_source_success("log1");
+        manager.mark_source_failed("missing", "ignored".to_string());
+        manager.mark_source_success("missing");
         let source = manager.get_source("log1").unwrap();
         assert_eq!(source.failure_count, 0);
         assert!(source.last_error.is_none());
         assert!(source.usable);
+        assert_eq!(manager.healthy_sources_count(), 1);
+        assert_eq!(manager.get_healthy_sources().len(), 1);
+        assert!(manager.get_source("missing").is_none());
     }
 }
