@@ -67,6 +67,18 @@ mod tests {
         }
     }
 
+    struct PendingReader;
+
+    impl AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
     #[tokio::test]
     async fn complete_record_reader_returns_eof_and_propagates_read_errors() {
         let mut eof = ScriptedReader(VecDeque::new());
@@ -142,5 +154,18 @@ mod tests {
             6
         );
         assert_eq!(&buffer, &[0x16, 0x03, 0x03, 0x00, 0x01, 0x00]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn complete_record_reader_returns_partial_data_after_timeout() {
+        let mut reader = PendingReader;
+        let mut buffer = [0; 5];
+
+        assert_eq!(
+            complete_tls_record(&mut reader, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("a timed-out read returns the bytes collected so far"),
+            0
+        );
     }
 }
