@@ -260,6 +260,18 @@ active = true
     }
 
     #[tokio::test]
+    async fn execute_rejects_missing_credentials_before_server_startup() {
+        let command = ApiServerCommand::new(Args::default());
+
+        let error = command
+            .execute()
+            .await
+            .expect_err("API server startup requires an explicit credentials file");
+
+        assert!(error.to_string().contains("no API credentials configured"));
+    }
+
+    #[tokio::test]
     async fn database_pool_is_optional_when_no_database_config_is_supplied() {
         let command = ApiServerCommand::new(Args::default());
 
