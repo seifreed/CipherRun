@@ -550,4 +550,59 @@ mod tests {
         assert!(error.to_string().contains("exceeds buffer"));
         server.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_send_client_hello_classifies_server_rejection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut client_hello = [0u8; 4096];
+            let bytes_read = socket.read(&mut client_hello).await.unwrap();
+            assert!(bytes_read > 0);
+            socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46])
+                .await
+                .unwrap();
+        });
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        assert_eq!(
+            tester.send_client_hello(b"client hello").await.unwrap(),
+            GreaseTestOutcome::Rejected
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_client_hello_classifies_closed_connection_as_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut client_hello = [0u8; 4096];
+            let bytes_read = socket.read(&mut client_hello).await.unwrap();
+            assert!(bytes_read > 0);
+        });
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        assert!(matches!(
+            tester.send_client_hello(b"client hello").await.unwrap(),
+            GreaseTestOutcome::Inconclusive(reason)
+                if reason == "Server closed connection without response"
+        ));
+        server.await.unwrap();
+    }
 }
