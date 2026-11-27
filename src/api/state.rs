@@ -1271,6 +1271,76 @@ mod tests {
     }
 
     #[test]
+    fn api_stats_enforce_bounds_trim_oldest_entries() {
+        let now = Instant::now();
+        let mut stats = ApiStats::default();
+        stats
+            .requests_last_hour
+            .extend((0..=MAX_HOURLY_ENTRIES).map(|index| (now, index as u64)));
+        stats
+            .request_timestamps
+            .extend(std::iter::repeat_n(now, MAX_TIMESTAMPS + 1));
+        stats
+            .scan_timestamps
+            .extend(std::iter::repeat_n(now, MAX_TIMESTAMPS + 1));
+
+        stats.enforce_bounds();
+
+        assert_eq!(stats.requests_last_hour.len(), MAX_HOURLY_ENTRIES);
+        assert_eq!(stats.requests_last_hour.front(), Some(&(now, 1)));
+        assert_eq!(stats.request_timestamps.len(), MAX_TIMESTAMPS);
+        assert_eq!(stats.scan_timestamps.len(), MAX_TIMESTAMPS);
+    }
+
+    #[test]
+    fn api_stats_bound_audit_history_and_keep_newest_event() {
+        let mut stats = ApiStats::default();
+        for index in 0..=MAX_AUDIT_EVENTS {
+            stats.record_audit(AuditEvent {
+                request_id: format!("request-{index}"),
+                method: "GET".to_string(),
+                path: "/health".to_string(),
+                status: 200,
+                duration_ms: 1,
+                client_ip: None,
+                recorded_at: chrono::Utc::now(),
+            });
+        }
+
+        assert_eq!(stats.audit_events.len(), MAX_AUDIT_EVENTS);
+        assert_eq!(
+            stats
+                .audit_events
+                .front()
+                .map(|event| event.request_id.as_str()),
+            Some("request-1")
+        );
+        assert_eq!(
+            stats
+                .audit_events
+                .back()
+                .map(|event| event.request_id.as_str()),
+            Some("request-10000")
+        );
+    }
+
+    #[test]
+    fn legacy_unscoped_principal_metric_helpers_update_only_unscoped_stats() {
+        let mut stats = ApiStats::default();
+
+        stats.record_response_for("alice", 25);
+        stats.record_failed_scan_for("alice");
+
+        let alice = stats.scoped_snapshot("alice");
+        let tenant_alice = stats.scoped_snapshot_for("alice", Some("tenant-a"));
+        assert_eq!(alice.total_responses, 1);
+        assert_eq!(alice.total_response_time_ms, 25);
+        assert_eq!(alice.failed_scans, 1);
+        assert_eq!(tenant_alice.total_responses, 0);
+        assert_eq!(tenant_alice.failed_scans, 0);
+    }
+
+    #[test]
     fn test_api_stats_requests_in_last_hour_saturates() {
         let now = Instant::now();
         let mut stats = ApiStats::default();
