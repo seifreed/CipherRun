@@ -322,6 +322,44 @@ mod tests {
     use super::super::test_support::base_cert;
     use super::*;
 
+    fn generated_ca_chain() -> (CertificateInfo, CertificateInfo) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
+        };
+
+        let mut ca_params = CertificateParams::new(vec!["test-root.example".to_string()])
+            .expect("CA parameters should be valid");
+        let mut ca_name = DistinguishedName::new();
+        ca_name.push(DnType::CommonName, "Test Root CA");
+        ca_params.distinguished_name = ca_name;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca_key = KeyPair::generate().expect("CA key should be generated");
+        let ca_cert = ca_params
+            .self_signed(&ca_key)
+            .expect("CA certificate should be signed");
+        let ca_issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
+
+        let mut leaf_params = CertificateParams::new(vec!["example.com".to_string()])
+            .expect("leaf parameters should be valid");
+        let mut leaf_name = DistinguishedName::new();
+        leaf_name.push(DnType::CommonName, "example.com");
+        leaf_params.distinguished_name = leaf_name;
+        let leaf_key = KeyPair::generate().expect("leaf key should be generated");
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key, &ca_issuer)
+            .expect("leaf certificate should be signed by the CA");
+
+        let leaf = crate::certificates::parser::CertificateParser::parse_certificate(
+            leaf_cert.der().as_ref(),
+        )
+        .expect("leaf certificate should parse");
+        let ca = crate::certificates::parser::CertificateParser::parse_certificate(
+            ca_cert.der().as_ref(),
+        )
+        .expect("CA certificate should parse");
+        (leaf, ca)
+    }
+
     #[test]
     fn test_validate_trust_chain_empty() {
         let validator = CertificateValidator::new("example.com".to_string());
@@ -520,6 +558,51 @@ mod tests {
                 && issue
                     .description
                     .contains("Intermediate signature verification error")
+        }));
+    }
+
+    #[test]
+    fn validates_a_signed_chain_to_an_additional_ca() {
+        let (leaf, ca) = generated_ca_chain();
+        let ca_der = ca.der_bytes.clone();
+        let mut validator = CertificateValidator::new("example.com".to_string());
+        validator.additional_ca_entries.push(AdditionalCaEntry {
+            source: "test fixture".to_string(),
+            subject: ca.subject.clone(),
+            der: ca_der,
+        });
+        let chain = CertificateChain {
+            certificates: vec![leaf, ca],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+        let mut issues = Vec::new();
+
+        let (valid, trusted_ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(valid);
+        assert_eq!(trusted_ca.as_deref(), Some("Additional CA (test fixture)"));
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn rejects_a_validly_signed_chain_with_an_untrusted_self_signed_root() {
+        let (leaf, ca) = generated_ca_chain();
+        let mut validator = CertificateValidator::new("example.com".to_string());
+        validator.additional_ca_entries.clear();
+        let chain = CertificateChain {
+            certificates: vec![leaf, ca],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+        let mut issues = Vec::new();
+
+        let (valid, trusted_ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(trusted_ca.is_none());
+        assert!(issues.iter().any(|issue| {
+            issue.severity == IssueSeverity::Critical && issue.issue_type == IssueType::SelfSigned
         }));
     }
 
