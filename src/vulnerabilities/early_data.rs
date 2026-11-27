@@ -590,6 +590,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_early_data_full_flow_reports_tls13_without_early_data() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls13_server(0).await;
+        let target = localhost_target(addr.port());
+
+        let result = EarlyDataTester::new(&target)
+            .test()
+            .await
+            .expect("TLS 1.3 without early data should produce a completed result");
+
+        assert!(!result.supports_early_data);
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+        assert!(result.max_early_data_size.is_none());
+        assert!(result.details.contains("does not support 0-RTT"));
+    }
+
+    #[tokio::test]
+    async fn invalid_dns_name_is_inconclusive_without_opening_a_probe_connection() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let target = Target {
+            hostname: "invalid..host".to_string(),
+            port: addr.port(),
+            ip_addresses: vec![addr.ip()],
+        };
+
+        let status = EarlyDataTester::new(&target)
+            .probe_zero_rtt_early_data()
+            .await
+            .expect("invalid DNS names should be reported as an inconclusive probe");
+
+        assert_eq!(status, EarlyDataSupportStatus::Inconclusive);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn test_probe_zero_rtt_all_ips_uses_any_reachable_ip() {
         crate::utils::insecure_tls::ensure_ring_provider();
         let addr = spawn_tls13_server(16384).await;
