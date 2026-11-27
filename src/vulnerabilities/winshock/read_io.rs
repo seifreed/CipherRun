@@ -147,6 +147,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn complete_record_reader_stops_when_buffer_fills_before_header() {
+        let mut reader = ScriptedReader(VecDeque::from([Ok(vec![0x16, 0x03, 0x03, 0x01])]));
+        let mut buffer = [0; 4];
+
+        assert_eq!(
+            complete_tls_record(&mut reader, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("a full buffer with an incomplete TLS header should be returned"),
+            4
+        );
+    }
+
+    #[tokio::test]
     async fn complete_record_reader_waits_for_fragmented_record_body() {
         let mut fragmented = ScriptedReader(VecDeque::from([
             Ok(vec![0x16, 0x03, 0x03, 0x00, 0x01]),

@@ -194,6 +194,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn incomplete_long_header_returns_when_buffer_fills() {
+        let mut reader = ScriptedReader(VecDeque::from([Ok(vec![0x00, 0x03])]));
+        let mut buffer = [0; 2];
+
+        assert_eq!(
+            read_complete_sslv2_record(&mut reader, &mut buffer)
+                .await
+                .expect("partial long header should be returned when the buffer is full"),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn oversized_record_is_rejected_before_buffer_overrun() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

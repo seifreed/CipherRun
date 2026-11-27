@@ -176,10 +176,21 @@ mod tests {
     #[cfg(feature = "db-postgres")]
     #[tokio::test]
     async fn compare_ratings_reads_postgres_changes_and_preserves_query_errors() {
+        compare_ratings_postgres_with_url(std::env::var("CIPHERRUN_TEST_POSTGRES_URL").ok()).await;
+    }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn compare_ratings_postgres_test_skips_without_configuration() {
+        compare_ratings_postgres_with_url(None).await;
+    }
+
+    #[cfg(feature = "db-postgres")]
+    async fn compare_ratings_postgres_with_url(url: Option<String>) {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
 
-        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+        let Some(url) = url else {
             return;
         };
         let admin = PgPoolOptions::new()
