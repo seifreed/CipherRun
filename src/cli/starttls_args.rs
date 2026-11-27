@@ -291,6 +291,183 @@ mod tests {
     }
 
     #[test]
+    fn test_starttls_protocol_string_aliases() {
+        let cases = [
+            ("smtp", StarttlsProtocol::SMTP),
+            ("imap", StarttlsProtocol::IMAP),
+            ("pop3", StarttlsProtocol::POP3),
+            ("ftp", StarttlsProtocol::FTP),
+            ("ldap", StarttlsProtocol::LDAP),
+            ("xmpp", StarttlsProtocol::XMPP),
+            ("xmpp-server", StarttlsProtocol::XMPP),
+            ("postgres", StarttlsProtocol::POSTGRES),
+            ("postgresql", StarttlsProtocol::POSTGRES),
+            ("psql", StarttlsProtocol::POSTGRES),
+            ("mysql", StarttlsProtocol::MYSQL),
+            ("irc", StarttlsProtocol::IRC),
+            ("nntp", StarttlsProtocol::NNTP),
+            ("sieve", StarttlsProtocol::SIEVE),
+            ("lmtp", StarttlsProtocol::LMTP),
+            ("telnet", StarttlsProtocol::Telnet),
+        ];
+
+        for (name, expected) in cases {
+            let args = StarttlsArgs {
+                protocol: Some(name.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(args.starttls_protocol(), Some(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_starttls_port_string_aliases() {
+        let cases = [
+            ("smtp", 25),
+            ("imap", 143),
+            ("pop3", 110),
+            ("ftp", 21),
+            ("ldap", 389),
+            ("xmpp", 5222),
+            ("xmpp-server", 5269),
+            ("postgres", 5432),
+            ("postgresql", 5432),
+            ("psql", 5432),
+            ("mysql", 3306),
+            ("irc", 6667),
+            ("nntp", 119),
+            ("sieve", 4190),
+            ("lmtp", 24),
+        ];
+
+        for (name, expected) in cases {
+            let args = StarttlsArgs {
+                protocol: Some(name.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(args.starttls_port(), Some(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_starttls_flag_mappings_and_unknown_protocol() {
+        let cases = [
+            (
+                StarttlsArgs {
+                    imap: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::IMAP,
+                143,
+            ),
+            (
+                StarttlsArgs {
+                    pop3: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::POP3,
+                110,
+            ),
+            (
+                StarttlsArgs {
+                    ftp: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::FTP,
+                21,
+            ),
+            (
+                StarttlsArgs {
+                    ldap: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::LDAP,
+                389,
+            ),
+            (
+                StarttlsArgs {
+                    xmpp: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::XMPP,
+                5222,
+            ),
+            (
+                StarttlsArgs {
+                    psql: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::POSTGRES,
+                5432,
+            ),
+            (
+                StarttlsArgs {
+                    mysql: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::MYSQL,
+                3306,
+            ),
+            (
+                StarttlsArgs {
+                    irc: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::IRC,
+                6667,
+            ),
+            (
+                StarttlsArgs {
+                    nntp: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::NNTP,
+                119,
+            ),
+            (
+                StarttlsArgs {
+                    sieve: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::SIEVE,
+                4190,
+            ),
+            (
+                StarttlsArgs {
+                    lmtp: true,
+                    ..Default::default()
+                },
+                StarttlsProtocol::LMTP,
+                24,
+            ),
+        ];
+
+        for (args, protocol, port) in cases {
+            assert_eq!(args.starttls_protocol(), Some(protocol));
+            assert_eq!(args.starttls_port(), Some(port));
+        }
+
+        let unknown = StarttlsArgs {
+            protocol: Some("unknown".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(unknown.starttls_protocol(), None);
+        assert_eq!(unknown.starttls_port(), None);
+    }
+
+    #[test]
+    fn test_xmpp_server_mode_defaults_false_and_recognizes_flag() {
+        assert!(!StarttlsArgs::default().xmpp_server_mode());
+        assert!(
+            StarttlsArgs {
+                xmpp_server: true,
+                ..Default::default()
+            }
+            .xmpp_server_mode()
+        );
+    }
+
+    #[test]
     fn test_starttls_port_xmpp_server() {
         let args = StarttlsArgs {
             xmpp_server: true,
