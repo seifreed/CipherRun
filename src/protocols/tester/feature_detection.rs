@@ -311,6 +311,37 @@ impl ProbeAggregate {
 #[cfg(test)]
 mod tests {
     use super::{ProbeAggregate, *};
+    use std::net::SocketAddr;
+
+    fn valid_server_hello() -> Vec<u8> {
+        let mut payload = vec![HANDSHAKE_TYPE_SERVER_HELLO, 0, 0, 38, 0x03, 0x03];
+        payload.extend_from_slice(&[0; 32]);
+        payload.extend_from_slice(&[0, 0x13, 0x01, 0]);
+        tls_record(CONTENT_TYPE_HANDSHAKE, &payload)
+    }
+
+    async fn local_server(response: Vec<u8>) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept should succeed");
+            let mut client_hello = [0; 4096];
+            let bytes_read = stream
+                .read(&mut client_hello)
+                .await
+                .expect("ClientHello should be read");
+            assert!(bytes_read > 0, "ClientHello should not be empty");
+            stream
+                .write_all(&response)
+                .await
+                .expect("response should be sent");
+        });
+        (addr, server)
+    }
 
     fn tls_record(content_type: u8, payload: &[u8]) -> Vec<u8> {
         let length = u16::try_from(payload.len()).expect("test record should fit TLS length");
@@ -469,6 +500,72 @@ mod tests {
         assert_eq!(
             ProtocolTester::server_hello_payload_len(&not_server_hello),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_server_hello_addr_parses_local_server_hello() {
+        let (addr, server) = local_server(valid_server_hello()).await;
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .expect("test target should be valid");
+        let tester = ProtocolTester::new(target)
+            .with_connect_timeout(std::time::Duration::from_secs(1))
+            .with_read_timeout(std::time::Duration::from_secs(1));
+
+        let result = tester
+            .fetch_server_hello_addr(Protocol::TLS12, addr)
+            .await
+            .expect("local ServerHello should be processed");
+        server.await.expect("mock server should finish");
+
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn fetch_server_hello_addr_treats_alert_and_connect_errors_as_unknown() {
+        use tokio::net::TcpListener;
+
+        let (alert_addr, alert_server) = local_server(tls_record(21, &[2, 40])).await;
+        let alert_target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            alert_addr.port(),
+            vec![alert_addr.ip()],
+        )
+        .expect("test target should be valid");
+        let alert_tester = ProtocolTester::new(alert_target)
+            .with_connect_timeout(std::time::Duration::from_secs(1))
+            .with_read_timeout(std::time::Duration::from_secs(1));
+        let alert_result = alert_tester
+            .fetch_server_hello_addr(Protocol::TLS12, alert_addr)
+            .await
+            .expect("alert parse failure should not abort feature detection");
+        alert_server.await.expect("mock server should finish");
+        assert!(alert_result.is_none());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local address should exist");
+        drop(listener);
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            addr.port(),
+            vec![addr.ip()],
+        )
+        .expect("test target should be valid");
+        let tester =
+            ProtocolTester::new(target).with_connect_timeout(std::time::Duration::from_millis(100));
+
+        assert!(
+            tester
+                .fetch_server_hello_addr(Protocol::TLS12, addr)
+                .await
+                .expect("connect failure should be inconclusive")
+                .is_none()
         );
     }
 }
