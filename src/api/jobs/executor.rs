@@ -1696,6 +1696,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn running_status_poll_failures_are_reported_once_per_failure_streak() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: true,
+            get_job_panics: false,
+            cancel_on_get: false,
+            final_update_cancelled: false,
+            final_update_error: false,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let release = Arc::new(Notify::new());
+        let factory: Arc<dyn ScanSessionFactory> = Arc::new(BlockingScanSessionFactory {
+            started: Arc::new(tokio::sync::Mutex::new(Some(started_tx))),
+            release: Arc::clone(&release),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log_changed = Arc::new(Notify::new());
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(CapturedOutputWithNotify(
+                output.clone(),
+                log_changed.clone(),
+            ))
+            .finish();
+        let worker = tokio::spawn(async move {
+            executor
+                .execute_scan_with_factory(queue, job, factory)
+                .with_subscriber(tracing::Dispatch::new(subscriber))
+                .await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("injected scan should start")
+            .expect("scan should signal its start");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if String::from_utf8(output.lock().unwrap().clone())
+                    .expect("captured logs should be UTF-8")
+                    .contains("Failed to poll scan job status")
+                {
+                    break;
+                }
+                let notified = log_changed.notified();
+                tokio::select! {
+                    _ = notified => {},
+                    _ = tokio::task::yield_now() => {},
+                }
+            }
+        })
+        .await
+        .expect("status poll failure should be logged while the scan continues");
+
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), worker)
+            .await
+            .expect("executor should finish after the scan is released")
+            .expect("executor task should join");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.matches("Failed to poll scan job status").count(), 1);
+        assert!(output.contains("scan_job.status_check.failed"));
+        assert!(!output.contains("password=must-not-appear"));
+    }
+
+    #[tokio::test]
     async fn cancellation_after_scan_start_aborts_the_running_session() {
         let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
         job.mark_queued();
