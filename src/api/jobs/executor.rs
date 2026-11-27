@@ -1424,6 +1424,35 @@ mod tests {
         }
     }
 
+    struct FailingRunScanSession;
+
+    #[async_trait::async_trait]
+    impl ScanSession for FailingRunScanSession {
+        async fn initialize(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn run(&self) -> Result<ScanResults> {
+            Err(TlsError::Other("scanner run failed".into()))
+        }
+    }
+
+    struct FailingRunScanSessionFactory;
+
+    impl ScanSessionFactory for FailingRunScanSessionFactory {
+        fn create(&self, _request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+            Ok(Box::new(FailingRunScanSession))
+        }
+    }
+
+    struct FailingScanSessionCreation;
+
+    impl ScanSessionFactory for FailingScanSessionCreation {
+        fn create(&self, _request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+            Err(TlsError::Other("scanner creation failed".into()))
+        }
+    }
+
     #[tokio::test]
     async fn run_scan_reports_progress_and_runs_the_injected_session() {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1468,6 +1497,52 @@ mod tests {
             .map(|message| message.progress)
             .collect::<Vec<_>>();
         assert_eq!(progress, [5, 10]);
+    }
+
+    #[tokio::test]
+    async fn run_scan_stops_after_scanner_creation_fails() {
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(super::super::InMemoryJobQueue::new(1));
+        let (progress_tx, mut progress_rx) = broadcast::channel(8);
+
+        let error = ScanExecutor::run_scan_with_factory(
+            &job,
+            &queue,
+            &progress_tx,
+            &[],
+            &FailingScanSessionCreation,
+        )
+        .await
+        .expect_err("scanner creation errors should propagate");
+
+        assert!(error.to_string().contains("scanner creation failed"));
+        let progress = std::iter::from_fn(|| progress_rx.try_recv().ok())
+            .map(|message| message.progress)
+            .collect::<Vec<_>>();
+        assert_eq!(progress, [5]);
+    }
+
+    #[tokio::test]
+    async fn run_scan_stops_progress_when_scanner_run_fails() {
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(super::super::InMemoryJobQueue::new(1));
+        let (progress_tx, mut progress_rx) = broadcast::channel(8);
+
+        let error = ScanExecutor::run_scan_with_factory(
+            &job,
+            &queue,
+            &progress_tx,
+            &[],
+            &FailingRunScanSessionFactory,
+        )
+        .await
+        .expect_err("scanner run errors should propagate");
+
+        assert!(error.to_string().contains("scanner run failed"));
+        let progress = std::iter::from_fn(|| progress_rx.try_recv().ok())
+            .map(|message| message.progress)
+            .collect::<Vec<_>>();
+        assert_eq!(progress, [5, 10, 15]);
     }
 
     #[test]
