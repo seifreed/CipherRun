@@ -935,6 +935,32 @@ async fn test_scan_comparator_reports_missing_scan_id() {
 }
 
 #[tokio::test]
+async fn test_scan_comparator_reports_missing_second_scan() {
+    let db = setup_db().await;
+    let now = Utc::now();
+    let (scan1, scan2) = insert_default_scan_pair(&db, "missing-second-scan.test", now).await;
+
+    db.pool()
+        .execute(
+            "DELETE FROM scans WHERE scan_id = ?",
+            vec![BindValue::Int64(scan2)],
+        )
+        .await
+        .expect("second scan should be removed from the fixture");
+
+    let error = ScanComparator::new(db)
+        .compare_scans(scan1, scan2)
+        .await
+        .expect_err("a missing second scan should fail comparison");
+
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("Scan {scan2} not found"))
+    );
+}
+
+#[tokio::test]
 async fn test_scan_comparator_protocol_and_cipher_diffs_are_order_stable() {
     let db = setup_db().await;
     let now = Utc::now();
