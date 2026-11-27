@@ -8,6 +8,21 @@ use crate::db::analytics::rating_category::rating_category_rank;
 use crate::db::connection::DatabasePool;
 use crate::db::{RatingRecord, ScanRecord};
 use std::collections::BTreeMap;
+use std::future::Future;
+
+async fn load_rating_pair<F, Fut>(
+    scan_id_1: i64,
+    scan_id_2: i64,
+    mut load: F,
+) -> crate::Result<(Vec<RatingRecord>, Vec<RatingRecord>)>
+where
+    F: FnMut(i64) -> Fut,
+    Fut: Future<Output = crate::Result<Vec<RatingRecord>>>,
+{
+    let ratings_1 = load(scan_id_1).await?;
+    let ratings_2 = load(scan_id_2).await?;
+    Ok((ratings_1, ratings_2))
+}
 
 impl ScanComparator {
     pub(crate) async fn compare_ratings(
@@ -20,8 +35,8 @@ impl ScanComparator {
         let overall_changed = scan_1.overall_grade != scan_2.overall_grade
             || scan_1.overall_score != scan_2.overall_score;
 
-        let ratings1 = self.get_ratings(scan_id_1).await?;
-        let ratings2 = self.get_ratings(scan_id_2).await?;
+        let (ratings1, ratings2) =
+            load_rating_pair(scan_id_1, scan_id_2, |scan_id| self.get_ratings(scan_id)).await?;
 
         let mut ratings1_by_category: BTreeMap<String, &RatingRecord> = BTreeMap::new();
         for rating in &ratings1 {
@@ -315,5 +330,25 @@ mod tests {
             .expect_err("a missing SQLite ratings table should fail comparison");
 
         assert!(error.to_string().contains("Failed to fetch ratings"));
+    }
+
+    #[tokio::test]
+    async fn second_ratings_query_error_is_propagated_after_first_query_succeeds() {
+        let mut loaded_scan_ids = Vec::new();
+        let error = load_rating_pair(1, 2, |scan_id| {
+            loaded_scan_ids.push(scan_id);
+            async move {
+                if scan_id == 1 {
+                    Ok(Vec::new())
+                } else {
+                    Err(crate::TlsError::Other("second ratings query failed".into()))
+                }
+            }
+        })
+        .await
+        .expect_err("the second ratings query failure should propagate");
+
+        assert_eq!(loaded_scan_ids, [1, 2]);
+        assert!(error.to_string().contains("second ratings query failed"));
     }
 }
