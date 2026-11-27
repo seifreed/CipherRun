@@ -283,6 +283,46 @@ mod tests {
         })
     }
 
+    fn server_certificate_handshake() -> Vec<u8> {
+        let rsa = Rsa::generate(1024).expect("RSA key should generate");
+        let pkey = PKey::from_rsa(rsa).expect("PKey should build");
+        let mut name = X509NameBuilder::new().expect("name builder should build");
+        name.append_entry_by_text("CN", "robot.test")
+            .expect("CN should set");
+        let name = name.build();
+
+        let mut builder = X509Builder::new().expect("X509 builder should build");
+        builder.set_version(2).expect("version should set");
+        builder.set_subject_name(&name).expect("subject should set");
+        builder.set_issuer_name(&name).expect("issuer should set");
+        builder.set_pubkey(&pkey).expect("pubkey should set");
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).expect("not_before should build"))
+            .expect("not_before should set");
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).expect("not_after should build"))
+            .expect("not_after should set");
+        builder
+            .sign(&pkey, MessageDigest::sha256())
+            .expect("cert should sign");
+        let cert_der = builder.build().to_der().expect("cert DER should serialize");
+
+        let mut certificate_body = Vec::new();
+        certificate_body.extend_from_slice(&((cert_der.len() + 3) as u32).to_be_bytes()[1..]);
+        certificate_body.extend_from_slice(&(cert_der.len() as u32).to_be_bytes()[1..]);
+        certificate_body.extend_from_slice(&cert_der);
+
+        let mut handshake = vec![0x0b];
+        handshake.extend_from_slice(&(certificate_body.len() as u32).to_be_bytes()[1..]);
+        handshake.extend_from_slice(&certificate_body);
+        handshake.extend_from_slice(&[0x0e, 0x00, 0x00, 0x00]);
+
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+        record.extend_from_slice(&handshake);
+        record
+    }
+
     #[test]
     fn test_robot_status() {
         assert_eq!(RobotStatus::Vulnerable, RobotStatus::Vulnerable);
@@ -489,5 +529,67 @@ mod tests {
         assert_eq!(&response, &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46]);
 
         writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_invalid_rsa_probe_completes_against_local_tls_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        let certificate_handshake = server_certificate_handshake();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            let mut buffer = [0; 4096];
+            let client_hello_bytes = socket
+                .read(&mut buffer)
+                .await
+                .expect("ClientHello should be read");
+            assert!(client_hello_bytes > 0, "ClientHello should not be empty");
+            socket
+                .write_all(&certificate_handshake)
+                .await
+                .expect("certificate handshake should be sent");
+            let client_flight_bytes = socket
+                .read(&mut buffer)
+                .await
+                .expect("client key exchange should be read");
+            assert!(client_flight_bytes > 0, "client flight should not be empty");
+            socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46])
+                .await
+                .expect("alert should be sent");
+        });
+
+        let target = Target::with_ips("robot.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test target should be valid");
+        let tester = RobotTester::new(target);
+        let response = tester
+            .send_invalid_rsa_ciphertext_addr(addr, 1)
+            .await
+            .expect("local ROBOT probe should complete")
+            .expect("peer alert should be returned");
+        server.await.expect("mock server should finish");
+
+        assert_eq!(response, [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46]);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_rsa_probe_returns_none_when_connect_fails() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+        drop(listener);
+        let target = Target::with_ips("robot.test".to_string(), addr.port(), vec![addr.ip()])
+            .expect("test target should be valid");
+
+        let response = RobotTester::new(target)
+            .send_invalid_rsa_ciphertext_addr(addr, 0)
+            .await
+            .expect("connection failure should remain an absent sample");
+
+        assert!(response.is_none());
     }
 }
