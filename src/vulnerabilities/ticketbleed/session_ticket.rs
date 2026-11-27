@@ -297,6 +297,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_handshake_bodies_that_exceed_the_containing_record() {
+        let oversized_handshake = record(0x16, &[0x04, 0x00, 0x00, 0x01]);
+
+        let extract_error = extract(&oversized_handshake)
+            .expect_err("handshake body cannot extend beyond its TLS record");
+        assert!(
+            extract_error
+                .to_string()
+                .contains("handshake length exceeds record")
+        );
+
+        let presence_error = is_present(&oversized_handshake)
+            .expect_err("ticket presence checks must enforce the record boundary");
+        assert!(
+            presence_error
+                .to_string()
+                .contains("handshake length exceeds record")
+        );
+    }
+
+    #[test]
     fn rejects_truncated_or_oversized_ticket_data() {
         let short_body = record(0x16, &message(0x04, &[0; 5]));
         assert!(extract(&short_body).is_err());
