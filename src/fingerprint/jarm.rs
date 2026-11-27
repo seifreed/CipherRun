@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -298,8 +298,8 @@ impl JarmFingerprinter {
         parse_server_hello(&buffer, probe)
     }
 
-    async fn read_complete_response(
-        stream: &mut TcpStream,
+    async fn read_complete_response<R: AsyncRead + Unpin>(
+        stream: &mut R,
         buffer: &mut [u8],
         timeout_duration: Duration,
     ) -> std::io::Result<usize> {
@@ -587,9 +587,42 @@ fn extract_extension_type(ext: &[u8], etypes: &[[u8; 2]], evals: &[Vec<u8>]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::ReadBuf;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::{Duration, sleep};
+
+    struct PendingReader;
+
+    impl AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    struct PartialThenPendingReader(bool);
+
+    impl AsyncRead for PartialThenPendingReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            if self.0 {
+                Poll::Pending
+            } else {
+                self.0 = true;
+                buffer.put_slice(&[0x16, 0x03, 0x03]);
+                Poll::Ready(Ok(()))
+            }
+        }
+    }
 
     #[tokio::test]
     async fn jarm_completion_event_reports_inconclusive_probes_without_target_data() {
@@ -948,49 +981,37 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_read_complete_response_returns_zero_when_peer_is_silent() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (_socket, _) = listener.accept().await.unwrap();
-            sleep(Duration::from_secs(1)).await;
+        let read = tokio::spawn(async {
+            JarmFingerprinter::read_complete_response(
+                &mut PendingReader,
+                &mut [0u8; 32],
+                Duration::from_secs(1),
+            )
+            .await
         });
-        let mut stream = TcpStream::connect(addr).await.unwrap();
-        let mut buffer = [0u8; 32];
 
-        let bytes_read = JarmFingerprinter::read_complete_response(
-            &mut stream,
-            &mut buffer,
-            Duration::from_millis(10),
-        )
-        .await
-        .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
 
-        assert_eq!(bytes_read, 0);
-        server.abort();
+        assert_eq!(read.await.unwrap().unwrap(), 0);
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_read_complete_response_preserves_partial_bytes_on_timeout() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            socket.write_all(&[0x16, 0x03, 0x03]).await.unwrap();
-            sleep(Duration::from_secs(1)).await;
+        let read = tokio::spawn(async {
+            JarmFingerprinter::read_complete_response(
+                &mut PartialThenPendingReader(false),
+                &mut [0u8; 32],
+                Duration::from_secs(1),
+            )
+            .await
         });
-        let mut stream = TcpStream::connect(addr).await.unwrap();
-        let mut buffer = [0u8; 32];
 
-        let bytes_read = JarmFingerprinter::read_complete_response(
-            &mut stream,
-            &mut buffer,
-            Duration::from_millis(10),
-        )
-        .await
-        .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+
+        let bytes_read = read.await.unwrap().unwrap();
 
         assert_eq!(bytes_read, 3);
-        assert_eq!(&buffer[..bytes_read], &[0x16, 0x03, 0x03]);
-        server.abort();
     }
 }

@@ -794,6 +794,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_websocket_closes_on_failure_and_cancellation() {
+        let (tx, _) = broadcast::channel(8);
+        let state = Arc::new(WsState {
+            progress_tx: tx.clone(),
+            ping_interval_seconds: 30,
+        });
+        let (url, shutdown) = start_test_server(state).await;
+
+        for (scan_id, terminal_message) in [
+            (
+                "failed-scan",
+                ProgressMessage::failed("failed-scan", "scan failed"),
+            ),
+            (
+                "cancelled-scan",
+                ProgressMessage::cancelled("cancelled-scan", 42),
+            ),
+        ] {
+            let (mut socket, _) = tokio_tungstenite::connect_async(format!("{url}/{scan_id}"))
+                .await
+                .expect("scan websocket should connect");
+            let connected = next_text(&mut socket).await;
+            assert_eq!(connected["scan_id"], scan_id);
+
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while tx.receiver_count() == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("scan websocket should subscribe to progress");
+            tx.send(terminal_message)
+                .expect("terminal progress should broadcast");
+
+            let terminal = next_text(&mut socket).await;
+            assert_eq!(
+                terminal["msg_type"],
+                if scan_id == "failed-scan" {
+                    "failed"
+                } else {
+                    "cancelled"
+                }
+            );
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(2), socket.next())
+                    .await
+                    .expect("terminal scan websocket should close")
+                    .expect("close frame should be received")
+                    .expect("websocket receive should succeed"),
+                ClientMessage::Close(_)
+            ));
+        }
+
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test]
     async fn test_scan_websocket_reports_lag_and_closes() {
         let (tx, _) = broadcast::channel(1);
         let state = Arc::new(WsState {
