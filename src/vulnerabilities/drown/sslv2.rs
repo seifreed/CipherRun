@@ -229,4 +229,52 @@ mod tests {
             Sslv2Status::NotSupported
         );
     }
+
+    #[test]
+    fn client_hello_encodes_the_ssl2_probe_fields() {
+        let hello = client_hello();
+
+        assert_eq!(hello.len(), 42);
+        assert_eq!(hello[0] & 0x80, 0x80);
+        assert_eq!(
+            u16::from_be_bytes([hello[0] & 0x7f, hello[1]]) as usize,
+            hello.len() - 2
+        );
+        assert_eq!(&hello[2..5], &[0x01, 0x00, 0x02]);
+        assert_eq!(u16::from_be_bytes([hello[5], hello[6]]), 15);
+        assert_eq!(u16::from_be_bytes([hello[7], hello[8]]), 0);
+        assert_eq!(u16::from_be_bytes([hello[9], hello[10]]), 16);
+        assert_eq!(
+            &hello[11..26],
+            &[
+                0x07, 0x00, 0xc0, 0x01, 0x00, 0x80, 0x03, 0x00, 0x80, 0x06, 0x00, 0x40, 0x04, 0x00,
+                0x80,
+            ]
+        );
+        assert_eq!(
+            &hello[26..],
+            &(0_u8..16).map(|value| value * 13).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn export_client_hello_uses_export_ciphers_and_distinct_challenge() {
+        let hello = export_client_hello();
+
+        assert_eq!(hello.len(), 33);
+        assert_eq!(hello[0] & 0x80, 0x80);
+        assert_eq!(
+            u16::from_be_bytes([hello[0] & 0x7f, hello[1]]) as usize,
+            hello.len() - 2
+        );
+        assert_eq!(&hello[2..5], &[0x01, 0x00, 0x02]);
+        assert_eq!(u16::from_be_bytes([hello[5], hello[6]]), 6);
+        assert_eq!(u16::from_be_bytes([hello[7], hello[8]]), 0);
+        assert_eq!(u16::from_be_bytes([hello[9], hello[10]]), 16);
+        assert_eq!(&hello[11..17], &[0x02, 0x00, 0x80, 0x04, 0x00, 0x80]);
+        assert_eq!(
+            &hello[17..],
+            &(0_u8..16).map(|value| value * 17).collect::<Vec<_>>()
+        );
+    }
 }
