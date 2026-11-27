@@ -215,10 +215,27 @@ mod tests {
     fn test_get_store_by_name() {
         let stores = CA_STORES.as_ref();
 
-        for name in "mozilla apple android windows java microsoft jdk".split_whitespace() {
+        for name in "mozilla firefox nss apple macos ios android linux windows microsoft java jdk"
+            .split_whitespace()
+        {
             assert!(stores.get_store(name).is_some(), "{name}");
         }
         assert!(stores.get_store("unknown").is_none());
+    }
+
+    #[test]
+    fn test_empty_stores_have_all_names_and_no_certificates() {
+        let stores = CAStores::empty();
+
+        assert_eq!(
+            stores
+                .all_stores()
+                .iter()
+                .map(|store| store.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Mozilla", "Apple", "Android", "Linux", "Microsoft", "Java"]
+        );
+        assert_eq!(stores.total_certificates(), 0);
     }
 
     #[test]
@@ -229,6 +246,8 @@ mod tests {
             assert!(!cert.subject.is_empty());
             assert!(!cert.issuer.is_empty());
             assert!(!cert.serial.is_empty());
+            assert!(!cert.not_before.is_empty());
+            assert!(!cert.not_after.is_empty());
             assert!(!cert.der.is_empty());
         }
     }
@@ -264,6 +283,16 @@ mod tests {
         let err = CAStore::from_pem("Empty", pem).expect_err("empty CA store should fail");
 
         assert!(format!("{err}").contains("contains no certificates"));
+    }
+
+    #[test]
+    fn test_ca_store_rejects_malformed_pem_and_invalid_certificate_der() {
+        let malformed_pem =
+            "-----BEGIN CERTIFICATE-----\n%%% not base64 %%%\n-----END CERTIFICATE-----\n";
+        assert!(CAStore::from_pem("Malformed", malformed_pem).is_err());
+
+        let invalid_der = ::pem::encode(&::pem::Pem::new("CERTIFICATE", vec![0x30, 0x00]));
+        assert!(CAStore::from_pem("Invalid DER", &invalid_der).is_err());
     }
 
     #[test]
