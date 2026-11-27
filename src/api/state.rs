@@ -1495,6 +1495,29 @@ mod tests {
     }
 
     #[test]
+    fn api_stats_record_extreme_durations_without_overflowing_histograms() {
+        let mut stats = ApiStats::default();
+        let beyond_scan_bucket = SCAN_DURATION_BUCKETS_MS.last().unwrap() + 1;
+        let beyond_response_bucket = HTTP_RESPONSE_DURATION_BUCKETS_MS.last().unwrap() + 1;
+
+        stats.record_completed_scan(beyond_scan_bucket);
+        stats.record_response(beyond_response_bucket);
+
+        assert_eq!(stats.completed_scans, 1);
+        assert_eq!(stats.total_scan_duration_ms, beyond_scan_bucket);
+        assert_eq!(
+            stats.scan_duration_buckets,
+            [0; SCAN_DURATION_BUCKETS_MS.len()]
+        );
+        assert_eq!(stats.total_responses, 1);
+        assert_eq!(stats.total_response_time_ms, beyond_response_bucket);
+        assert_eq!(
+            stats.http_response_duration_buckets,
+            [0; HTTP_RESPONSE_DURATION_BUCKETS_MS.len()]
+        );
+    }
+
+    #[test]
     fn tenant_scoped_stats_do_not_cross_contaminate_same_principal() {
         let mut stats = ApiStats::default();
         stats.increment_scans_for_owner("shared-principal", Some("tenant-a"));
