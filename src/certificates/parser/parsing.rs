@@ -478,6 +478,32 @@ mod tests {
     use crate::certificates::revocation::cert_with_raw_extension_der;
     use crate::utils::test_support::example_com_loopback_target;
 
+    fn certificate_with_public_key(
+        public_key: &openssl::pkey::PKey<openssl::pkey::Private>,
+        signing_key: &openssl::pkey::PKey<openssl::pkey::Private>,
+        digest: openssl::hash::MessageDigest,
+    ) -> Vec<u8> {
+        use openssl::asn1::Asn1Time;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "algorithm.example.com")
+            .unwrap();
+        let name = name.build();
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(public_key).unwrap();
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        builder
+            .set_not_after(&Asn1Time::days_from_now(30).unwrap())
+            .unwrap();
+        builder.sign(signing_key, digest).unwrap();
+        builder.build().to_der().unwrap()
+    }
+
     async fn local_tls_parser() -> (CertificateParser, tokio::task::JoinHandle<()>) {
         use tokio::net::TcpListener;
         use tokio_rustls::TlsAcceptor;
@@ -887,6 +913,46 @@ mod tests {
         assert_eq!(info.public_key_algorithm, "ed25519");
         assert_eq!(info.public_key_size, None);
         assert_eq!(info.rsa_exponent, None);
+    }
+
+    #[test]
+    fn test_parse_certificate_ed448_key_normalizes_algorithm_name() {
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+
+        let key = PKey::generate_ed448().unwrap();
+        let der = certificate_with_public_key(&key, &key, MessageDigest::null());
+
+        let info = CertificateParser::parse_certificate(&der).unwrap();
+        assert_eq!(info.public_key_algorithm, "ed448");
+    }
+
+    #[test]
+    fn test_parse_certificate_dsa_key_normalizes_algorithm_name() {
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+
+        let dsa = PKey::from_dsa(openssl::dsa::Dsa::generate(1024).unwrap()).unwrap();
+        let signer = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let der = certificate_with_public_key(&dsa, &signer, MessageDigest::sha256());
+
+        let info = CertificateParser::parse_certificate(&der).unwrap();
+        assert_eq!(info.public_key_algorithm, "dsaEncryption");
+    }
+
+    #[test]
+    fn test_parse_certificate_unsupported_public_key_falls_back_to_oid() {
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+
+        let key = PKey::generate_x25519().unwrap();
+        let signer = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let der = certificate_with_public_key(&key, &signer, MessageDigest::sha256());
+
+        let info = CertificateParser::parse_certificate(&der).unwrap();
+        assert_eq!(info.public_key_algorithm, "1.3.101.110");
     }
 
     #[test]
