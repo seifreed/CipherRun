@@ -506,21 +506,11 @@ mod tests {
 
     async fn local_tls_parser() -> (CertificateParser, tokio::task::JoinHandle<()>) {
         use tokio::net::TcpListener;
-        use tokio_rustls::TlsAcceptor;
 
         let _ = crate::utils::rustls_provider::install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-        let cert_der = cert.cert.der().clone();
-        let key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(
-            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
-        );
-        let config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert_der], key_der)
-            .unwrap();
-        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let acceptor = local_tls_acceptor();
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             acceptor.accept(stream).await.unwrap();
@@ -533,6 +523,66 @@ mod tests {
         )
         .unwrap();
         (CertificateParser::new(target), server)
+    }
+
+    fn local_tls_acceptor() -> tokio_rustls::TlsAcceptor {
+        use tokio_rustls::TlsAcceptor;
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(
+            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+        TlsAcceptor::from(std::sync::Arc::new(config))
+    }
+
+    async fn local_smtp_starttls_parser() -> (CertificateParser, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let acceptor = local_tls_acceptor();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream
+                .write_all(b"220 localhost ESMTP ready\r\n")
+                .await
+                .unwrap();
+
+            let mut command = [0; 256];
+            let _ = stream.read(&mut command).await.unwrap();
+            stream
+                .write_all(b"250-localhost\r\n250-STARTTLS\r\n250 OK\r\n")
+                .await
+                .unwrap();
+
+            let _ = stream.read(&mut command).await.unwrap();
+            stream
+                .write_all(b"220 Ready to start TLS\r\n")
+                .await
+                .unwrap();
+            acceptor.accept(stream).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        (
+            CertificateParser::new(target).with_starttls(
+                Some(crate::starttls::StarttlsProtocol::SMTP),
+                Some("localhost".to_string()),
+            ),
+            server,
+        )
     }
 
     #[test]
@@ -606,6 +656,63 @@ mod tests {
         let leaf = chain.leaf().expect("Chain should have a leaf certificate");
         assert!(!leaf.subject.is_empty());
         assert!(!leaf.san.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_certificate_chain_negotiates_starttls_before_tls() {
+        let (parser, server) = local_smtp_starttls_parser().await;
+
+        let chain = parser
+            .get_certificate_chain()
+            .await
+            .expect("SMTP STARTTLS should upgrade before the TLS handshake");
+        server.await.unwrap();
+
+        assert_eq!(chain.chain_length, 1);
+        assert!(
+            chain
+                .leaf()
+                .unwrap()
+                .san
+                .iter()
+                .any(|name| name == "localhost")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_certificate_chain_reports_starttls_negotiation_failure() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream
+                .write_all(b"421 service unavailable\r\n")
+                .await
+                .unwrap();
+        });
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+
+        let error = CertificateParser::new(target)
+            .with_starttls(
+                Some(crate::starttls::StarttlsProtocol::SMTP),
+                Some("localhost".to_string()),
+            )
+            .get_certificate_chain()
+            .await
+            .expect_err("a rejected SMTP greeting should fail before TLS");
+        server.await.unwrap();
+
+        assert!(
+            matches!(error, crate::TlsError::StarttlsError { protocol, .. } if protocol == "SMTP")
+        );
     }
 
     #[tokio::test]
