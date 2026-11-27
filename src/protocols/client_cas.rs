@@ -408,6 +408,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ca_list_accepts_empty_certificate_authority_list() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+        let request = [13, 0, 0, 5, 0, 0, 0, 0, 0];
+
+        let cas = tester
+            .parse_ca_list(&request)
+            .expect("an empty but well-formed CA list is valid");
+
+        assert!(cas.is_empty());
+    }
+
+    #[test]
     fn test_extract_dn_fields_empty() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
@@ -468,6 +487,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_dn_fields_rejects_indefinite_and_truncated_der_lengths() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+
+        let indefinite = [0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x80];
+        assert!(tester.extract_dn_fields(&indefinite).is_err());
+
+        let truncated_long_form = [0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x82, 0x01];
+        assert!(tester.extract_dn_fields(&truncated_long_form).is_err());
+    }
+
+    #[test]
     fn test_parse_certificate_request() {
         let tester = ClientCAsTester::new(
             Target::with_ips(
@@ -524,6 +561,34 @@ mod tests {
         assert_eq!(cas.len(), 1);
         assert_eq!(cas[0].common_name.as_deref(), Some("CN3"));
         assert_eq!(cas[0].organization.as_deref(), Some("ORG3"));
+    }
+
+    #[test]
+    fn test_find_certificate_request_reassembles_handshake_across_records() {
+        let tester = ClientCAsTester::new(
+            Target::with_ips(
+                "example.test".to_string(),
+                443,
+                vec!["127.0.0.1".parse().expect("valid IP")],
+            )
+            .expect("test assertion should succeed"),
+        );
+        let handshake = build_certificate_request(&build_dn("split", "records"));
+        let split = 2;
+        let mut records = Vec::new();
+        for fragment in [&handshake[..split], &handshake[split..]] {
+            records.extend_from_slice(&[0x16, 0x03, 0x03]);
+            records.extend_from_slice(&(fragment.len() as u16).to_be_bytes());
+            records.extend_from_slice(fragment);
+        }
+
+        let cas = tester
+            .find_certificate_request(&records)
+            .expect("fragmented handshake should parse")
+            .expect("CertificateRequest should be found");
+
+        assert_eq!(cas.len(), 1);
+        assert_eq!(cas[0].common_name.as_deref(), Some("split"));
     }
 
     #[test]

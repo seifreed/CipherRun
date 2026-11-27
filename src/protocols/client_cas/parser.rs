@@ -112,19 +112,15 @@ impl ClientCAsTester {
     }
 
     pub(super) fn parse_ca_list(&self, data: &[u8]) -> crate::Result<Vec<ClientCA>> {
-        if data.len() < 10 {
+        // A CertificateRequest with empty certificate types, signature
+        // algorithms, and CA list is nine bytes including its handshake header.
+        if data.len() < 9 {
             return Err(crate::TlsError::ParseError {
                 message: "CertificateRequest too short".to_string(),
             });
         }
 
         let mut pos = 4;
-
-        if pos >= data.len() {
-            return Err(crate::TlsError::ParseError {
-                message: "CertificateRequest missing certificate types".to_string(),
-            });
-        }
         let cert_types_len =
             parse_bytes::read_u8_at(data, pos, "CertificateRequest certificate types")? as usize;
         pos += 1;
