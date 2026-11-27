@@ -16,12 +16,16 @@ pub(crate) async fn validate_revocation_http_url(
     uri: &str,
     timeout: Duration,
 ) -> Result<ValidatedRevocationHttp> {
-    if raw_revocation_host(uri).is_some_and(looks_like_obfuscated_ip) {
+    if raw_revocation_host(uri)
+        .is_some_and(|host| !host.is_empty() && looks_like_obfuscated_ip(host))
+    {
         return Err(TlsError::InvalidInput {
             message: "Revocation URL must not use obfuscated IP notation".to_string(),
         });
     }
-    if raw_revocation_host(uri).is_some_and(looks_like_dotted_ip_literal) {
+    if raw_revocation_host(uri)
+        .is_some_and(|host| !host.is_empty() && looks_like_dotted_ip_literal(host))
+    {
         return Err(TlsError::InvalidInput {
             message: "Revocation URL must not use dotted IP literals".to_string(),
         });
@@ -42,9 +46,12 @@ pub(crate) async fn validate_revocation_http_url(
         });
     }
 
-    let host = url.host_str().ok_or_else(|| TlsError::InvalidInput {
-        message: "Revocation URL must include a host".to_string(),
-    })?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| TlsError::InvalidInput {
+            message: "Revocation URL must include a host".to_string(),
+        })?
+        .to_string();
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_private_ip(&ip) {
             return Err(TlsError::InvalidInput {
@@ -52,7 +59,7 @@ pub(crate) async fn validate_revocation_http_url(
             });
         }
     } else {
-        validate_hostname(host).map_err(|error| TlsError::InvalidInput {
+        validate_hostname(&host).map_err(|error| TlsError::InvalidInput {
             message: format!("Invalid revocation URL host: {error}"),
         })?;
         let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
@@ -71,7 +78,16 @@ pub(crate) async fn validate_revocation_http_url(
         .ok_or_else(|| TlsError::InvalidInput {
             message: "Revocation URL must include a valid port".to_string(),
         })?;
-    let addrs: Vec<_> = lookup_host((host, port)).await?.collect();
+    let addrs: Vec<_> = lookup_host((host.as_str(), port)).await?.collect();
+    validate_resolved_revocation_http_url(url, &host, timeout, addrs)
+}
+
+fn validate_resolved_revocation_http_url(
+    url: Url,
+    host: &str,
+    timeout: Duration,
+    addrs: Vec<SocketAddr>,
+) -> Result<ValidatedRevocationHttp> {
     if addrs.is_empty() {
         return Err(TlsError::InvalidInput {
             message: "Revocation URL host did not resolve".to_string(),
@@ -147,6 +163,11 @@ mod tests {
             .await
             .expect_err("internal host should be rejected");
         assert!(err.to_string().contains("private/local hosts"));
+
+        let err = validate_revocation_http_url("http://crl.local/crl", Duration::from_secs(1))
+            .await
+            .expect_err("local host should be rejected");
+        assert!(err.to_string().contains("private/local hosts"));
     }
 
     #[tokio::test]
@@ -177,6 +198,88 @@ mod tests {
         .expect_err("credentialed revocation URL should be rejected");
 
         assert!(err.to_string().contains("credentials"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_revocation_http_url_rejects_invalid_input() {
+        for (uri, expected) in [
+            ("http://", "Invalid revocation URL"),
+            ("ftp://crl.example.com/file", "must use http or https"),
+            ("http://bad..host/file", "Invalid revocation URL host"),
+            ("http://example.com:bad/file", "Invalid revocation URL"),
+        ] {
+            let error = validate_revocation_http_url(uri, Duration::from_secs(1))
+                .await
+                .expect_err("invalid revocation URL should be rejected");
+            assert!(error.to_string().contains(expected), "{uri}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_validate_resolved_revocation_http_url_rejects_empty_and_private_addresses() {
+        let url = Url::parse("http://crl.example.com/revocation").expect("URL should parse");
+        let error = validate_resolved_revocation_http_url(
+            url.clone(),
+            "crl.example.com",
+            Duration::from_secs(1),
+            Vec::new(),
+        )
+        .expect_err("empty DNS result should be rejected");
+        assert!(error.to_string().contains("did not resolve"));
+
+        for address in ["127.0.0.1:80", "10.0.0.1:80", "[::1]:80"] {
+            let error = validate_resolved_revocation_http_url(
+                url.clone(),
+                "crl.example.com",
+                Duration::from_secs(1),
+                vec![address.parse().expect("socket address should parse")],
+            )
+            .expect_err("private DNS result should be rejected");
+            assert!(error.to_string().contains("private/internal IP"));
+        }
+    }
+
+    #[test]
+    fn test_validate_resolved_revocation_http_url_builds_client_for_public_addresses() {
+        let url = Url::parse("https://crl.example.com/revocation").expect("URL should parse");
+        let validated = validate_resolved_revocation_http_url(
+            url.clone(),
+            "crl.example.com",
+            Duration::from_secs(1),
+            vec![
+                "[2001:4860:4860::8888]:443"
+                    .parse()
+                    .expect("public IPv6 address should parse"),
+                "93.184.216.34:443"
+                    .parse()
+                    .expect("public IPv4 address should parse"),
+            ],
+        )
+        .expect("public resolved addresses should produce a client");
+
+        assert_eq!(validated.url, url);
+        assert!(
+            validated
+                .client
+                .get("https://crl.example.com/revocation")
+                .build()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_raw_revocation_host_extracts_authorities_safely() {
+        for (uri, expected) in [
+            (
+                "https://user:pass@example.com:443/path?query",
+                Some("example.com"),
+            ),
+            ("http://[2001:db8::1]:80/path", Some("2001:db8::1")),
+            ("http://example.com/path#fragment", Some("example.com")),
+            ("not-a-url", None),
+        ] {
+            assert_eq!(raw_revocation_host(uri), expected, "{uri}");
+        }
     }
 
     #[test]
