@@ -834,6 +834,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_streamer_constructor_rejects_invalid_config_before_network_access() {
+        let error = match CtStreamer::new(CtConfig {
+            poll_interval: Duration::ZERO,
+            ..CtConfig::default()
+        })
+        .await
+        {
+            Ok(_) => panic!("a zero CT polling interval must fail initialization"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, TlsError::InvalidInput { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("poll interval must be greater than 0")
+        );
+    }
+
+    #[tokio::test]
     async fn source_shutdown_logs_duration_and_outcome() {
         let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()

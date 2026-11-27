@@ -98,7 +98,8 @@ no external service. IP literals are rejected before DNS resolution, avoiding a
 redundant private-IP branch in the resolver.
 Streamer initialization is also covered with loopback source lists for both usable
 and empty inventories; source delivery covers valid entries and closed output
-channels without contacting external CT services.
+channels without contacting external CT services. The public constructor is tested
+to reject invalid polling configuration before it attempts network access.
 
 The HTTP API stack is enabled by the `api` feature (included by default). A
 reduced CLI/library build can disable it with `--no-default-features`; API
