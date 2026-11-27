@@ -91,6 +91,8 @@ main package's durable queue and scan executor.
 Certificate Transparency streaming is enabled by default and can be removed
 from a reduced build with `--no-default-features`; `monitoring` depends on
 the `ct` feature because CT discovery feeds the monitor sink.
+CT log-list loading is tested with loopback HTTP responses and injected DNS
+outcomes, so public/private filtering and malformed-list failures need no external service.
 
 The HTTP API stack is enabled by the `api` feature (included by default). A
 reduced CLI/library build can disable it with `--no-default-features`; API

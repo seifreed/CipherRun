@@ -9,6 +9,7 @@ use crate::security::is_private_ip;
 use crate::security::url::raw_url_host;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::IpAddr;
 use tokio::net::lookup_host;
 use tracing::{info, warn};
@@ -103,11 +104,22 @@ impl SourceManager {
 
     /// Fetch CT log sources from Google's log list
     pub async fn fetch_sources(&mut self) -> Result<()> {
+        self.fetch_sources_from(CT_LOG_LIST_URL, |url| async move {
+            ct_log_url_resolves_publicly(&url).await
+        })
+        .await
+    }
+
+    async fn fetch_sources_from<F, Fut>(&mut self, source_list_url: &str, resolve: F) -> Result<()>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<bool>>,
+    {
         let started = std::time::Instant::now();
 
         let response = self
             .client
-            .get(CT_LOG_LIST_URL)
+            .get(source_list_url)
             .send()
             .await
             .map_err(|error| {
@@ -178,7 +190,7 @@ impl SourceManager {
                         );
                         continue;
                     }
-                    match ct_log_url_resolves_publicly(&log.url).await {
+                    match resolve(log.url.clone()).await {
                         Ok(true) => {}
                         Ok(false) => {
                             warn!(
@@ -392,6 +404,39 @@ struct UsableState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn serve_ct_log_response(status: u16, body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local HTTP fixture should bind");
+        let address = listener
+            .local_addr()
+            .expect("local HTTP fixture should have an address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("HTTP client should connect to local fixture");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let reason = if status == 200 {
+                "OK"
+            } else {
+                "Service Unavailable"
+            };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("HTTP fixture response should be written");
+        });
+        format!("http://{address}/log-list.json")
+    }
 
     #[test]
     fn test_log_source_health() {
@@ -451,6 +496,92 @@ mod tests {
         let manager = SourceManager::new();
         assert_eq!(manager.total_sources(), 0);
         assert_eq!(manager.healthy_sources_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn fetch_sources_parses_and_filters_entries_with_injected_resolution() {
+        let body = r#"{
+            "operators": [{
+                "name": "Example operator",
+                "logs": [
+                    {
+                        "log_id": "public",
+                        "url": "https://ct.example.com",
+                        "state": {"usable": {}}
+                    },
+                    {
+                        "log_id": "private",
+                        "url": "https://private.example.com",
+                        "state": {"usable": {}}
+                    },
+                    {
+                        "log_id": "dns-error",
+                        "url": "https://unresolved.example.com",
+                        "state": {"usable": {}}
+                    },
+                    {
+                        "log_id": "invalid-url",
+                        "url": "file:///tmp/log",
+                        "state": {"usable": {}}
+                    },
+                    {
+                        "log_id": "unusable",
+                        "url": "https://ignored.example.com"
+                    }
+                ]
+            }]
+        }"#;
+        let url = serve_ct_log_response(200, body).await;
+        let mut manager = SourceManager::new();
+
+        manager
+            .fetch_sources_from(&url, |log_url| {
+                std::future::ready(match log_url.as_str() {
+                    "https://ct.example.com" => Ok(true),
+                    "https://private.example.com" => Ok(false),
+                    "https://unresolved.example.com" => {
+                        Err(TlsError::Other("fixture DNS failure".to_string()))
+                    }
+                    _ => panic!("unexpected log URL passed to resolver: {log_url}"),
+                })
+            })
+            .await
+            .expect("a valid CT log list should be processed");
+
+        assert_eq!(manager.total_sources(), 1);
+        let source = manager
+            .get_source("public")
+            .expect("public usable source should be retained");
+        assert_eq!(source.description, "Example operator CT Log");
+        assert_eq!(source.operator, "Example operator");
+        assert_eq!(source.url, "https://ct.example.com");
+        assert_eq!(source.failure_count, 0);
+        assert!(manager.get_source("private").is_none());
+        assert!(manager.get_source("dns-error").is_none());
+        assert!(manager.get_source("invalid-url").is_none());
+        assert!(manager.get_source("unusable").is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_sources_maps_http_status_and_invalid_json_errors() {
+        let error_url = serve_ct_log_response(503, "temporarily unavailable").await;
+        let mut manager = SourceManager::new();
+        let status_error = manager
+            .fetch_sources_from(&error_url, |_| std::future::ready(Ok(true)))
+            .await
+            .expect_err("non-success HTTP status should fail source loading");
+        assert!(status_error.to_string().contains("503"));
+
+        let invalid_json_url = serve_ct_log_response(200, "not-json").await;
+        let json_error = manager
+            .fetch_sources_from(&invalid_json_url, |_| std::future::ready(Ok(true)))
+            .await
+            .expect_err("malformed JSON should fail source loading");
+        assert!(
+            json_error
+                .to_string()
+                .contains("Failed to parse CT log list")
+        );
     }
 
     #[test]
