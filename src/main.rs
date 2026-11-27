@@ -401,6 +401,7 @@ fn apply_output_preferences(args: &Args) {
 mod tests {
     use super::{color_output_enabled, run_starttls_only};
     use cipherrun::Args;
+    use std::net::TcpListener;
 
     #[test]
     fn test_color_output_enabled() {
@@ -430,5 +431,31 @@ mod tests {
             .await
             .expect_err("invalid IP override should be rejected before connecting");
         assert!(error.to_string().contains("Invalid IP override"));
+    }
+
+    #[tokio::test]
+    async fn starttls_only_uses_ip_override_and_writes_json_output() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local port");
+        let port = listener.local_addr().expect("read local port").port();
+        drop(listener);
+
+        let directory = tempfile::tempdir().expect("create output directory");
+        let output_path = directory.path().join("starttls.json");
+        let mut args = Args::default();
+        args.starttls.smtp = true;
+        args.target = Some(format!("example.invalid:{port}"));
+        args.ip = Some("127.0.0.1".to_string());
+        args.network.allow_private = true;
+        args.output.json = Some(output_path.clone());
+
+        let exit = run_starttls_only(&args)
+            .await
+            .expect("connection failure is represented as a scan result");
+
+        assert!(!exit.is_success());
+        let result: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output_path).expect("read STARTTLS JSON output"))
+                .expect("STARTTLS result is valid JSON");
+        assert_eq!(result["starttls_supported"], false);
     }
 }
