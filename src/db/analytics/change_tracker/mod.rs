@@ -752,7 +752,72 @@ mod tests {
         let database = Arc::new(CipherRunDatabase::from_pool(DatabasePool::Postgres(
             pool.clone(),
         )));
-        let changes = ChangeTracker::new(database)
+        let tracker = ChangeTracker::new(database);
+        assert!(
+            tracker
+                .get_leaf_certificate(1)
+                .await
+                .expect("missing leaf certificate should be a successful empty lookup")
+                .is_none()
+        );
+
+        let now = Utc::now();
+        sqlx::query(
+            "INSERT INTO certificates \
+             (cert_id, fingerprint_sha256, subject, issuer, not_before, not_after, san_domains, \
+              is_ca, key_usage, extended_key_usage, der_bytes, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(101_i64)
+        .bind("leaf-fingerprint")
+        .bind("CN=example.test")
+        .bind("CN=Example CA")
+        .bind(now)
+        .bind(now + chrono::Duration::days(1))
+        .bind(vec!["example.test".to_string()])
+        .bind(false)
+        .bind(vec!["digitalSignature".to_string()])
+        .bind(vec!["serverAuth".to_string()])
+        .bind(vec![0x30_u8, 0x00])
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("leaf certificate should be inserted");
+        sqlx::query(
+            "INSERT INTO scan_certificates (id, scan_id, cert_id, chain_position) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(1_i64)
+        .bind(1_i64)
+        .bind(101_i64)
+        .bind(0_i32)
+        .execute(&pool)
+        .await
+        .expect("leaf certificate should be linked to its scan");
+        sqlx::query(
+            "INSERT INTO scan_certificates (id, scan_id, cert_id, chain_position) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(2_i64)
+        .bind(2_i64)
+        .bind(101_i64)
+        .bind(0_i32)
+        .execute(&pool)
+        .await
+        .expect("same certificate should be linked to the comparison scan");
+
+        let certificate = tracker
+            .get_leaf_certificate(1)
+            .await
+            .expect("leaf certificate should be readable")
+            .expect("linked leaf certificate should be found");
+        assert_eq!(certificate.cert_id, Some(101));
+        assert_eq!(certificate.fingerprint_sha256, "leaf-fingerprint");
+        assert_eq!(certificate.san_domains, ["example.test"]);
+        assert_eq!(certificate.key_usage, ["digitalSignature"]);
+        assert_eq!(certificate.extended_key_usage, ["serverAuth"]);
+
+        let changes = tracker
             .detect_changes_between(1, 2)
             .await
             .expect("all PostgreSQL change sources should be readable");
