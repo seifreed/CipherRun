@@ -67,14 +67,21 @@ mod tests {
         }
     }
 
-    struct PendingReader;
+    struct PendingReader {
+        return_partial_byte: bool,
+    }
 
     impl AsyncRead for PendingReader {
         fn poll_read(
             self: Pin<&mut Self>,
             _cx: &mut Context<'_>,
-            _buffer: &mut ReadBuf<'_>,
+            buffer: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
+            if self.return_partial_byte {
+                self.get_mut().return_partial_byte = false;
+                buffer.put_slice(&[0x16]);
+                return Poll::Ready(Ok(()));
+            }
             Poll::Pending
         }
     }
@@ -158,7 +165,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn complete_record_reader_returns_partial_data_after_timeout() {
-        let mut reader = PendingReader;
+        let mut reader = PendingReader {
+            return_partial_byte: false,
+        };
         let mut buffer = [0; 5];
 
         assert_eq!(
@@ -167,5 +176,21 @@ mod tests {
                 .expect("a timed-out read returns the bytes collected so far"),
             0
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn complete_record_reader_returns_partial_bytes_after_follow_up_timeout() {
+        let mut reader = PendingReader {
+            return_partial_byte: true,
+        };
+        let mut buffer = [0; 5];
+
+        assert_eq!(
+            complete_tls_record(&mut reader, &mut buffer, Duration::from_secs(1))
+                .await
+                .expect("a timed-out follow-up read returns the bytes already collected"),
+            1
+        );
+        assert_eq!(buffer[0], 0x16);
     }
 }
