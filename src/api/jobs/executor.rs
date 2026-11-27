@@ -3041,6 +3041,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finalized_completed_scan_delivers_its_signed_webhook() {
+        let state = Arc::new(WebhookTestState {
+            attempts: AtomicUsize::new(2),
+            signature_valid: AtomicBool::new(true),
+            secret: vec![b's'; 32],
+        });
+        let app = Router::new()
+            .route("/hook", post(retrying_webhook))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let queue = Arc::new(super::super::InMemoryJobQueue::new(2));
+        let mut queued_job = ScanJob::new(
+            "example.com:443".to_string(),
+            ScanOptions::full(),
+            Some(format!("http://{address}/hook")),
+        );
+        queued_job.mark_queued();
+        let job_id = queued_job.id.clone();
+        queue.enqueue(queued_job).await.unwrap();
+        let running_job = queue.dequeue().await.unwrap().unwrap();
+        let executor = ScanExecutor::new(queue.clone(), 1)
+            .with_webhook_signing_secret(Some(state.secret.clone()));
+
+        executor
+            .finalize_scan(queue.clone(), running_job, Ok(ScanResults::default()))
+            .await;
+
+        assert_eq!(state.attempts.load(Ordering::SeqCst), 3);
+        assert!(state.signature_valid.load(Ordering::SeqCst));
+        let completed = queue.get_job(&job_id).await.unwrap().unwrap();
+        assert_eq!(completed.status, ScanStatus::Completed);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn finalized_scan_logs_webhook_transport_failure_safely() {
+        use tracing::instrument::WithSubscriber;
+
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedOutput(output.clone()))
+            .finish();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        let queue = Arc::new(super::super::InMemoryJobQueue::new(2));
+        let mut queued_job = ScanJob::new(
+            "example.com:443".to_string(),
+            ScanOptions::full(),
+            Some(format!("http://{address}/private-hook")),
+        );
+        queued_job.mark_queued();
+        let job_id = queued_job.id.clone();
+        queue.enqueue(queued_job).await.unwrap();
+        let running_job = queue.dequeue().await.unwrap().unwrap();
+        let executor =
+            ScanExecutor::new(queue.clone(), 1).with_webhook_signing_secret(Some(vec![b's'; 32]));
+
+        executor
+            .finalize_scan(queue.clone(), running_job, Ok(ScanResults::default()))
+            .with_subscriber(tracing::Dispatch::new(subscriber))
+            .await;
+
+        assert_eq!(
+            queue.get_job(&job_id).await.unwrap().unwrap().status,
+            ScanStatus::Completed
+        );
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let event = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|event| event["fields"]["event_name"] == "scan_job.webhook.failed")
+            .expect("webhook failure should be logged");
+        assert_eq!(event["fields"]["outcome"], "failed");
+        assert!(!output.contains("private-hook"));
+    }
+
+    #[tokio::test]
     async fn webhook_does_not_retry_permanent_http_failures() {
         let state = Arc::new(WebhookTestState {
             attempts: AtomicUsize::new(0),
