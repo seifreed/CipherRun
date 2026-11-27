@@ -357,6 +357,20 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_scsv_response_covers_malformed_and_alert_variants() {
+        assert!(classify_scsv_response(&[]).inconclusive);
+        assert!(classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x02]).inconclusive);
+        assert!(classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02]).inconclusive);
+        assert!(classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x01, 0x02]).inconclusive);
+        assert!(classify_scsv_response(&[0x16, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56]).vulnerable);
+        assert!(classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x00]).vulnerable);
+        assert!(classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56]).supported);
+        assert!(
+            classify_scsv_response(&[0x15, 0x03, 0x03, 0x00, 0x03, 0x02, 0x56, 0x00]).inconclusive
+        );
+    }
+
+    #[test]
     fn test_baseline_fallback_accepted_rejects_truncated_alert() {
         let target = example_com_target();
         let tester = FallbackScsvTester::new(&target);
@@ -385,6 +399,41 @@ mod tests {
 
         let buffer = [0x16, 0x03, 0x03, 0x00, 0x10, 0x02];
         assert!(!tester.baseline_fallback_accepted(Ok(Ok(6)), &buffer));
+    }
+
+    #[tokio::test]
+    async fn test_baseline_fallback_accepted_rejects_short_reads_and_transport_errors() {
+        let target = example_com_target();
+        let tester = FallbackScsvTester::new(&target);
+        let buffer = [0x16, 0x03, 0x03, 0x00, 0x01, 0x02];
+        let timeout = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .expect_err("pending future should time out");
+
+        assert!(!tester.baseline_fallback_accepted(Ok(Ok(0)), &buffer));
+        assert!(!tester.baseline_fallback_accepted(Ok(Ok(4)), &buffer));
+        assert!(!tester.baseline_fallback_accepted(Ok(Ok(5)), &buffer));
+        assert!(
+            !tester
+                .baseline_fallback_accepted(Ok(Err(std::io::Error::other("read failed"))), &buffer)
+        );
+        assert!(!tester.baseline_fallback_accepted(Err(timeout), &buffer));
+    }
+
+    #[tokio::test]
+    async fn test_baseline_fallback_accepted_record_rejects_empty_and_failed_reads() {
+        let target = example_com_target();
+        let tester = FallbackScsvTester::new(&target);
+        let timeout = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .expect_err("pending future should time out");
+
+        assert!(!tester.baseline_fallback_accepted_record(Ok(Ok(None))));
+        assert!(
+            !tester
+                .baseline_fallback_accepted_record(Ok(Err(std::io::Error::other("read failed"))))
+        );
+        assert!(!tester.baseline_fallback_accepted_record(Err(timeout)));
     }
 
     #[tokio::test]
@@ -443,6 +492,32 @@ mod tests {
             .expect("read should succeed")
             .expect("record should be complete");
         assert_eq!(record, vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x56]);
+    }
+
+    #[tokio::test]
+    async fn test_read_tls_record_returns_none_when_peer_closes_mid_record() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should exist");
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept should succeed");
+            socket
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02])
+                .await
+                .expect("partial record should be sent");
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect should succeed");
+        let record = FallbackScsvTester::read_tls_record(&mut stream)
+            .await
+            .expect("peer EOF should be handled as an incomplete record");
+        server.await.expect("mock server should finish");
+
+        assert_eq!(record, None);
     }
 
     #[tokio::test]
