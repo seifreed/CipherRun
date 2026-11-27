@@ -68,6 +68,12 @@ impl FrameworkLoader {
 mod tests {
     use super::*;
 
+    fn framework_yaml_with_pattern_field(field: &str) -> String {
+        format!(
+            "id: test\nname: Test framework\nversion: '1'\ndescription: Test framework\norganization: Test\nrequirements:\n  - id: test-1\n    name: Test\n    description: Test\n    category: Test\n    severity: low\n    rules:\n      - type: CipherSuite\n        {field}: ['[']\n"
+        )
+    }
+
     #[test]
     fn test_list_builtin_frameworks() {
         let frameworks = FrameworkLoader::list_builtin_frameworks();
@@ -83,8 +89,7 @@ mod tests {
         // Guards against a framework being advertised by `list_frameworks`
         // without a corresponding, parseable data file behind it.
         for (id, _) in FrameworkLoader::list_builtin_frameworks() {
-            FrameworkLoader::load_builtin(id)
-                .unwrap_or_else(|e| panic!("listed framework {id} failed to load: {e}"));
+            FrameworkLoader::load_builtin(id).expect("listed framework should load successfully");
         }
     }
 
@@ -123,5 +128,47 @@ requirements:
         assert_eq!(custom["enabled"], serde_json::json!(true));
         assert_eq!(custom["labels"], serde_json::json!(["one", "two"]));
         assert_eq!(custom["settings"]["retries"], serde_json::json!(3));
+    }
+
+    #[test]
+    fn malformed_yaml_returns_a_parse_error() {
+        let error = FrameworkLoader::load_from_string("requirements: [")
+            .expect_err("malformed YAML should fail to deserialize");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to deserialize compliance framework YAML")
+        );
+    }
+
+    #[test]
+    fn invalid_regexes_in_all_pattern_fields_are_rejected() {
+        for field in ["denied_patterns", "allowed_patterns", "preferred_patterns"] {
+            let yaml = framework_yaml_with_pattern_field(field);
+            let error = FrameworkLoader::load_from_string(&yaml)
+                .expect_err("invalid pattern should fail framework validation");
+
+            let message = error.to_string();
+            assert!(message.contains("Invalid regex"), "{message}");
+            assert!(message.contains(field), "{message}");
+            assert!(message.contains("test-1"), "{message}");
+        }
+    }
+
+    #[test]
+    fn load_from_file_reads_a_framework_and_reports_missing_files() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("custom.yaml");
+        let yaml =
+            framework_yaml_with_pattern_field("allowed_patterns").replace("['[']", "['TLS_.*']");
+        std::fs::write(&path, yaml).expect("write framework YAML");
+
+        let loaded = FrameworkLoader::load_from_file(&path).expect("load custom framework");
+        assert_eq!(loaded.id, "test");
+        assert_eq!(loaded.requirements.len(), 1);
+
+        let missing = directory.path().join("missing.yaml");
+        assert!(FrameworkLoader::load_from_file(missing).is_err());
     }
 }
