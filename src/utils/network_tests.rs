@@ -778,6 +778,71 @@ fn transport_anomaly_classifier_does_not_mistake_tls_alerts_for_transport_errors
 }
 
 #[test]
+fn vuln_ssl_config_builders_preserve_probe_options() {
+    let default = VulnSslConfig::default();
+    assert_eq!(default.timeout_secs, 5);
+    assert!(default.min_version.is_none());
+    assert!(default.max_version.is_none());
+    assert!(default.cipher_list.is_none());
+    assert!(default.verify_hostname);
+    assert!(default.starttls.is_none());
+    assert!(default.starttls_hostname.is_none());
+    assert!(!default.starttls_server_mode);
+
+    let ssl3 = VulnSslConfig::ssl3_only();
+    assert_eq!(ssl3.min_version, Some(openssl::ssl::SslVersion::SSL3));
+    assert_eq!(ssl3.max_version, Some(openssl::ssl::SslVersion::SSL3));
+
+    let tls10 = VulnSslConfig::tls10_with_ciphers("AES128-SHA");
+    assert_eq!(tls10.min_version, Some(openssl::ssl::SslVersion::TLS1));
+    assert_eq!(tls10.max_version, Some(openssl::ssl::SslVersion::TLS1));
+    assert_eq!(tls10.cipher_list, Some("AES128-SHA"));
+
+    let export = VulnSslConfig::export_cipher("EXP-RC4-MD5")
+        .with_timeout(9)
+        .with_starttls(Some(crate::starttls::StarttlsProtocol::SMTP))
+        .with_starttls_hostname(Some("mail.example.test".to_string()))
+        .with_starttls_server_mode(true);
+    assert_eq!(export.min_version, Some(openssl::ssl::SslVersion::SSL3));
+    assert_eq!(export.cipher_list, Some("EXP-RC4-MD5"));
+    assert_eq!(export.timeout_secs, 9);
+    assert_eq!(
+        export.starttls,
+        Some(crate::starttls::StarttlsProtocol::SMTP)
+    );
+    assert_eq!(
+        export.starttls_hostname.as_deref(),
+        Some("mail.example.test")
+    );
+    assert!(export.starttls_server_mode);
+    assert_eq!(
+        VulnSslConfig::with_ciphers("AES128-SHA").cipher_list,
+        Some("AES128-SHA")
+    );
+}
+
+#[tokio::test]
+async fn vulnerability_and_cipher_boolean_helpers_return_false_for_closed_ports() {
+    let target = Target::with_ips(
+        "example.com".to_string(),
+        9,
+        vec!["127.0.0.1".parse().expect("valid IP")],
+    )
+    .expect("test assertion should succeed");
+
+    assert!(
+        !test_vuln_ssl_connection(&target, VulnSslConfig::default())
+            .await
+            .expect("unavailable connection is a probe outcome")
+    );
+    assert!(
+        !test_cipher_support(&target, "AES128-SHA", false, 1)
+            .await
+            .expect("unavailable connection is a probe outcome")
+    );
+}
+
+#[test]
 fn test_primary_ip() {
     let target = Target::with_ips(
         "example.com".to_string(),
