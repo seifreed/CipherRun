@@ -691,4 +691,72 @@ mod tests {
         ));
         server.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_grease_probe_methods_send_each_client_hello_variant() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut client_hello = [0u8; 4096];
+                let bytes_read = socket.read(&mut client_hello).await.unwrap();
+                assert!(bytes_read > 0);
+                socket
+                    .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                    .await
+                    .unwrap();
+            }
+        });
+        let target = crate::utils::network::Target::with_ips(
+            "example.test".to_string(),
+            port,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        assert_eq!(
+            tester.test_grease_cipher_suites().await.unwrap(),
+            GreaseTestOutcome::Rejected
+        );
+        assert_eq!(
+            tester.test_grease_extensions().await.unwrap(),
+            GreaseTestOutcome::Rejected
+        );
+        assert_eq!(
+            tester.test_grease_supported_groups().await.unwrap(),
+            GreaseTestOutcome::Rejected
+        );
+        assert_eq!(
+            tester.test_combined_grease().await.unwrap(),
+            GreaseTestOutcome::Rejected
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_client_hello_reports_connection_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let target = crate::utils::network::Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester = GreaseTester::new(target);
+
+        let error = tester
+            .send_client_hello(b"client hello")
+            .await
+            .expect_err("a closed loopback port should fail the probe");
+
+        assert!(
+            error
+                .to_string()
+                .contains("GREASE ClientHello failed for at least one address")
+        );
+    }
 }
