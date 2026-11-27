@@ -219,6 +219,55 @@ async fn test_connect_with_timeout_maps_connection_refused() {
 }
 
 #[tokio::test]
+async fn test_connection_succeeds_against_loopback_listener() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback listener should bind");
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let _accepted = listener.accept().await.expect("connection should arrive");
+    });
+
+    test_connection(addr, Duration::from_secs(1), None)
+        .await
+        .expect("connection probe should succeed");
+    server.await.expect("loopback peer should finish");
+}
+
+#[tokio::test]
+async fn into_blocking_std_stream_configures_socket_timeouts() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback listener should bind");
+    let addr = listener.local_addr().unwrap();
+    let client = TcpStream::connect(addr)
+        .await
+        .expect("loopback connection should succeed");
+    let _peer = listener.accept().await.expect("connection should arrive");
+
+    let timeout = Duration::from_secs(3);
+    let stream = into_blocking_std_stream(client, timeout)
+        .expect("valid socket timeout should configure the std stream");
+    assert_eq!(stream.read_timeout().unwrap(), Some(timeout));
+    assert_eq!(stream.write_timeout().unwrap(), Some(timeout));
+}
+
+#[tokio::test]
+async fn into_blocking_std_stream_rejects_zero_socket_timeout() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback listener should bind");
+    let client = TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .expect("loopback connection should succeed");
+    let _peer = listener.accept().await.expect("connection should arrive");
+
+    let error = into_blocking_std_stream(client, Duration::ZERO)
+        .expect_err("zero socket timeout should be rejected");
+    assert!(error.to_string().contains("read timeout"));
+}
+
+#[tokio::test]
 async fn connect_with_starttls_without_protocol_returns_plain_tcp_stream() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
