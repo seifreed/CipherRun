@@ -1695,6 +1695,46 @@ mod tests {
         assert!(output.contains("lease_lost"), "{output}");
     }
 
+    #[tokio::test]
+    async fn cancellation_after_scan_start_aborts_the_running_session() {
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(super::super::InMemoryJobQueue::new(1));
+        queue.enqueue(job.clone()).await.unwrap();
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let factory: Arc<dyn ScanSessionFactory> = Arc::new(BlockingScanSessionFactory {
+            started: Arc::new(tokio::sync::Mutex::new(Some(started_tx))),
+            release: Arc::new(Notify::new()),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let mut progress_rx = executor.subscribe_progress();
+        let job_id = job.id.clone();
+        let queue_for_worker = queue.clone();
+        let worker = tokio::spawn(async move {
+            executor
+                .execute_scan_with_factory(queue_for_worker, job, factory)
+                .await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("scan session should start")
+            .expect("scan session should signal its start");
+        assert!(queue.cancel_job(&job_id).await.unwrap());
+        tokio::time::timeout(Duration::from_secs(1), worker)
+            .await
+            .expect("executor should finish after cancellation")
+            .expect("executor task should join");
+
+        let cancelled_job = queue.get_job(&job_id).await.unwrap().unwrap();
+        assert_eq!(cancelled_job.status, ScanStatus::Cancelled);
+        let progress = std::iter::from_fn(|| progress_rx.try_recv().ok())
+            .map(|message| message.msg_type)
+            .collect::<Vec<_>>();
+        assert!(progress.contains(&"cancelled".to_string()));
+    }
+
     #[test]
     fn default_scan_factory_constructs_the_production_scanner() {
         let request = ScanExecutor::options_to_request("example.com:443", &ScanOptions::full())
