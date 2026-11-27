@@ -406,6 +406,39 @@ mod tests {
     }
 
     #[test]
+    fn test_grease_client_hello_builder_maps_encoding_failures() {
+        let mut builder = ClientHelloBuilder::new(Protocol::TLS12);
+        builder.set_session_id(&vec![0; 256]);
+
+        let error = GreaseTester::build_grease_client_hello(builder)
+            .expect_err("oversized session IDs should fail ClientHello encoding");
+
+        assert!(
+            error
+                .to_string()
+                .contains("GREASE ClientHello build failed")
+        );
+    }
+
+    #[test]
+    fn test_grease_client_hello_builder_propagates_invalid_sni() {
+        let target = crate::utils::network::Target::with_ips(
+            "example.test".to_string(),
+            443,
+            vec![std::net::Ipv4Addr::LOCALHOST.into()],
+        )
+        .unwrap();
+        let tester =
+            GreaseTester::new(target).with_sni(Some("x".repeat(usize::from(u16::MAX) + 1)));
+
+        let error = tester
+            .build_client_hello_with_grease_ciphers()
+            .expect_err("an unencodable SNI hostname should be rejected");
+
+        assert!(error.to_string().contains("SNI hostname"));
+    }
+
+    #[test]
     fn test_classify_grease_response_rejects_malformed_inputs() {
         for (response, expected) in [
             (
@@ -548,6 +581,32 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("exceeds buffer"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_complete_response_returns_partial_header_on_peer_eof() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 32];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket.write_all(&[0x16, 0x03]).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let mut response = [0u8; 32];
+
+        let bytes_read = GreaseTester::read_complete_response(&mut stream, &mut response)
+            .await
+            .expect("peer EOF after partial response should be recoverable");
+
+        assert_eq!(bytes_read, 2);
         server.await.unwrap();
     }
 
