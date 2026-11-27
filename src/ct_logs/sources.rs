@@ -438,6 +438,30 @@ mod tests {
         format!("http://{address}/log-list.json")
     }
 
+    async fn serve_oversized_ct_log_response() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local HTTP fixture should bind");
+        let address = listener
+            .local_addr()
+            .expect("local HTTP fixture should have an address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("HTTP client should connect to local fixture");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 16777217\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .expect("oversized HTTP fixture response should be written");
+        });
+        format!("http://{address}/log-list.json")
+    }
+
     #[test]
     fn test_log_source_health() {
         let mut source = LogSource {
@@ -581,6 +605,34 @@ mod tests {
             json_error
                 .to_string()
                 .contains("Failed to parse CT log list")
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_sources_rejects_oversized_bodies_and_transport_failures() {
+        let oversized_url = serve_oversized_ct_log_response().await;
+        let mut manager = SourceManager::new();
+        let body_error = manager
+            .fetch_sources_from(&oversized_url, |_| std::future::ready(Ok(true)))
+            .await
+            .expect_err("an oversized CT log-list body should be rejected");
+        assert!(body_error.to_string().contains("response too large"));
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("closed-port fixture should bind");
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let transport_error = manager
+            .fetch_sources_from(&format!("http://{address}/log-list.json"), |_| {
+                std::future::ready(Ok(true))
+            })
+            .await
+            .expect_err("a refused CT log-list request should be an error");
+        assert!(
+            transport_error
+                .to_string()
+                .contains("Failed to fetch CT log list")
         );
     }
 
