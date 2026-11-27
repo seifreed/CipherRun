@@ -32,6 +32,25 @@ pub struct MonitorDaemon {
     scan_semaphore: Arc<Semaphore>,
 }
 
+#[async_trait::async_trait]
+trait MonitoredCertificateClient: Send + Sync {
+    async fn parse_target(&self, identifier: &str) -> Result<Target>;
+    async fn fetch_leaf_certificate(&self, target: Target) -> Result<CertificateInfo>;
+}
+
+struct DefaultMonitoredCertificateClient;
+
+#[async_trait::async_trait]
+impl MonitoredCertificateClient for DefaultMonitoredCertificateClient {
+    async fn parse_target(&self, identifier: &str) -> Result<Target> {
+        Target::parse(identifier).await
+    }
+
+    async fn fetch_leaf_certificate(&self, target: Target) -> Result<CertificateInfo> {
+        CertificateParser::new(target).get_leaf_certificate().await
+    }
+}
+
 impl MonitorDaemon {
     fn log_certificate_fetch_failed(error: &crate::TlsError, duration_ms: u64) {
         tracing::error!(
@@ -405,6 +424,23 @@ impl MonitorDaemon {
         alert_manager: Arc<AlertManager>,
         detector: Arc<ChangeDetector>,
     ) -> Result<()> {
+        Self::scan_domain_with_fetcher(
+            domain,
+            inventory,
+            alert_manager,
+            detector,
+            &DefaultMonitoredCertificateClient,
+        )
+        .await
+    }
+
+    async fn scan_domain_with_fetcher(
+        domain: &MonitoredDomain,
+        inventory: Arc<Mutex<CertificateInventory>>,
+        alert_manager: Arc<AlertManager>,
+        detector: Arc<ChangeDetector>,
+        fetcher: &dyn MonitoredCertificateClient,
+    ) -> Result<()> {
         let identifier = domain.identifier();
         let scan_started = std::time::Instant::now();
 
@@ -414,7 +450,7 @@ impl MonitorDaemon {
         );
 
         // Parse target
-        let target = match Target::parse(&identifier).await {
+        let target = match fetcher.parse_target(&identifier).await {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!(
@@ -440,9 +476,7 @@ impl MonitorDaemon {
         };
 
         // Get certificate
-        let parser = CertificateParser::new(target);
-
-        let current_cert = match parser.get_leaf_certificate().await {
+        let current_cert = match fetcher.fetch_leaf_certificate(target).await {
             Ok(cert) => cert,
             Err(e) => {
                 Self::log_certificate_fetch_failed(
@@ -789,6 +823,31 @@ mod tests {
         }
     }
 
+    struct FixedCertificateClient {
+        certificate: Option<CertificateInfo>,
+    }
+
+    #[async_trait]
+    impl MonitoredCertificateClient for FixedCertificateClient {
+        async fn parse_target(&self, identifier: &str) -> Result<Target> {
+            let (hostname, port) = identifier
+                .rsplit_once(':')
+                .and_then(|(hostname, port)| port.parse::<u16>().ok().map(|port| (hostname, port)))
+                .ok_or_else(|| crate::TlsError::Other("invalid test target".to_string()))?;
+            Ok(Target {
+                hostname: hostname.to_string(),
+                port,
+                ip_addresses: vec![std::net::Ipv4Addr::LOCALHOST.into()],
+            })
+        }
+
+        async fn fetch_leaf_certificate(&self, _target: Target) -> Result<CertificateInfo> {
+            self.certificate
+                .clone()
+                .ok_or_else(|| crate::TlsError::Other("certificate fetch failed".to_string()))
+        }
+    }
+
     fn ct_entry(subject_cn: Option<&str>, subject_an: &[&str]) -> CtLogEntry {
         CtLogEntry {
             log_source: "test-log".to_string(),
@@ -812,6 +871,84 @@ mod tests {
         let config = MonitorConfig::default();
         let daemon = MonitorDaemon::new(config).await;
         assert!(daemon.is_ok());
+    }
+
+    #[tokio::test]
+    async fn monitored_scan_with_injected_certificate_updates_inventory() {
+        let domain = MonitoredDomain::new("example.com".to_string(), 443);
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(domain.clone())
+            .expect("test domain should be accepted");
+        let inventory = Arc::new(Mutex::new(inventory));
+        let fetcher = FixedCertificateClient {
+            certificate: Some(test_certificate(
+                (Utc::now() + chrono::Duration::days(90)).to_rfc3339(),
+            )),
+        };
+
+        MonitorDaemon::scan_domain_with_fetcher(
+            &domain,
+            Arc::clone(&inventory),
+            Arc::new(AlertManager::new(1).expect("valid dedup window")),
+            Arc::new(ChangeDetector::new()),
+            &fetcher,
+        )
+        .await
+        .expect("successful monitored scan should complete");
+
+        let inventory = inventory.lock().await;
+        let updated = inventory
+            .get_domain("example.com:443")
+            .expect("domain should remain in inventory");
+        assert!(updated.last_scan.is_some());
+        assert_eq!(
+            updated
+                .last_certificate
+                .as_ref()
+                .map(|cert| cert.serial_number.as_str()),
+            Some("123")
+        );
+    }
+
+    #[tokio::test]
+    async fn monitored_scan_fetch_failure_sends_failure_alert_when_enabled() {
+        let mut domain = MonitoredDomain::new("example.com".to_string(), 443);
+        domain.alert_thresholds.on_change = true;
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(domain.clone())
+            .expect("test domain should be accepted");
+        let inventory = Arc::new(Mutex::new(inventory));
+        let channel = RecordingChannel::default();
+        let recorded_alerts = Arc::clone(&channel.alerts);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(channel));
+        let fetcher = FixedCertificateClient { certificate: None };
+
+        MonitorDaemon::scan_domain_with_fetcher(
+            &domain,
+            Arc::clone(&inventory),
+            Arc::new(alert_manager),
+            Arc::new(ChangeDetector::new()),
+            &fetcher,
+        )
+        .await
+        .expect("certificate retrieval failure should be handled as a scan outcome");
+
+        let alerts = recorded_alerts.lock().await;
+        assert_eq!(alerts.len(), 1);
+        assert!(matches!(
+            alerts[0].alert_type,
+            AlertType::ScanFailure { .. }
+        ));
+        assert!(
+            inventory
+                .lock()
+                .await
+                .get_domain("example.com:443")
+                .is_some_and(|entry| entry.last_certificate.is_none())
+        );
     }
 
     #[tokio::test]
