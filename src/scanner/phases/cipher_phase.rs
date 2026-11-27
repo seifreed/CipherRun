@@ -22,6 +22,7 @@ use crate::ciphers::tester::CipherTester;
 use crate::protocols::{Protocol, ProtocolTestResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::future::Future;
 
 /// Cipher suite testing phase
 ///
@@ -136,6 +137,20 @@ impl CipherPhase {
         tester: &CipherTester,
         protocol_results: &[ProtocolTestResult],
     ) -> Result<HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>> {
+        Self::test_supported_protocols_using(protocol_results, |protocol| {
+            tester.test_protocol_ciphers(protocol)
+        })
+        .await
+    }
+
+    async fn test_supported_protocols_using<F, Fut>(
+        protocol_results: &[ProtocolTestResult],
+        mut test_protocol: F,
+    ) -> Result<HashMap<Protocol, crate::ciphers::tester::ProtocolCipherSummary>>
+    where
+        F: FnMut(Protocol) -> Fut,
+        Fut: Future<Output = Result<crate::ciphers::tester::ProtocolCipherSummary>>,
+    {
         let mut results = HashMap::new();
 
         for protocol_result in protocol_results {
@@ -147,7 +162,7 @@ impl CipherPhase {
             // Isolate per-protocol failures: a transient probe error for one
             // protocol must not discard the cipher results already collected for
             // the others (propagating here would lose the entire phase's data).
-            let summary = match tester.test_protocol_ciphers(protocol_result.protocol).await {
+            let summary = match test_protocol(protocol_result.protocol).await {
                 Ok(summary) => summary,
                 Err(error) => {
                     tracing::warn!(
@@ -214,8 +229,55 @@ impl ScanPhase for CipherPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ciphers::CipherSuite;
+    use crate::ciphers::tester::CipherCounts;
     use crate::utils::test_support::example_com_loopback_target;
     use std::sync::Arc;
+
+    fn protocol_result(protocol: Protocol, supported: bool) -> ProtocolTestResult {
+        ProtocolTestResult {
+            protocol,
+            supported,
+            inconclusive: false,
+            preferred: false,
+            ciphers_count: 0,
+            handshake_time_ms: None,
+            heartbeat_enabled: None,
+            session_resumption_caching: None,
+            session_resumption_tickets: None,
+            secure_renegotiation: None,
+        }
+    }
+
+    fn cipher_summary(
+        protocol: Protocol,
+        has_ciphers: bool,
+    ) -> crate::ciphers::tester::ProtocolCipherSummary {
+        crate::ciphers::tester::ProtocolCipherSummary {
+            protocol,
+            supported_ciphers: if has_ciphers {
+                vec![CipherSuite {
+                    hexcode: "1301".to_string(),
+                    openssl_name: "TLS_AES_128_GCM_SHA256".to_string(),
+                    iana_name: "TLS_AES_128_GCM_SHA256".to_string(),
+                    protocol: "TLSv1.3".to_string(),
+                    key_exchange: "ECDHE".to_string(),
+                    authentication: "RSA".to_string(),
+                    encryption: "AESGCM".to_string(),
+                    mac: "AEAD".to_string(),
+                    bits: 128,
+                    export: false,
+                }]
+            } else {
+                Vec::new()
+            },
+            server_ordered: false,
+            server_preference: Vec::new(),
+            preferred_cipher: None,
+            counts: CipherCounts::default(),
+            avg_handshake_time_ms: None,
+        }
+    }
 
     #[test]
     fn test_cipher_phase_should_run() {
@@ -359,5 +421,95 @@ mod tests {
         let tester = phase.configure_tester(&context);
 
         assert!(std::mem::size_of_val(&tester) > 0);
+    }
+
+    #[test]
+    fn supported_protocol_results_isolate_errors_and_keep_only_found_ciphers() {
+        use std::io::Write;
+        use std::sync::Mutex;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+        struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for BufferWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Buffer {
+            type Writer = BufferWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                BufferWriter(self.0.clone())
+            }
+        }
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(Buffer(output.clone()))
+            .finish();
+        let protocols = [
+            protocol_result(Protocol::TLS10, false),
+            protocol_result(Protocol::QUIC, true),
+            protocol_result(Protocol::TLS12, true),
+            protocol_result(Protocol::TLS13, true),
+            protocol_result(Protocol::TLS11, true),
+        ];
+        let mut attempted = Vec::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build");
+
+        tracing::subscriber::with_default(subscriber, || {
+            runtime.block_on(async {
+                let results = CipherPhase::test_supported_protocols_using(&protocols, |protocol| {
+                    attempted.push(protocol);
+                    async move {
+                        match protocol {
+                            Protocol::TLS12 => {
+                                Err(crate::TlsError::Other("probe failed".to_string()))
+                            }
+                            Protocol::TLS13 => Ok(cipher_summary(protocol, true)),
+                            Protocol::TLS11 => Ok(cipher_summary(protocol, false)),
+                            _ => unreachable!("unsupported protocols are filtered before probing"),
+                        }
+                    }
+                })
+                .await
+                .expect("per-protocol probe failures must not fail the phase");
+
+                assert_eq!(
+                    attempted,
+                    [Protocol::TLS12, Protocol::TLS13, Protocol::TLS11]
+                );
+                assert_eq!(results.len(), 1);
+                assert!(results.contains_key(&Protocol::TLS13));
+            });
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1, "captured events: {output:?}");
+        assert_eq!(events[0]["level"], "WARN");
+        assert_eq!(
+            events[0]["fields"]["event_name"],
+            "cipher_phase.protocol.failed"
+        );
+        assert_eq!(events[0]["fields"]["protocol"], "TLS 1.2");
+        assert_eq!(events[0]["fields"]["error_code"], "other");
+        assert_eq!(events[0]["fields"]["outcome"], "skipped");
     }
 }
