@@ -1288,6 +1288,36 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn app_state_configures_webhook_secret_and_file_job_storage() {
+        let directory = tempfile::tempdir().unwrap();
+        let secret_path = directory.path().join("webhook.secret");
+        std::fs::write(&secret_path, vec![b's'; 32]).unwrap();
+        owner_only(&secret_path);
+        let storage_path = directory.path().join("jobs");
+        let config = ApiConfig {
+            webhook_signing_secret_file: Some(secret_path),
+            job_storage_dir: Some(storage_path.clone()),
+            ..ApiConfig::default()
+        };
+
+        let state = AppState::new(config).unwrap();
+
+        assert!(state.executor.has_webhook_signing_secret());
+        assert_eq!(
+            state.executor.webhook_signing_secret(),
+            Some(vec![b's'; 32])
+        );
+        assert!(storage_path.is_dir());
+        let job = crate::api::jobs::ScanJob::new(
+            "example.com:443".to_string(),
+            crate::api::models::request::ScanOptions::full(),
+            None,
+        );
+        let job_id = state.job_queue.enqueue(job).await.unwrap();
+        assert!(storage_path.join(format!("{job_id}.json")).is_file());
+    }
+
     #[test]
     fn test_api_stats_request_tracking() {
         let mut stats = ApiStats::default();
@@ -1376,6 +1406,23 @@ mod tests {
         assert_eq!(alice.failed_scans, 1);
         assert_eq!(tenant_alice.total_responses, 0);
         assert_eq!(tenant_alice.failed_scans, 0);
+    }
+
+    #[test]
+    fn principal_stats_stop_growing_at_the_configured_limit() {
+        let mut stats = ApiStats::default();
+        for index in 0..MAX_PRINCIPAL_STATS {
+            let principal_id = format!("principal-{index}");
+            assert!(stats.principal_mut_for(&principal_id, None).is_some());
+        }
+
+        assert_eq!(stats.principal_stats.len(), MAX_PRINCIPAL_STATS);
+        assert!(
+            stats
+                .principal_mut_for("overflow-principal", None)
+                .is_none()
+        );
+        assert_eq!(stats.principal_stats.len(), MAX_PRINCIPAL_STATS);
     }
 
     #[test]
