@@ -264,6 +264,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_record_lengths_that_exceed_available_bytes() {
+        let truncated_record = [0x16, 0x03, 0x03, 0x00, 0x02, 0x16];
+
+        assert!(extract(&truncated_record).is_err());
+        assert!(is_present(&truncated_record).is_err());
+    }
+
+    #[test]
+    fn handles_empty_handshake_records_and_trailing_partial_headers() {
+        let empty_handshake_record = record(0x16, &[]);
+        assert_eq!(extract(&empty_handshake_record).unwrap(), None);
+        assert!(!is_present(&empty_handshake_record).unwrap());
+
+        let partial_next_record = [0x15, 0x03, 0x03, 0x00, 0x00, 0x16];
+        assert!(extract(&partial_next_record).is_err());
+        assert!(is_present(&partial_next_record).is_err());
+    }
+
+    #[test]
     fn rejects_truncated_record_and_handshake_lengths() {
         assert!(extract(&[0x16, 0x03]).is_err());
         assert!(is_present(&[0x16, 0x03]).is_err());
