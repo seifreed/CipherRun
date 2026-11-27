@@ -803,6 +803,369 @@ fn test_safe_profile_rejects_active_vulnerability_probe() {
 }
 
 #[test]
+fn safe_profile_rejects_each_incompatible_probe_and_compliance_mode() {
+    let incompatible_scans = [
+        ScanArgs {
+            full: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            vulnerabilities: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            heartbleed: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            ccs: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            ticketbleed: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            robot: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            renegotiation: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            crime: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            breach: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            poodle: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            fallback: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            sweet32: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            beast: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            lucky13: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            freak: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            logjam: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            drown: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            early_data: true,
+            ..Default::default()
+        },
+        ScanArgs {
+            grease: true,
+            ..Default::default()
+        },
+    ];
+
+    for (index, scan) in incompatible_scans.into_iter().enumerate() {
+        let args = Args {
+            scan: ScanArgs {
+                profile: Some(ScanProfile::Safe),
+                ..scan
+            },
+            ..Default::default()
+        };
+        assert!(
+            with_valid_compliance(args).validate().is_err(),
+            "incompatible probe {index}"
+        );
+    }
+
+    for compliance in [
+        ComplianceArgs {
+            framework: Some("pci-dss-v4".to_string()),
+            ..Default::default()
+        },
+        ComplianceArgs {
+            policy: Some("policy.yaml".into()),
+            ..Default::default()
+        },
+    ] {
+        let args = Args {
+            scan: ScanArgs {
+                profile: Some(ScanProfile::Safe),
+                ..Default::default()
+            },
+            compliance,
+            ..Default::default()
+        };
+        assert!(with_valid_compliance(args).validate().is_err());
+    }
+
+    let safe = Args {
+        target: Some("example.com".to_string()),
+        scan: ScanArgs {
+            profile: Some(ScanProfile::Safe),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(with_valid_compliance(safe).validate().is_ok());
+}
+
+fn with_valid_compliance(mut args: Args) -> Args {
+    args.compliance.format = "terminal".to_string();
+    args.compliance.policy_format = "terminal".to_string();
+    args
+}
+
+#[test]
+fn scan_all_ips_rejects_every_single_report_format_and_conflicting_target_mode() {
+    let unsupported_outputs = [
+        OutputArgs {
+            csv: Some("report.csv".into()),
+            ..Default::default()
+        },
+        OutputArgs {
+            html: Some("report.html".into()),
+            ..Default::default()
+        },
+        OutputArgs {
+            xml: Some("report.xml".into()),
+            ..Default::default()
+        },
+        OutputArgs {
+            sarif: Some("report.sarif".into()),
+            ..Default::default()
+        },
+        OutputArgs {
+            junit: Some("report.xml".into()),
+            ..Default::default()
+        },
+        OutputArgs {
+            output_all: Some("reports".into()),
+            ..Default::default()
+        },
+    ];
+    for output in unsupported_outputs {
+        let args = Args {
+            target: Some("example.com".to_string()),
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            output,
+            ..Default::default()
+        };
+        assert!(with_valid_compliance(args).validate().is_err());
+    }
+
+    let invalid_targets = [
+        Args {
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            input_file: Some("targets.txt".into()),
+            target: Some("example.com".to_string()),
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            mx_domain: Some("example.com".to_string()),
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ];
+    for args in invalid_targets {
+        assert!(with_valid_compliance(args).validate().is_err());
+    }
+
+    for (ip, network) in [
+        (
+            Some("192.0.2.1".to_string()),
+            NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+        ),
+        (
+            None,
+            NetworkArgs {
+                scan_all_ips: true,
+                first_ip_only: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let args = Args {
+            target: Some("example.com".to_string()),
+            ip,
+            network,
+            ..Default::default()
+        };
+        assert!(with_valid_compliance(args).validate().is_err());
+    }
+}
+
+#[test]
+fn validate_rejects_remaining_incompatible_scan_options() {
+    for args in [
+        Args {
+            target: Some("example.com".to_string()),
+            output: OutputArgs {
+                baseline: Some("baseline.json".into()),
+                ..Default::default()
+            },
+            input_file: Some("targets.txt".into()),
+            ..Default::default()
+        },
+        Args {
+            target: Some("example.com".to_string()),
+            output: OutputArgs {
+                baseline: Some("baseline.json".into()),
+                ..Default::default()
+            },
+            asn: Some("64512".to_string()),
+            ..Default::default()
+        },
+        Args {
+            target: Some("example.com".to_string()),
+            output: OutputArgs {
+                baseline: Some("baseline.json".into()),
+                ..Default::default()
+            },
+            cidr: Some("192.0.2.0/24".into()),
+            ..Default::default()
+        },
+        Args {
+            target: Some("example.com".to_string()),
+            output: OutputArgs {
+                baseline: Some("baseline.json".into()),
+                ..Default::default()
+            },
+            mx_domain: Some("example.com".to_string()),
+            ..Default::default()
+        },
+        Args {
+            target: Some("example.com".to_string()),
+            output: OutputArgs {
+                baseline: Some("baseline.json".into()),
+                ..Default::default()
+            },
+            network: NetworkArgs {
+                scan_all_ips: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            connection: ConnectionArgs {
+                delay: Some("not-a-duration".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            fingerprint: FingerprintArgs {
+                export_hello: Some("invalid".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            api_server: ApiServerArgs {
+                enable: true,
+                ..Default::default()
+            },
+            network: NetworkArgs {
+                allow_private: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            output: OutputArgs {
+                warnings: Some("verbose".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            output: OutputArgs {
+                color: 4,
+                no_color: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            input_file: Some("targets.txt".into()),
+            output: OutputArgs {
+                sarif: Some("report.sarif".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            input_file: Some("targets.txt".into()),
+            output: OutputArgs {
+                junit: Some("report.xml".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ] {
+        assert!(args.validate().is_err());
+    }
+
+    for args in [
+        Args {
+            output: OutputArgs {
+                warnings: Some(" DEFAULT ".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Args {
+            output: OutputArgs {
+                color: 4,
+                no_colour: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ] {
+        assert!(with_valid_compliance(args).validate().is_ok());
+    }
+}
+
+#[test]
 fn test_validate_rejects_append_and_overwrite() {
     let args = Args {
         output: OutputArgs {
