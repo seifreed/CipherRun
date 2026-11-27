@@ -250,9 +250,9 @@ jobs:
           cargo llvm-cov --workspace --all-features --all-targets --locked --lcov --output-path lcov.info
           cargo llvm-cov --workspace report --json --output-path coverage.json
           coverage_percent="$(jq -r '.data[0].totals.lines.percent' coverage.json)"
-          printf '### Rust workspace line coverage\n\nMeasured: %s%% (gate: 91.70%%)\n' "$coverage_percent" >> "$GITHUB_STEP_SUMMARY"
-          if ! awk -v coverage="$coverage_percent" 'BEGIN { exit (coverage >= 91.70) ? 0 : 1 }'; then
-            echo "::error::Rust workspace line coverage ${coverage_percent}% is below the 91.70% gate"
+          printf '### Rust workspace line coverage\n\nMeasured: %s%% (gate: 91.80%%)\n' "$coverage_percent" >> "$GITHUB_STEP_SUMMARY"
+          if ! awk -v coverage="$coverage_percent" 'BEGIN { exit (coverage >= 91.80) ? 0 : 1 }'; then
+            echo "::error::Rust workspace line coverage ${coverage_percent}% is below the 91.80% gate"
             exit 1
           fi
 
