@@ -729,6 +729,87 @@ mod tests {
     }
 
     #[test]
+    fn test_database_loads_signatures_from_file() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join("jarm.json");
+        let signature =
+            test_jarm_signature("27d40d40d29d40d1dc42d43d00041d4689ee210389f4f6b4b5b1b93f92252d");
+        std::fs::write(&path, serde_json::to_vec(&vec![signature.clone()]).unwrap()).unwrap();
+
+        let database = JarmDatabase::from_file(&path).expect("valid database should load");
+
+        assert_eq!(database.lookup(&signature.hash), Some(&signature));
+        assert_eq!(database.all_signatures(), vec![&signature]);
+    }
+
+    #[test]
+    fn test_database_file_errors_preserve_parse_and_io_failures() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let malformed_path = directory.path().join("malformed.json");
+        std::fs::write(&malformed_path, "{").unwrap();
+
+        let parse_error = JarmDatabase::from_file(&malformed_path)
+            .expect_err("malformed JSON should be rejected");
+        assert!(
+            parse_error
+                .to_string()
+                .contains("Failed to parse JARM database JSON")
+        );
+
+        let missing_error = JarmDatabase::from_file(directory.path().join("missing.json"))
+            .expect_err("missing database should fail to load");
+        assert!(missing_error.to_string().contains("File system error"));
+    }
+
+    #[tokio::test]
+    async fn test_send_probe_classifies_refused_connection_as_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let fingerprinter =
+            JarmFingerprinter::with_database(Duration::from_secs(1), JarmDatabase::new());
+        let probe = get_probes("example.test", port).unwrap().remove(0);
+
+        let response = fingerprinter
+            .send_probe(
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                "example.test",
+                &probe,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response, "|||");
+    }
+
+    #[tokio::test]
+    async fn test_send_probe_classifies_alert_as_inconclusive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut client_hello = [0u8; 4096];
+            let bytes_read = stream.read(&mut client_hello).await.unwrap();
+            assert!(bytes_read > 0);
+            stream
+                .write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])
+                .await
+                .unwrap();
+        });
+        let fingerprinter =
+            JarmFingerprinter::with_database(Duration::from_secs(1), JarmDatabase::new());
+        let probe = get_probes("example.test", addr.port()).unwrap().remove(0);
+
+        let response = fingerprinter
+            .send_probe(addr, "example.test", &probe)
+            .await
+            .unwrap();
+
+        assert_eq!(response, "|||");
+        server.await.unwrap();
+    }
+
+    #[test]
     fn test_extract_extension_type_alpn() {
         let etypes = vec![[0x00, 0x10]];
         let evals = vec![vec![0x00, 0x03, 0x02, b'h', b'2']];
