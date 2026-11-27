@@ -945,4 +945,52 @@ mod tests {
 
         server.await.unwrap();
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_read_complete_response_returns_zero_when_peer_is_silent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            sleep(Duration::from_secs(1)).await;
+        });
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut buffer = [0u8; 32];
+
+        let bytes_read = JarmFingerprinter::read_complete_response(
+            &mut stream,
+            &mut buffer,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(bytes_read, 0);
+        server.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_read_complete_response_preserves_partial_bytes_on_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(&[0x16, 0x03, 0x03]).await.unwrap();
+            sleep(Duration::from_secs(1)).await;
+        });
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut buffer = [0u8; 32];
+
+        let bytes_read = JarmFingerprinter::read_complete_response(
+            &mut stream,
+            &mut buffer,
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(bytes_read, 3);
+        assert_eq!(&buffer[..bytes_read], &[0x16, 0x03, 0x03]);
+        server.abort();
+    }
 }
