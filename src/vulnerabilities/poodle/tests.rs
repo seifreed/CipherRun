@@ -7,6 +7,7 @@ struct ScriptedProbeBackend {
     ssl3_supported: Option<bool>,
     cbc_connection: Option<bool>,
     cbc_supported: Option<bool>,
+    abnormal_zero_length_response: bool,
 }
 
 #[async_trait::async_trait]
@@ -49,7 +50,6 @@ impl network_probes::ProbeBackend for ScriptedProbeBackend {
         _starttls_server_mode: bool,
     ) -> Result<ServerResponse> {
         Ok(ServerResponse {
-            connection_accepted: true,
             alert_type: match record_type {
                 MalformedRecordType::InvalidPaddingInvalidMac => None,
                 MalformedRecordType::InvalidPaddingValidMac
@@ -57,7 +57,10 @@ impl network_probes::ProbeBackend for ScriptedProbeBackend {
                 MalformedRecordType::ZeroLengthFragment => None,
             },
             response_time_ms: 1.0,
-            shows_differential_behavior: false,
+            shows_differential_behavior: self.abnormal_zero_length_response
+                && matches!(record_type, MalformedRecordType::ZeroLengthFragment),
+            connection_accepted: !(self.abnormal_zero_length_response
+                && matches!(record_type, MalformedRecordType::ZeroLengthFragment)),
         })
     }
 
@@ -86,6 +89,7 @@ fn scripted_tester(
         ssl3_supported,
         cbc_connection,
         cbc_supported,
+        abnormal_zero_length_response: false,
     }))
 }
 
@@ -383,6 +387,35 @@ async fn test_all_variants_exercises_deterministic_response_and_timing_probes() 
     assert!(
         result.variants[5].inconclusive,
         "the zero-length probe cannot confirm memory disclosure"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_basic_tls_poodle_path_and_zero_length_anomalies() {
+    let target = example_com_loopback_target(443);
+    let tester = scripted_tester(&target, Some(true), Some(true), Some(true));
+    let basic_result = tester
+        .test()
+        .await
+        .expect("scripted basic test should pass");
+    assert_eq!(basic_result.tls_poodle, Some(true));
+
+    let anomaly_tester =
+        PoodleTester::new(&target).with_probe_backend(Arc::new(ScriptedProbeBackend {
+            ssl3_supported: Some(true),
+            cbc_connection: Some(true),
+            cbc_supported: Some(true),
+            abnormal_zero_length_response: true,
+        }));
+    let zero_length = anomaly_tester
+        .test_openssl_0length(Some(true))
+        .await
+        .expect("abnormal zero-length responses should be classified");
+    assert!(zero_length.inconclusive);
+    assert!(
+        zero_length
+            .details
+            .contains("3/3 probes saw an abnormal reaction")
     );
 }
 
