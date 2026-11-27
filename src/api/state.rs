@@ -1251,6 +1251,44 @@ mod tests {
     }
 
     #[test]
+    fn webhook_secret_loader_rejects_missing_and_oversized_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing.secret");
+        assert!(matches!(
+            load_webhook_signing_secret(&missing),
+            Err(crate::TlsError::FileSystemError { .. })
+        ));
+
+        let oversized = directory.path().join("oversized.secret");
+        std::fs::write(
+            &oversized,
+            vec![b's'; MAX_WEBHOOK_SECRET_BYTES as usize + 1],
+        )
+        .unwrap();
+        owner_only(&oversized);
+        assert!(matches!(
+            load_webhook_signing_secret(&oversized),
+            Err(crate::TlsError::ConfigError { message }) if message.contains("exceeds")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn webhook_secret_loader_rejects_group_or_world_readable_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("insecure.secret");
+        std::fs::write(&path, vec![b's'; 32]).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(matches!(
+            load_webhook_signing_secret(&path),
+            Err(crate::TlsError::ConfigError { message }) if message.contains("owner-only")
+        ));
+    }
+
+    #[test]
     fn test_api_stats_request_tracking() {
         let mut stats = ApiStats::default();
         stats.increment_requests();
