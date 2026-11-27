@@ -59,10 +59,7 @@ pub(super) async fn read_complete_record(
         if total >= response.len() {
             break;
         }
-        let Some(read_buf) = response.get_mut(total..) else {
-            break;
-        };
-        let n = match timeout(read_timeout, stream.read(read_buf)).await {
+        let n = match timeout(read_timeout, stream.read(&mut response[total..])).await {
             Ok(Ok(n)) => n,
             Ok(Err(err)) => return Err(err),
             Err(_) => break,
@@ -102,6 +99,7 @@ mod tests {
     use std::io;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
+    use tokio::time::sleep;
 
     async fn read_from_local_peer(response: &'static [u8], max_len: usize) -> io::Result<Vec<u8>> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -167,5 +165,57 @@ mod tests {
             .expect_err("declared record cannot exceed the output buffer");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn complete_record_reader_waits_for_a_three_byte_header() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener address should exist");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("client should connect");
+            stream
+                .write_all(&[0x01, 0x01])
+                .await
+                .expect("partial SSLv2 header should be written");
+            sleep(Duration::from_millis(20)).await;
+        });
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("client should connect");
+
+        let response = read_complete_record(&mut stream, 300, Duration::from_secs(1))
+            .await
+            .expect("partial header followed by EOF should be preserved");
+
+        assert_eq!(response, [0x01, 0x01]);
+        server.await.expect("server task should finish");
+    }
+
+    #[tokio::test]
+    async fn complete_record_reader_stops_when_the_read_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener address should exist");
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("client should connect");
+            sleep(Duration::from_millis(50)).await;
+        });
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("client should connect");
+
+        let response = read_complete_record(&mut stream, 8, Duration::from_millis(10))
+            .await
+            .expect("read timeout should return the bytes accumulated so far");
+
+        assert!(response.is_empty());
+        server.await.expect("server task should finish");
     }
 }
