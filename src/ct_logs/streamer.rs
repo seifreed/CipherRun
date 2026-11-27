@@ -8,6 +8,7 @@ use super::{
 };
 use crate::error::TlsError;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -107,11 +108,30 @@ impl CtStreamer {
 
     /// Create a new CT log streamer
     pub async fn new(config: CtConfig) -> Result<Self> {
+        Self::new_with_source_list_url(
+            config,
+            super::sources::CT_LOG_LIST_URL,
+            |url: String| async move { super::sources::ct_log_url_resolves_publicly(&url).await },
+        )
+        .await
+    }
+
+    async fn new_with_source_list_url<F, Fut>(
+        config: CtConfig,
+        source_list_url: &str,
+        resolve: F,
+    ) -> Result<Self>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<bool>>,
+    {
         let config = Self::normalized_config(config)?;
 
         // Initialize source manager and fetch log sources
         let mut source_manager = SourceManager::new();
-        source_manager.fetch_sources().await?;
+        source_manager
+            .fetch_sources_from(source_list_url, resolve)
+            .await?;
 
         if source_manager.total_sources() == 0 {
             return Err(TlsError::ConfigError {
@@ -582,8 +602,36 @@ mod tests {
     use chrono::Utc;
     use std::io::Write;
     use std::sync::Mutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tracing::instrument::WithSubscriber;
     use tracing_subscriber::fmt::MakeWriter;
+
+    async fn serve_ct_source_list(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local CT source-list fixture should bind");
+        let address = listener
+            .local_addr()
+            .expect("local CT source-list fixture should have an address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("CT streamer should connect to the local source-list fixture");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("local CT source-list response should be written");
+        });
+        format!("http://{address}/log-list.json")
+    }
 
     #[derive(Default)]
     struct EmptyEntriesState {
@@ -745,6 +793,44 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "failed");
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(!output.contains("https://"));
+    }
+
+    #[tokio::test]
+    async fn streamer_initializes_from_a_loopback_source_list_without_external_dns() {
+        let source_list = serve_ct_source_list(
+            r#"{"operators":[{"name":"Fixture operator","logs":[{"log_id":"fixture-log","url":"https://ct.example.test","state":{"usable":{}}}]}]}"#,
+        )
+        .await;
+
+        let streamer =
+            CtStreamer::new_with_source_list_url(CtConfig::default(), &source_list, |_| {
+                std::future::ready(Ok(true))
+            })
+            .await
+            .expect("a usable loopback-provided CT log should initialize the streamer");
+
+        assert_eq!(streamer.source_manager.total_sources(), 1);
+        assert_eq!(streamer.source_manager.healthy_sources_count(), 1);
+        assert_eq!(streamer.config.batch_size, DEFAULT_BATCH_SIZE);
+        assert!(!streamer.shutdown.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn streamer_rejects_a_source_list_without_usable_logs() {
+        let source_list = serve_ct_source_list(r#"{"operators":[]}"#).await;
+
+        let error =
+            match CtStreamer::new_with_source_list_url(CtConfig::default(), &source_list, |_| {
+                std::future::ready(Ok(true))
+            })
+            .await
+            {
+                Ok(_) => panic!("an empty CT source list must fail initialization"),
+                Err(error) => error,
+            };
+
+        assert!(matches!(error, TlsError::ConfigError { .. }));
+        assert!(error.to_string().contains("No CT log sources available"));
     }
 
     #[tokio::test]
@@ -992,6 +1078,44 @@ mod tests {
             Some("ct-entry.example.test")
         );
         assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn closed_output_channel_stops_the_source_after_a_valid_entry() {
+        let state = valid_entry_state();
+        let app = valid_entry_router(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let output = CapturedOutput(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(output.clone())
+            .finish();
+
+        CtStreamer::stream_source(
+            "test-source".to_string(),
+            format!("http://{address}"),
+            CtClient::new(),
+            Parser::new("test-source".to_string()),
+            tx,
+            StatsTracker::new(),
+            Arc::clone(&state.shutdown),
+            CtConfig {
+                custom_indices: HashMap::from([("test-source".to_string(), 0)]),
+                ..CtConfig::default()
+            },
+        )
+        .with_subscriber(tracing::Dispatch::new(subscriber))
+        .await;
+
+        assert_eq!(state.entries_requests.load(Ordering::SeqCst), 1);
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("ct_log.output_channel.closed"), "{logs}");
+        assert!(!logs.contains(&address.to_string()));
         server.abort();
     }
 

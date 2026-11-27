@@ -15,7 +15,7 @@ use tokio::net::lookup_host;
 use tracing::{info, warn};
 
 /// Google CT log list URL (v3 format)
-const CT_LOG_LIST_URL: &str = "https://www.gstatic.com/ct/log_list/v3/log_list.json";
+pub(super) const CT_LOG_LIST_URL: &str = "https://www.gstatic.com/ct/log_list/v3/log_list.json";
 
 /// CT Log Source metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,7 +110,11 @@ impl SourceManager {
         .await
     }
 
-    async fn fetch_sources_from<F, Fut>(&mut self, source_list_url: &str, resolve: F) -> Result<()>
+    pub(super) async fn fetch_sources_from<F, Fut>(
+        &mut self,
+        source_list_url: &str,
+        resolve: F,
+    ) -> Result<()>
     where
         F: Fn(String) -> Fut,
         Fut: Future<Output = Result<bool>>,
@@ -316,7 +320,7 @@ fn is_valid_ct_log_url(url: &str) -> bool {
     })
 }
 
-async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
+pub(super) async fn ct_log_url_resolves_publicly(url: &str) -> Result<bool> {
     if let Some(host) = raw_url_host(url) {
         if looks_like_dotted_ip_literal(host) {
             return Err(TlsError::Other(
