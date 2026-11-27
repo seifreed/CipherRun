@@ -604,4 +604,107 @@ mod tests {
         assert!(error.to_string().contains("No migrations to revert"));
         pool.close().await;
     }
+
+    #[tokio::test]
+    async fn sqlite_revert_without_down_file_removes_only_the_migration_record() {
+        let pool = sqlite_pool().await;
+        let directory = tempfile::tempdir().expect("migration directory should be created");
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        std::fs::write(
+            directory.path().join("20260101_001_create_table.sql"),
+            "CREATE TABLE retained_table (id INTEGER PRIMARY KEY);",
+        )
+        .expect("up migration should be written");
+
+        run_sqlite_migrations_manual(sqlite_pool, directory.path())
+            .await
+            .expect("up migration should run");
+        revert_sqlite_migration_manual(sqlite_pool, directory.path())
+            .await
+            .expect("missing down migration should still clear migration state");
+
+        let table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'retained_table'",
+        )
+        .fetch_one(sqlite_pool)
+        .await
+        .expect("table existence should be queryable");
+        let migration_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 20260101001")
+                .fetch_one(sqlite_pool)
+                .await
+                .expect("migration state should be queryable");
+        assert_eq!(
+            table_exists, 1,
+            "up migration remains applied without down SQL"
+        );
+        assert_eq!(migration_count, 0, "migration state is removed");
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_revert_failure_preserves_migration_state() {
+        let pool = sqlite_pool().await;
+        let directory = tempfile::tempdir().expect("migration directory should be created");
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        std::fs::write(
+            directory.path().join("20260101_001_create_table.sql"),
+            "CREATE TABLE rollback_target (id INTEGER PRIMARY KEY);",
+        )
+        .expect("up migration should be written");
+        std::fs::write(
+            directory.path().join("20260101_001_create_table.down.sql"),
+            "DROP TABLE missing_rollback_target;",
+        )
+        .expect("invalid down migration should be written");
+
+        run_sqlite_migrations_manual(sqlite_pool, directory.path())
+            .await
+            .expect("up migration should run");
+        let error = revert_sqlite_migration_manual(sqlite_pool, directory.path())
+            .await
+            .expect_err("invalid down SQL should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to execute down migration")
+        );
+
+        let migration_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 20260101001")
+                .fetch_one(sqlite_pool)
+                .await
+                .expect("migration state should be queryable");
+        assert_eq!(
+            migration_count, 1,
+            "failed rollback must retain migration state"
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_revert_without_migration_table_reports_database_error() {
+        let pool = sqlite_pool().await;
+        let DatabasePool::Sqlite(sqlite_pool) = &pool else {
+            panic!("expected sqlite pool");
+        };
+        let directory = tempfile::tempdir().expect("migration directory should be created");
+
+        let error = revert_sqlite_migration_manual(sqlite_pool, directory.path())
+            .await
+            .expect_err("missing migration table should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to query migrations table")
+        );
+
+        pool.close().await;
+    }
 }
