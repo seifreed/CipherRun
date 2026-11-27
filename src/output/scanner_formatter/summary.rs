@@ -208,4 +208,132 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("CDN Detection")));
         assert!(lines.iter().any(|line| line.contains("Load Balancer")));
     }
+
+    #[test]
+    fn summary_displays_handle_response_only_and_batched_warning_modes() {
+        let mut response_args = crate::Args::default();
+        response_args.cert_filters.response_only = true;
+        let response_formatter = ScannerFormatter::new(&response_args);
+        let response_results = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        response_formatter.display_results_summary(&response_results);
+
+        let mut batch_args = crate::Args::default();
+        batch_args.output.warnings = Some("batch".to_string());
+        let batch_formatter = ScannerFormatter::new(&batch_args);
+        batch_formatter.display_batched_warnings(&crate::scanner::ScanResults::default());
+        let mut warning_results = crate::scanner::ScanResults::default();
+        warning_results.scan_metadata.human_warnings = vec!["fixture warning".to_string()];
+        batch_formatter.display_results_summary(&warning_results);
+    }
+
+    #[test]
+    fn summary_displays_cover_probe_status_and_pre_handshake_paths() {
+        let default_args = crate::Args::default();
+        let default_formatter = ScannerFormatter::new(&default_args);
+        default_formatter.display_probe_summary(&crate::scanner::ScanResults::default());
+
+        let mut args = crate::Args::default();
+        args.scan.probe_status = true;
+        let formatter = ScannerFormatter::new(&args);
+        let mut results = crate::scanner::ScanResults {
+            target: "example.com:443".to_string(),
+            ..Default::default()
+        };
+        formatter.display_probe_summary(&results);
+        results.scan_metadata.pre_handshake_used = true;
+        formatter.display_probe_summary(&results);
+
+        args.cert_filters.response_only = true;
+        ScannerFormatter::new(&args).display_probe_summary(&results);
+    }
+
+    #[test]
+    fn summary_displays_cover_certificate_and_client_fingerprint_variants() {
+        let args = crate::Args::default();
+        let formatter = ScannerFormatter::new(&args);
+        formatter.display_certificate_summary(&None);
+        formatter.display_certificate_summary(&Some(crate::scanner::CertificateAnalysisResult {
+            chain: crate::certificates::parser::CertificateChain {
+                certificates: Vec::new(),
+                chain_length: 0,
+                chain_size_bytes: 0,
+            },
+            validation: crate::certificates::validator::ValidationResult {
+                valid: false,
+                issues: Vec::new(),
+                trust_chain_valid: false,
+                hostname_match: false,
+                not_expired: false,
+                signature_valid: false,
+                trusted_ca: None,
+                platform_trust: None,
+            },
+            revocation: None,
+        }));
+
+        let fingerprint = Ja3Fingerprint {
+            ja3_string: "771,4865,0,23,0".to_string(),
+            ja3_hash: "0123456789abcdef".to_string(),
+            ssl_version: 771,
+            ciphers: vec![4865],
+            extensions: vec![0],
+            curves: vec![23],
+            point_formats: vec![0],
+        };
+        for threat_level in ["critical", "medium", "low"] {
+            let signature = Ja3Signature {
+                name: "fixture client".to_string(),
+                category: "test".to_string(),
+                description: "fixture".to_string(),
+                threat_level: threat_level.to_string(),
+            };
+            formatter.display_ja3_summary(Some(&fingerprint), Some(&signature));
+        }
+        formatter.display_ja3_summary(Some(&fingerprint), None);
+        formatter.display_ja3_summary(None, None);
+    }
+
+    #[test]
+    fn summary_displays_cover_negative_load_balancer_and_rating() {
+        let args = crate::Args::default();
+        let formatter = ScannerFormatter::new(&args);
+        let lines = formatter.cdn_summary_lines(
+            Some(&CdnDetection {
+                is_cdn: false,
+                cdn_provider: None,
+                confidence: 0.0,
+                indicators: Vec::new(),
+            }),
+            Some(&LoadBalancerInfo {
+                detected: false,
+                lb_type: None,
+                sticky_sessions: false,
+                indicators: Vec::new(),
+            }),
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("CDN Detection:   No"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Load Balancer:   No"))
+        );
+
+        formatter.display_rating_summary(Some(&RatingResult {
+            grade: crate::rating::Grade::A,
+            score: 95,
+            certificate_score: 95,
+            protocol_score: 95,
+            key_exchange_score: 95,
+            cipher_strength_score: 95,
+            warnings: Vec::new(),
+        }));
+        formatter.display_rating_summary(None);
+    }
 }
