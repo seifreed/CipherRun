@@ -247,10 +247,10 @@ jobs:
           OTEL_RESOURCE_ATTRIBUTES: service.name=cipherrun-sdk-test
           RUST_TEST_THREADS: "1"
         run: |
-          cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 91.09 --lcov --output-path lcov.info
+          cargo llvm-cov --workspace --all-features --all-targets --locked --fail-under-lines 91.10 --lcov --output-path lcov.info
           cargo llvm-cov --workspace report --json --output-path coverage.json
           coverage_percent="$(jq -r '.data[0].totals.lines.percent' coverage.json)"
-          printf '### Rust workspace line coverage\n\nMeasured: %s%% (gate: 91.09%%)\n' "$coverage_percent" >> "$GITHUB_STEP_SUMMARY"
+          printf '### Rust workspace line coverage\n\nMeasured: %s%% (gate: 91.10%%)\n' "$coverage_percent" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive detailed coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
