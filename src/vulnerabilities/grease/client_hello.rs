@@ -484,6 +484,33 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_classify_grease_response_accepts_a_complete_server_hello() {
+        let mut response = vec![
+            0x16, 0x03, 0x03, 0x00, 0x2c, // TLS record header
+            0x02, 0x00, 0x00, 0x28, // ServerHello handshake header
+            0x03, 0x03, // TLS 1.2 legacy version
+        ];
+        response.extend_from_slice(&[0; 32]);
+        response.extend_from_slice(&[0x00, 0xc0, 0x2f, 0x00, 0x00, 0x00]);
+
+        assert_eq!(
+            classify_grease_response(&response),
+            GreaseTestOutcome::Tolerated
+        );
+    }
+
+    #[test]
+    fn test_classify_grease_response_bounds_unexpected_response_preview() {
+        let response = [0x17, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+        assert!(matches!(
+            classify_grease_response(&response),
+            GreaseTestOutcome::Inconclusive(reason)
+                if reason.contains("Unexpected response") && !reason.contains("0B")
+        ));
+    }
+
     #[tokio::test]
     async fn test_read_complete_response_handles_fragmented_alert() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
