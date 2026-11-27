@@ -1341,6 +1341,47 @@ mod tests {
     }
 
     #[test]
+    fn scoped_stats_enforce_memory_bounds_after_recording() {
+        let now = Instant::now();
+        let mut stats = ApiStats::default();
+        let scoped = stats.principal_mut_for("alice", None).unwrap();
+        scoped
+            .requests_last_hour
+            .extend(std::iter::repeat_n((now, 1), MAX_HOURLY_ENTRIES));
+        scoped
+            .request_timestamps
+            .extend(std::iter::repeat_n(now, MAX_TIMESTAMPS));
+        scoped
+            .scan_timestamps
+            .extend(std::iter::repeat_n(now, MAX_TIMESTAMPS));
+
+        stats.increment_requests_for_owner("alice", None);
+        stats.increment_scans_for_owner("alice", None);
+
+        let scoped = stats.principal_mut_for("alice", None).unwrap();
+        assert_eq!(scoped.requests_last_hour.len(), MAX_HOURLY_ENTRIES);
+        assert_eq!(scoped.request_timestamps.len(), MAX_TIMESTAMPS);
+        assert_eq!(scoped.scan_timestamps.len(), MAX_TIMESTAMPS);
+    }
+
+    #[test]
+    fn api_stats_increment_prunes_expired_timestamps() {
+        let now = Instant::now();
+        let expired = now - std::time::Duration::from_secs(8 * 24 * 60 * 60);
+        let mut stats = ApiStats::default();
+        stats.requests_last_hour.push_back((expired, 1));
+        stats.request_timestamps.push_back(expired);
+        stats.scan_timestamps.push_back(expired);
+
+        stats.increment_requests();
+        stats.increment_scans();
+
+        assert_eq!(stats.requests_last_hour.len(), 1);
+        assert_eq!(stats.request_timestamps.len(), 1);
+        assert_eq!(stats.scan_timestamps.len(), 1);
+    }
+
+    #[test]
     fn test_api_stats_requests_in_last_hour_saturates() {
         let now = Instant::now();
         let mut stats = ApiStats::default();
