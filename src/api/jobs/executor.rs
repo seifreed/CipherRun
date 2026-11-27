@@ -1470,6 +1470,18 @@ mod tests {
         assert_eq!(progress, [5, 10]);
     }
 
+    #[test]
+    fn default_scan_factory_constructs_the_production_scanner() {
+        let request = ScanExecutor::options_to_request("example.com:443", &ScanOptions::full())
+            .expect("valid scan request should be constructed");
+
+        let session = DefaultScanSessionFactory
+            .create(request)
+            .expect("production scanner should be constructed without network access");
+
+        drop(session);
+    }
+
     #[tokio::test]
     async fn invalid_scan_target_is_dead_lettered_and_broadcast_as_failed() {
         let mut job = ScanJob::new(
