@@ -386,6 +386,22 @@ mod tests {
     use std::sync::Arc;
 
     #[cfg(unix)]
+    fn openssl_stub(output: &str, exit_code: i32) -> (tempfile::TempDir, std::path::PathBuf) {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let dir = tempfile::tempdir().expect("temporary directory should be created");
+        let path = dir.path().join("openssl");
+        let script = format!("#!/bin/sh\nprintf '%s' '{output}'\nexit {exit_code}\n");
+        fs::write(&path, script).expect("script should be written");
+        let mut permissions = fs::metadata(&path)
+            .expect("script metadata should be available")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("script should be executable");
+        (dir, path)
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn openssl_subprocess_event_keeps_certificate_phase_span() {
         use std::{
@@ -468,6 +484,69 @@ mod tests {
         );
         assert_eq!(event["spans"][0]["phase"], "certificate");
         assert!(!output.contains("93.184.216.34"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn openssl_certificate_phase_parses_certificate_even_when_exit_is_nonzero() {
+        let generated = rcgen::generate_simple_self_signed(vec!["example.com".to_string()])
+            .expect("test certificate should be generated");
+        let (_dir, openssl) = openssl_stub(&generated.cert.pem(), 7);
+
+        let mut args = ScanRequest::default();
+        args.tls.openssl_path = Some(openssl);
+        let context = ScanContext::new(example_com_target(), Arc::new(args), None, None);
+
+        let chain = CertificatePhase::new()
+            .parse_certificate_chain_with_openssl(&context)
+            .await
+            .expect("a PEM certificate should be accepted despite the subprocess exit code");
+
+        assert_eq!(chain.chain_length, 1);
+        assert!(
+            chain.certificates[0]
+                .san
+                .iter()
+                .any(|name| name == "example.com")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn openssl_certificate_phase_reports_stderr_when_fetch_fails() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let dir = tempfile::tempdir().expect("temporary directory should be created");
+        let openssl = dir.path().join("openssl");
+        fs::write(
+            &openssl,
+            "#!/bin/sh\nprintf 'safe diagnostic' >&2\nexit 7\n",
+        )
+        .expect("script should be written");
+        let mut permissions = fs::metadata(&openssl)
+            .expect("script metadata should be available")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&openssl, permissions).expect("script should be executable");
+
+        let mut args = ScanRequest::default();
+        args.tls.openssl_path = Some(openssl);
+        let context = ScanContext::new(example_com_target(), Arc::new(args), None, None);
+
+        let error = CertificatePhase::new()
+            .parse_certificate_chain_with_openssl(&context)
+            .await
+            .expect_err("nonzero subprocess without PEM output should fail");
+
+        assert!(error.to_string().contains("safe diagnostic"));
+    }
+
+    #[test]
+    fn parse_pem_certificate_chain_rejects_invalid_pem() {
+        let error = CertificatePhase::parse_pem_certificate_chain("not a PEM certificate")
+            .expect_err("invalid PEM should be rejected");
+
+        assert!(!error.to_string().is_empty());
     }
 
     #[test]
