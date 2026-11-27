@@ -258,4 +258,64 @@ active = true
         assert!(err.to_string().contains("no API credentials configured"));
         assert!(err.to_string().contains("--api-config-example"));
     }
+
+    #[tokio::test]
+    async fn database_pool_is_optional_when_no_database_config_is_supplied() {
+        let command = ApiServerCommand::new(Args::default());
+
+        assert!(
+            command
+                .load_db_pool()
+                .await
+                .expect("server should run without persistence")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn database_pool_loads_sqlite_config_and_runs_migrations() {
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let database_path = directory.path().join("api-server.sqlite");
+        let config_path = directory.path().join("database.toml");
+        let config = crate::db::Config {
+            database: crate::db::DatabaseConfig::sqlite(database_path),
+            retention: None,
+        };
+        std::fs::write(
+            &config_path,
+            toml::to_string(&config).expect("database config should serialize"),
+        )
+        .expect("database config should be written");
+        let command = ApiServerCommand::new(Args {
+            database: crate::cli::DatabaseArgs {
+                config: Some(config_path),
+                ..Default::default()
+            },
+            ..Args::default()
+        });
+
+        let pool = command
+            .load_db_pool()
+            .await
+            .expect("SQLite database should initialize and migrate")
+            .expect("configured database should produce a pool");
+        assert!(matches!(pool.as_ref(), crate::db::DatabasePool::Sqlite(_)));
+    }
+
+    #[tokio::test]
+    async fn database_pool_rejects_malformed_config_before_connecting() {
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let config_path = directory.path().join("database.toml");
+        std::fs::write(&config_path, "[database]\ntype = \"sqlite\"\n")
+            .expect("database config should be written");
+        let command = ApiServerCommand::new(Args {
+            database: crate::cli::DatabaseArgs {
+                config: Some(config_path),
+                ..Default::default()
+            },
+            ..Args::default()
+        });
+
+        assert!(command.load_db_pool().await.is_err());
+    }
 }
