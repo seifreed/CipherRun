@@ -59,6 +59,16 @@ impl AnycastScanner {
             }
         };
 
+        self.scan_resolved_ips(ip_addresses, scan_started, resolution_started)
+            .await
+    }
+
+    async fn scan_resolved_ips(
+        &self,
+        ip_addresses: Vec<IpAddr>,
+        scan_started: Instant,
+        resolution_started: Instant,
+    ) -> Result<AnycastScanResults> {
         if ip_addresses.is_empty() {
             log_anycast_dns_resolution_failed(
                 u64::try_from(resolution_started.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -603,6 +613,41 @@ mod tests {
             .expect_err("invalid anycast hostname should fail before scanning");
 
         assert!(error.to_string().contains("Invalid anycast hostname"));
+    }
+
+    #[tokio::test]
+    async fn scan_resolved_ips_rejects_an_empty_address_list() {
+        let scanner = AnycastScanner::new("example.com".to_string(), 443, Args::default());
+
+        let error = scanner
+            .scan_resolved_ips(Vec::new(), Instant::now(), Instant::now())
+            .await
+            .expect_err("an empty DNS result must not produce a scan report");
+
+        assert!(matches!(error, TlsError::DnsResolutionFailed { .. }));
+    }
+
+    #[tokio::test]
+    async fn scan_resolved_ips_keeps_per_address_failures_in_the_report() {
+        let scanner = AnycastScanner::new("example.com".to_string(), 0, Args::default());
+
+        let result = scanner
+            .scan_resolved_ips(
+                vec!["192.0.2.1".parse().unwrap(), "2001:db8::1".parse().unwrap()],
+                Instant::now(),
+                Instant::now(),
+            )
+            .await
+            .expect("isolated per-address errors should be summarized as a result");
+
+        assert_eq!(result.total_ips, 2);
+        assert_eq!(result.successful_scans, 0);
+        assert_eq!(result.ip_results.len(), 2);
+        assert!(result.ip_results.iter().all(|scan| {
+            scan.error
+                .as_deref()
+                .is_some_and(|error| error.contains("Port must be between"))
+        }));
     }
 
     #[test]
