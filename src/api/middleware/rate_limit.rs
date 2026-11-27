@@ -794,6 +794,25 @@ mod tests {
     }
 
     #[test]
+    fn cloned_limiter_shares_quota_state_and_configuration() {
+        let limiter = PerKeyRateLimiter::new(1);
+        let cloned = limiter.clone();
+
+        assert!(Arc::ptr_eq(&limiter.limiters, &cloned.limiters));
+        assert!(Arc::ptr_eq(&limiter.access_index, &cloned.access_index));
+        assert_eq!(cloned.requests_per_minute, limiter.requests_per_minute);
+        assert_eq!(cloned.window_seconds, limiter.window_seconds);
+        assert!(matches!(
+            limiter.check("shared-key"),
+            RateLimitResult::Allowed { limit: 1, .. }
+        ));
+        assert!(matches!(
+            cloned.check("shared-key"),
+            RateLimitResult::Limited { limit: 1, .. }
+        ));
+    }
+
+    #[test]
     fn test_rate_limiter_zero_defaults() {
         let limiter = PerKeyRateLimiter::new(0);
         match limiter.check("key") {
