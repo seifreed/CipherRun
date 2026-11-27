@@ -633,8 +633,20 @@ mod tests {
                 .expect("test log buffer should remain available"),
         )
         .into_owned();
-        assert!(logs.contains("websocket.connection.established"), "{logs}");
-        assert!(logs.contains("websocket.connection.closed"), "{logs}");
+        let events = logs
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| {
+                event["fields"]["event_name"] == "websocket.connection.established"
+            })
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["event_name"] == "websocket.connection.closed")
+        );
 
         let _ = shutdown.send(());
     }
