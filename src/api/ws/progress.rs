@@ -449,10 +449,42 @@ mod tests {
     use super::*;
     use crate::api::models::response::ProgressMessage;
     use axum::{Router, extract::Path, routing::get};
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex, OnceLock};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+    static TEST_SUBSCRIBER: OnceLock<()> = OnceLock::new();
+    static TEST_LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
+
+    #[derive(Clone)]
+    struct TestLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct TestLogWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestLogWriter {
+        type Writer = TestLogWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            TestLogWriterGuard(Arc::clone(&self.0))
+        }
+    }
+
+    impl Write for TestLogWriterGuard {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| io::Error::other("test log buffer lock poisoned"))?
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     async fn scan_websocket_route(
         ws: WebSocketUpgrade,
@@ -476,21 +508,27 @@ mod tests {
             .expect("listener should bind");
         let addr = listener.local_addr().expect("address should resolve");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(std::io::sink)
-            .finish();
-        let dispatch = tracing::Dispatch::new(subscriber);
-        let server = tracing::dispatcher::with_default(&dispatch, || {
-            async move {
-                let _ = axum::serve(listener, app)
-                    .with_graceful_shutdown(async {
-                        let _ = shutdown_rx.await;
-                    })
-                    .await;
-            }
-            .instrument(tracing::info_span!("test.websocket.server"))
+        TEST_SUBSCRIBER.get_or_init(|| {
+            let logs = Arc::new(Mutex::new(Vec::new()));
+            let subscriber = tracing_subscriber::fmt()
+                .json()
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(TestLogWriter(Arc::clone(&logs)))
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("test subscriber should install once");
+            TEST_LOGS
+                .set(logs)
+                .expect("test log output should install once");
         });
+        let server = async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        }
+        .instrument(tracing::info_span!("test.websocket.server"));
         tokio::spawn(server);
         (format!("ws://{addr}"), shutdown_tx)
     }
@@ -586,6 +624,17 @@ mod tests {
         })
         .await
         .expect("websocket should stop after the client closes");
+
+        let logs = String::from_utf8_lossy(
+            &TEST_LOGS
+                .get()
+                .expect("test log output should be installed")
+                .lock()
+                .expect("test log buffer should remain available"),
+        )
+        .into_owned();
+        assert!(logs.contains("websocket.connection.established"), "{logs}");
+        assert!(logs.contains("websocket.connection.closed"), "{logs}");
 
         let _ = shutdown.send(());
     }
