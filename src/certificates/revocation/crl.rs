@@ -1,5 +1,6 @@
 use super::{
-    RevocationChecker, RevocationStatus, http::validate_revocation_http_url, parse_x509_der_exact,
+    RevocationChecker, RevocationStatus, http::ValidatedRevocationHttp,
+    http::validate_revocation_http_url, parse_x509_der_exact,
 };
 use crate::Result;
 use crate::certificates::parser::CertificateInfo;
@@ -113,6 +114,17 @@ impl RevocationChecker {
         // Download CRL. The URL comes from the untrusted certificate, so validate
         // and pin resolution before making the request.
         let validated = validate_revocation_http_url(crl_url, self.check_timeout).await?;
+        self.check_crl_with_validated_http(cert, issuer, validated, started)
+            .await
+    }
+
+    async fn check_crl_with_validated_http(
+        &self,
+        cert: &CertificateInfo,
+        issuer: Option<&CertificateInfo>,
+        validated: ValidatedRevocationHttp,
+        started: std::time::Instant,
+    ) -> Result<RevocationStatus> {
         let response = timeout(
             self.check_timeout,
             validated.client.get(validated.url).send(),
@@ -198,6 +210,60 @@ impl RevocationChecker {
 mod tests {
     use super::*;
     use crate::certificates::revocation::cert_with_raw_extension_der;
+    use std::time::Instant;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use url::Url;
+
+    async fn local_crl_responder(
+        response: Option<Vec<u8>>,
+    ) -> (ValidatedRevocationHttp, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("loopback listener should have an address");
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("CRL client should connect");
+            let mut stream = BufReader::new(stream);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let read = stream
+                    .read_until(b'\n', &mut line)
+                    .await
+                    .expect("CRL request headers should be readable");
+                if read == 0 || line == b"\r\n" {
+                    break;
+                }
+            }
+
+            if let Some(response) = response {
+                stream
+                    .get_mut()
+                    .write_all(&response)
+                    .await
+                    .expect("CRL response should be writable");
+            }
+        });
+        let url =
+            Url::parse(&format!("http://{address}/root.crl")).expect("loopback URL should parse");
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test client should build");
+        (ValidatedRevocationHttp { url, client }, task)
+    }
+
+    fn minimal_crl_der() -> Vec<u8> {
+        vec![
+            0x30, 0x35, 0x30, 0x20, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
+            0x01, 0x01, 0x0b, 0x05, 0x00, 0x30, 0x00, 0x17, 0x0d, b'2', b'5', b'0', b'1', b'0',
+            b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86,
+            0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x02, 0x00, 0x00,
+        ]
+    }
 
     fn crl_distribution_points_with_uri(uri: &[u8]) -> Vec<u8> {
         fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
@@ -390,16 +456,148 @@ mod tests {
 
     #[test]
     fn test_parse_crl_der_exact_rejects_trailing_bytes() {
-        let mut crl = vec![
-            0x30, 0x35, 0x30, 0x20, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
-            0x01, 0x01, 0x0b, 0x05, 0x00, 0x30, 0x00, 0x17, 0x0d, b'2', b'5', b'0', b'1', b'0',
-            b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z', 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86,
-            0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x02, 0x00, 0x00,
-        ];
+        let mut crl = minimal_crl_der();
         assert!(parse_crl_der_exact(&crl).is_ok());
 
         crl.push(0x00);
         let err = parse_crl_der_exact(&crl).expect_err("trailing CRL bytes should fail");
         assert!(format!("{err}").contains("trailing byte"));
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_rejects_responder_status() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_crl_responder(Some(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_vec(),
+        ))
+        .await;
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                None,
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("non-success CRL status should fail");
+        assert!(error.to_string().contains("CRL download failed: 503"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_rejects_invalid_der() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_crl_responder(Some(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n\xff".to_vec(),
+        ))
+        .await;
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                None,
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("malformed CRL body should fail parsing");
+        assert!(error.to_string().contains("Failed to parse CRL"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_rejects_oversized_body() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_crl_responder(Some(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 67108865\r\nConnection: close\r\n\r\n".to_vec(),
+        ))
+        .await;
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                None,
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("oversized CRL body should fail");
+        assert!(error.to_string().contains("CRL response too large"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_requires_issuer_after_parse() {
+        let checker = RevocationChecker::new(false);
+        let crl = minimal_crl_der();
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            crl.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&crl);
+        let (validated, responder) = local_crl_responder(Some(response)).await;
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                None,
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("CRL validation requires an issuer certificate");
+        assert!(error.to_string().contains("Issuer certificate required"));
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_rejects_invalid_signature() {
+        let checker = RevocationChecker::new(false);
+        let crl = minimal_crl_der();
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            crl.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&crl);
+        let (validated, responder) = local_crl_responder(Some(response)).await;
+        let issuer = cert_with_raw_extension_der("1.2.3.4", b"\x05\x00");
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                Some(&issuer),
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("invalid CRL signature should not be trusted");
+        assert!(
+            error
+                .to_string()
+                .contains("CRL signature verification failed")
+        );
+        responder.await.expect("responder task should finish");
+    }
+
+    #[tokio::test]
+    async fn check_crl_with_validated_http_reports_transport_failure() {
+        let checker = RevocationChecker::new(false);
+        let (validated, responder) = local_crl_responder(None).await;
+
+        let error = checker
+            .check_crl_with_validated_http(
+                &CertificateInfo::default(),
+                None,
+                validated,
+                Instant::now(),
+            )
+            .await
+            .expect_err("closed CRL connection should fail");
+        assert!(error.to_string().contains("error"));
+        responder.await.expect("responder task should finish");
     }
 }
