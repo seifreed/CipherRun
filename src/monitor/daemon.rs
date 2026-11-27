@@ -824,12 +824,16 @@ mod tests {
     }
 
     struct FixedCertificateClient {
+        parse_error: bool,
         certificate: Option<CertificateInfo>,
     }
 
     #[async_trait]
     impl MonitoredCertificateClient for FixedCertificateClient {
         async fn parse_target(&self, identifier: &str) -> Result<Target> {
+            if self.parse_error {
+                return Err(crate::TlsError::Other("invalid test target".to_string()));
+            }
             let (hostname, port) = identifier
                 .rsplit_once(':')
                 .and_then(|(hostname, port)| port.parse::<u16>().ok().map(|port| (hostname, port)))
@@ -882,6 +886,7 @@ mod tests {
             .expect("test domain should be accepted");
         let inventory = Arc::new(Mutex::new(inventory));
         let fetcher = FixedCertificateClient {
+            parse_error: false,
             certificate: Some(test_certificate(
                 (Utc::now() + chrono::Duration::days(90)).to_rfc3339(),
             )),
@@ -924,7 +929,10 @@ mod tests {
         let recorded_alerts = Arc::clone(&channel.alerts);
         let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
         alert_manager.add_channel(Box::new(channel));
-        let fetcher = FixedCertificateClient { certificate: None };
+        let fetcher = FixedCertificateClient {
+            parse_error: false,
+            certificate: None,
+        };
 
         MonitorDaemon::scan_domain_with_fetcher(
             &domain,
@@ -948,6 +956,132 @@ mod tests {
                 .await
                 .get_domain("example.com:443")
                 .is_some_and(|entry| entry.last_certificate.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn monitored_scan_target_parse_failure_sends_safe_failure_alert() {
+        let domain = MonitoredDomain::new("example.com".to_string(), 443);
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(domain.clone())
+            .expect("test domain should be accepted");
+        let inventory = Arc::new(Mutex::new(inventory));
+        let channel = RecordingChannel::default();
+        let recorded_alerts = Arc::clone(&channel.alerts);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(channel));
+
+        MonitorDaemon::scan_domain_with_fetcher(
+            &domain,
+            Arc::clone(&inventory),
+            Arc::new(alert_manager),
+            Arc::new(ChangeDetector::new()),
+            &FixedCertificateClient {
+                parse_error: true,
+                certificate: None,
+            },
+        )
+        .await
+        .expect("target parse failures should become scan outcomes");
+
+        let alerts = recorded_alerts.lock().await;
+        assert_eq!(alerts.len(), 1);
+        assert!(matches!(
+            alerts[0].alert_type,
+            AlertType::ScanFailure { .. }
+        ));
+        assert!(
+            inventory
+                .lock()
+                .await
+                .get_domain("example.com:443")
+                .is_some_and(|entry| entry.last_scan.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn monitored_scan_detects_certificate_changes_when_enabled() {
+        let mut domain = MonitoredDomain::new("example.com".to_string(), 443);
+        domain.alert_thresholds.on_change = true;
+        let mut previous = test_certificate((Utc::now() + chrono::Duration::days(90)).to_rfc3339());
+        previous.serial_number = "old-serial".to_string();
+        domain.last_certificate = Some(previous);
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(domain.clone())
+            .expect("test domain should be accepted");
+        let inventory = Arc::new(Mutex::new(inventory));
+        let channel = RecordingChannel::default();
+        let recorded_alerts = Arc::clone(&channel.alerts);
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(channel));
+
+        MonitorDaemon::scan_domain_with_fetcher(
+            &domain,
+            Arc::clone(&inventory),
+            Arc::new(alert_manager),
+            Arc::new(ChangeDetector::new()),
+            &FixedCertificateClient {
+                parse_error: false,
+                certificate: Some(test_certificate(
+                    (Utc::now() + chrono::Duration::days(90)).to_rfc3339(),
+                )),
+            },
+        )
+        .await
+        .expect("certificate change scan should complete");
+
+        let alerts = recorded_alerts.lock().await;
+        assert_eq!(alerts.len(), 1);
+        assert!(matches!(
+            alerts[0].alert_type,
+            AlertType::CertificateChange { .. }
+        ));
+        assert_eq!(
+            inventory
+                .lock()
+                .await
+                .get_domain("example.com:443")
+                .and_then(|entry| entry.last_certificate.as_ref())
+                .map(|certificate| certificate.serial_number.as_str()),
+            Some("123")
+        );
+    }
+
+    #[tokio::test]
+    async fn monitored_scan_keeps_inventory_current_when_expiry_alert_fails() {
+        let mut domain = MonitoredDomain::new("example.com".to_string(), 443);
+        domain.alert_thresholds.expiry_30d = true;
+        let mut inventory = CertificateInventory::new();
+        inventory
+            .add_domain(domain.clone())
+            .expect("test domain should be accepted");
+        let inventory = Arc::new(Mutex::new(inventory));
+        let mut alert_manager = AlertManager::new(1).expect("valid dedup window");
+        alert_manager.add_channel(Box::new(FailingChannel));
+
+        MonitorDaemon::scan_domain_with_fetcher(
+            &domain,
+            Arc::clone(&inventory),
+            Arc::new(alert_manager),
+            Arc::new(ChangeDetector::new()),
+            &FixedCertificateClient {
+                parse_error: false,
+                certificate: Some(test_certificate("not-a-date".to_string())),
+            },
+        )
+        .await
+        .expect("expiry alert failure should not fail the scan");
+
+        assert_eq!(
+            inventory
+                .lock()
+                .await
+                .get_domain("example.com:443")
+                .and_then(|entry| entry.last_certificate.as_ref())
+                .map(|certificate| certificate.serial_number.as_str()),
+            Some("123")
         );
     }
 
