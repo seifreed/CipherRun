@@ -24,10 +24,9 @@ mod record_builder;
 mod result;
 
 use crate::Result;
-use crate::protocols::{Protocol, ProtocolTester};
 use crate::utils::network::Target;
 use crate::utils::timing::{TimingOracleConfig, TimingSampleSet, detect_timing_oracle};
-use crate::utils::{VulnSslConfig, test_vuln_ssl_connection_outcome};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use result::{PoodleTestResult, PoodleVariant, PoodleVariantResult, TimingData};
@@ -38,6 +37,7 @@ pub struct PoodleTester<'a> {
     starttls: Option<crate::starttls::StarttlsProtocol>,
     starttls_hostname: Option<String>,
     starttls_server_mode: bool,
+    probe_backend: Arc<dyn network_probes::ProbeBackend>,
 }
 
 impl<'a> PoodleTester<'a> {
@@ -47,7 +47,14 @@ impl<'a> PoodleTester<'a> {
             starttls: None,
             starttls_hostname: None,
             starttls_server_mode: false,
+            probe_backend: Arc::new(network_probes::NetworkProbeBackend),
         }
+    }
+
+    #[cfg(test)]
+    fn with_probe_backend(mut self, probe_backend: Arc<dyn network_probes::ProbeBackend>) -> Self {
+        self.probe_backend = probe_backend;
+        self
     }
 
     /// Configure STARTTLS negotiation before each POODLE probe.
@@ -79,11 +86,15 @@ impl<'a> PoodleTester<'a> {
         let ssl3_supported = self.test_ssl3().await?;
 
         // Check CBC connectivity once (same check test_tls_poodle does internally).
-        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
-            .with_starttls(self.starttls)
-            .with_starttls_hostname(self.starttls_hostname.clone())
-            .with_starttls_server_mode(self.starttls_server_mode);
-        let cbc_connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
+        let cbc_connected = self
+            .probe_backend
+            .cbc_connection_outcome(
+                self.target,
+                self.starttls,
+                self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
+            )
+            .await?;
 
         // Run each sub-test once and reuse results for both tls_poodle and variants list.
         let zombie = self.test_zombie_poodle().await?;
@@ -147,30 +158,22 @@ impl<'a> PoodleTester<'a> {
 
     /// Test if SSL 3.0 is supported
     async fn test_ssl3(&self) -> Result<Option<bool>> {
-        let protocol = ProtocolTester::new(self.target.clone())
-            .with_connect_timeout(Duration::from_secs(5))
-            .with_read_timeout(Duration::from_secs(5))
-            .with_test_all_ips(true)
-            .with_starttls(self.starttls)
-            .with_starttls_server_mode(self.starttls_server_mode)
-            .test_protocol(Protocol::SSLv3)
-            .await?;
-
-        Ok(if protocol.supported {
-            Some(true)
-        } else if protocol.inconclusive {
-            None
-        } else {
-            Some(false)
-        })
+        self.probe_backend
+            .ssl3_supported(self.target, self.starttls, self.starttls_server_mode)
+            .await
     }
 
     /// Test for TLS POODLE vulnerability
     async fn test_tls_poodle(&self) -> Result<Option<bool>> {
-        let config = VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
-            .with_starttls(self.starttls)
-            .with_starttls_server_mode(self.starttls_server_mode);
-        let connected = test_vuln_ssl_connection_outcome(self.target, config).await?;
+        let connected = self
+            .probe_backend
+            .cbc_connection_outcome(
+                self.target,
+                self.starttls,
+                self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
+            )
+            .await?;
 
         if connected != Some(true) {
             return Ok(None);
@@ -218,13 +221,15 @@ impl<'a> PoodleTester<'a> {
         vulnerable_msg: &str,
         not_vulnerable_msg: &str,
     ) -> Result<PoodleVariantResult> {
-        match network_probes::supports_cbc_ciphers(
-            self.target,
-            self.starttls,
-            self.starttls_hostname.as_deref(),
-            self.starttls_server_mode,
-        )
-        .await?
+        match self
+            .probe_backend
+            .supports_cbc_ciphers(
+                self.target,
+                self.starttls,
+                self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
+            )
+            .await?
         {
             Some(true) => {}
             Some(false) => return Ok(Self::cbc_not_supported_result(variant)),
@@ -237,25 +242,29 @@ impl<'a> PoodleTester<'a> {
         let mut responses_b = Vec::new();
 
         for _ in 0..ITERATIONS {
-            if let Ok(response) = network_probes::send_malformed_record(
-                self.target,
-                record_type_a,
-                self.starttls,
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-            )
-            .await
+            if let Ok(response) = self
+                .probe_backend
+                .send_malformed_record(
+                    self.target,
+                    record_type_a,
+                    self.starttls,
+                    self.starttls_hostname.as_deref(),
+                    self.starttls_server_mode,
+                )
+                .await
             {
                 responses_a.push(response);
             }
-            if let Ok(response) = network_probes::send_malformed_record(
-                self.target,
-                record_type_b,
-                self.starttls,
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-            )
-            .await
+            if let Ok(response) = self
+                .probe_backend
+                .send_malformed_record(
+                    self.target,
+                    record_type_b,
+                    self.starttls,
+                    self.starttls_hostname.as_deref(),
+                    self.starttls_server_mode,
+                )
+                .await
             {
                 responses_b.push(response);
             }
@@ -310,13 +319,15 @@ impl<'a> PoodleTester<'a> {
 
     /// Test for Sleeping POODLE - Timing-based padding oracle
     async fn test_sleeping_poodle(&self) -> Result<PoodleVariantResult> {
-        match network_probes::supports_cbc_ciphers(
-            self.target,
-            self.starttls,
-            self.starttls_hostname.as_deref(),
-            self.starttls_server_mode,
-        )
-        .await?
+        match self
+            .probe_backend
+            .supports_cbc_ciphers(
+                self.target,
+                self.starttls,
+                self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
+            )
+            .await?
         {
             Some(true) => {}
             Some(false) => {
@@ -333,25 +344,29 @@ impl<'a> PoodleTester<'a> {
         let mut invalid_timings = TimingSampleSet::with_capacity(SAMPLES);
 
         for _ in 0..SAMPLES {
-            if let Ok(timing) = network_probes::measure_response_time(
-                self.target,
-                MalformedRecordType::ValidPaddingInvalidMac,
-                self.starttls,
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-            )
-            .await
+            if let Ok(timing) = self
+                .probe_backend
+                .measure_response_time(
+                    self.target,
+                    MalformedRecordType::ValidPaddingInvalidMac,
+                    self.starttls,
+                    self.starttls_hostname.as_deref(),
+                    self.starttls_server_mode,
+                )
+                .await
             {
                 valid_timings.push(timing);
             }
-            if let Ok(timing) = network_probes::measure_response_time(
-                self.target,
-                MalformedRecordType::InvalidPaddingInvalidMac,
-                self.starttls,
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-            )
-            .await
+            if let Ok(timing) = self
+                .probe_backend
+                .measure_response_time(
+                    self.target,
+                    MalformedRecordType::InvalidPaddingInvalidMac,
+                    self.starttls,
+                    self.starttls_hostname.as_deref(),
+                    self.starttls_server_mode,
+                )
+                .await
             {
                 invalid_timings.push(timing);
             }
@@ -519,13 +534,15 @@ impl<'a> PoodleTester<'a> {
             });
         }
 
-        match network_probes::supports_cbc_ciphers(
-            self.target,
-            self.starttls,
-            self.starttls_hostname.as_deref(),
-            self.starttls_server_mode,
-        )
-        .await?
+        match self
+            .probe_backend
+            .supports_cbc_ciphers(
+                self.target,
+                self.starttls,
+                self.starttls_hostname.as_deref(),
+                self.starttls_server_mode,
+            )
+            .await?
         {
             Some(true) => {}
             Some(false) => {
@@ -545,14 +562,16 @@ impl<'a> PoodleTester<'a> {
         const ITERATIONS: usize = 3;
         let mut probe_anomalies = 0;
         for _ in 0..ITERATIONS {
-            match network_probes::send_malformed_record(
-                self.target,
-                MalformedRecordType::ZeroLengthFragment,
-                self.starttls,
-                self.starttls_hostname.as_deref(),
-                self.starttls_server_mode,
-            )
-            .await
+            match self
+                .probe_backend
+                .send_malformed_record(
+                    self.target,
+                    MalformedRecordType::ZeroLengthFragment,
+                    self.starttls,
+                    self.starttls_hostname.as_deref(),
+                    self.starttls_server_mode,
+                )
+                .await
             {
                 Ok(response)
                     if !response.connection_accepted || response.shows_differential_behavior =>

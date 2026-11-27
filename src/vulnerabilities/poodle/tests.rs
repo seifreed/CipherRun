@@ -1,6 +1,93 @@
 use super::*;
 use crate::constants::{CONTENT_TYPE_APPLICATION_DATA, VERSION_TLS_1_2};
 use crate::utils::test_support::example_com_loopback_target;
+use std::sync::Arc;
+
+struct ScriptedProbeBackend {
+    ssl3_supported: Option<bool>,
+    cbc_connection: Option<bool>,
+    cbc_supported: Option<bool>,
+}
+
+#[async_trait::async_trait]
+impl network_probes::ProbeBackend for ScriptedProbeBackend {
+    async fn ssl3_supported(
+        &self,
+        _target: &Target,
+        _starttls: Option<crate::starttls::StarttlsProtocol>,
+        _starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        Ok(self.ssl3_supported)
+    }
+
+    async fn cbc_connection_outcome(
+        &self,
+        _target: &Target,
+        _starttls: Option<crate::starttls::StarttlsProtocol>,
+        _starttls_hostname: Option<&str>,
+        _starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        Ok(self.cbc_connection)
+    }
+
+    async fn supports_cbc_ciphers(
+        &self,
+        _target: &Target,
+        _starttls: Option<crate::starttls::StarttlsProtocol>,
+        _starttls_hostname: Option<&str>,
+        _starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        Ok(self.cbc_supported)
+    }
+
+    async fn send_malformed_record(
+        &self,
+        _target: &Target,
+        record_type: MalformedRecordType,
+        _starttls: Option<crate::starttls::StarttlsProtocol>,
+        _starttls_hostname: Option<&str>,
+        _starttls_server_mode: bool,
+    ) -> Result<ServerResponse> {
+        Ok(ServerResponse {
+            connection_accepted: true,
+            alert_type: match record_type {
+                MalformedRecordType::InvalidPaddingInvalidMac => None,
+                MalformedRecordType::InvalidPaddingValidMac
+                | MalformedRecordType::ValidPaddingInvalidMac => Some(20),
+                MalformedRecordType::ZeroLengthFragment => None,
+            },
+            response_time_ms: 1.0,
+            shows_differential_behavior: false,
+        })
+    }
+
+    async fn measure_response_time(
+        &self,
+        _target: &Target,
+        record_type: MalformedRecordType,
+        _starttls: Option<crate::starttls::StarttlsProtocol>,
+        _starttls_hostname: Option<&str>,
+        _starttls_server_mode: bool,
+    ) -> Result<f64> {
+        Ok(match record_type {
+            MalformedRecordType::ValidPaddingInvalidMac => 100.0,
+            _ => 1.0,
+        })
+    }
+}
+
+fn scripted_tester(
+    target: &Target,
+    ssl3_supported: Option<bool>,
+    cbc_connection: Option<bool>,
+    cbc_supported: Option<bool>,
+) -> PoodleTester<'_> {
+    PoodleTester::new(target).with_probe_backend(Arc::new(ScriptedProbeBackend {
+        ssl3_supported,
+        cbc_connection,
+        cbc_supported,
+    }))
+}
 
 fn server_responses(
     connection_accepted: bool,
@@ -266,6 +353,66 @@ async fn test_openssl_zero_length_early_outcomes_do_not_probe_the_network() {
     assert_eq!(unknown.variant, PoodleVariant::OpenSsl0Length);
     assert!(unknown.inconclusive);
     assert!(!unknown.vulnerable);
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_all_variants_exercises_deterministic_response_and_timing_probes() {
+    let target = example_com_loopback_target(443);
+    let tester = scripted_tester(&target, Some(true), Some(true), Some(true));
+
+    let result = tester
+        .test_all_variants()
+        .await
+        .expect("scripted probes should complete");
+
+    assert_eq!(result.variants.len(), 6);
+    assert_eq!(result.ssl3_supported, Some(true));
+    assert_eq!(result.tls_poodle, Some(true));
+    assert!(
+        result.variants[2].vulnerable,
+        "Zombie POODLE should detect the scripted alert oracle"
+    );
+    assert!(
+        result.variants[3].vulnerable,
+        "GOLDENDOODLE should detect the scripted alert oracle"
+    );
+    assert!(
+        result.variants[4].inconclusive,
+        "remote timing evidence must remain inconclusive"
+    );
+    assert!(
+        result.variants[5].inconclusive,
+        "the zero-length probe cannot confirm memory disclosure"
+    );
+}
+
+#[tokio::test]
+async fn test_variant_probe_outcomes_cover_unsupported_and_inconclusive_cbc() {
+    let target = example_com_loopback_target(443);
+
+    for cbc_supported in [Some(false), None] {
+        let tester = scripted_tester(&target, Some(false), Some(false), cbc_supported);
+        let response_oracle = tester
+            .test_zombie_poodle()
+            .await
+            .expect("CBC outcome should be returned");
+        assert!(!response_oracle.vulnerable);
+        assert_eq!(response_oracle.inconclusive, cbc_supported.is_none());
+
+        let timing_oracle = tester
+            .test_sleeping_poodle()
+            .await
+            .expect("CBC outcome should be returned");
+        assert!(!timing_oracle.vulnerable);
+        assert_eq!(timing_oracle.inconclusive, cbc_supported.is_none());
+
+        let zero_length = tester
+            .test_openssl_0length(Some(true))
+            .await
+            .expect("CBC outcome should be returned");
+        assert!(!zero_length.vulnerable);
+        assert_eq!(zero_length.inconclusive, cbc_supported.is_none());
+    }
 }
 
 #[test]

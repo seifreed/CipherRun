@@ -14,6 +14,144 @@ use tokio::time::{Instant, timeout};
 use super::record_builder;
 use super::{MalformedRecordType, ServerResponse};
 
+/// Network boundary for POODLE probing. Keeping these operations behind one
+/// seam lets the detector's decision paths run against deterministic responses.
+#[async_trait::async_trait]
+pub(super) trait ProbeBackend: Send + Sync {
+    async fn ssl3_supported(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>>;
+
+    async fn cbc_connection_outcome(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>>;
+
+    async fn supports_cbc_ciphers(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>>;
+
+    async fn send_malformed_record(
+        &self,
+        target: &Target,
+        record_type: MalformedRecordType,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<ServerResponse>;
+
+    async fn measure_response_time(
+        &self,
+        target: &Target,
+        record_type: MalformedRecordType,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<f64>;
+}
+
+pub(super) struct NetworkProbeBackend;
+
+#[async_trait::async_trait]
+impl ProbeBackend for NetworkProbeBackend {
+    async fn ssl3_supported(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        let protocol = crate::protocols::ProtocolTester::new(target.clone())
+            .with_connect_timeout(Duration::from_secs(5))
+            .with_read_timeout(Duration::from_secs(5))
+            .with_test_all_ips(true)
+            .with_starttls(starttls)
+            .with_starttls_server_mode(starttls_server_mode)
+            .test_protocol(crate::protocols::Protocol::SSLv3)
+            .await?;
+
+        Ok(if protocol.supported {
+            Some(true)
+        } else if protocol.inconclusive {
+            None
+        } else {
+            Some(false)
+        })
+    }
+
+    async fn cbc_connection_outcome(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        test_vuln_ssl_connection_outcome(
+            target,
+            VulnSslConfig::tls10_with_ciphers("AES128-SHA:AES256-SHA:DES-CBC3-SHA")
+                .with_starttls(starttls)
+                .with_starttls_hostname(starttls_hostname.map(str::to_owned))
+                .with_starttls_server_mode(starttls_server_mode),
+        )
+        .await
+    }
+
+    async fn supports_cbc_ciphers(
+        &self,
+        target: &Target,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<Option<bool>> {
+        supports_cbc_ciphers(target, starttls, starttls_hostname, starttls_server_mode).await
+    }
+
+    async fn send_malformed_record(
+        &self,
+        target: &Target,
+        record_type: MalformedRecordType,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<ServerResponse> {
+        send_malformed_record(
+            target,
+            record_type,
+            starttls,
+            starttls_hostname,
+            starttls_server_mode,
+        )
+        .await
+    }
+
+    async fn measure_response_time(
+        &self,
+        target: &Target,
+        record_type: MalformedRecordType,
+        starttls: Option<crate::starttls::StarttlsProtocol>,
+        starttls_hostname: Option<&str>,
+        starttls_server_mode: bool,
+    ) -> Result<f64> {
+        measure_response_time(
+            target,
+            record_type,
+            starttls,
+            starttls_hostname,
+            starttls_server_mode,
+        )
+        .await
+    }
+}
+
 /// Scan a response buffer for a TLS Alert record and return the alert description byte.
 ///
 /// After sending a malformed record, the response buffer may contain leftover handshake
