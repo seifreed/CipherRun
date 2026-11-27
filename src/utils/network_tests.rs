@@ -743,6 +743,41 @@ async fn test_resolve_hostname_rejects_obfuscated_ip_notation() {
 }
 
 #[test]
+fn transport_anomaly_classifier_recognizes_case_insensitive_network_failures() {
+    for error in [
+        "unexpected EOF while reading",
+        "Connection reset",
+        "reset by peer",
+        "connection refused",
+        "operation timed out",
+        "request timeout",
+        "socket closed",
+        "no protocols available",
+        "shutdown while in init",
+        "OpenSSL errno=54",
+    ] {
+        assert!(
+            is_transport_anomaly_error(error),
+            "expected a transport anomaly: {error}"
+        );
+    }
+}
+
+#[test]
+fn transport_anomaly_classifier_does_not_mistake_tls_alerts_for_transport_errors() {
+    for error in [
+        "tlsv1 alert handshake failure",
+        "unsupported protocol",
+        "no shared cipher",
+    ] {
+        assert!(
+            !is_transport_anomaly_error(error),
+            "protocol-level rejection should remain distinguishable: {error}"
+        );
+    }
+}
+
+#[test]
 fn test_primary_ip() {
     let target = Target::with_ips(
         "example.com".to_string(),
