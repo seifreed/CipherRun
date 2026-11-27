@@ -22,6 +22,35 @@ const WEBHOOK_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_SCAN_ATTEMPTS: u32 = 3;
 const JOB_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
+#[async_trait::async_trait]
+trait ScanSession: Send + Sync {
+    async fn initialize(&self) -> Result<()>;
+    async fn run(&self) -> Result<ScanResults>;
+}
+
+trait ScanSessionFactory: Send + Sync {
+    fn create(&self, request: ScanRequest) -> Result<Box<dyn ScanSession>>;
+}
+
+struct DefaultScanSessionFactory;
+
+impl ScanSessionFactory for DefaultScanSessionFactory {
+    fn create(&self, request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+        Ok(Box::new(Scanner::new(request)?))
+    }
+}
+
+#[async_trait::async_trait]
+impl ScanSession for Scanner {
+    async fn initialize(&self) -> Result<()> {
+        Scanner::initialize(self).await
+    }
+
+    async fn run(&self) -> Result<ScanResults> {
+        Scanner::run(self).await
+    }
+}
+
 /// Scan executor for processing background jobs
 pub struct ScanExecutor {
     job_queue: Arc<dyn JobQueue>,
@@ -678,6 +707,23 @@ impl ScanExecutor {
         progress_tx: &broadcast::Sender<ProgressMessage>,
         worker_allowed_cidrs: &[ipnetwork::IpNetwork],
     ) -> Result<ScanResults> {
+        Self::run_scan_with_factory(
+            job,
+            queue,
+            progress_tx,
+            worker_allowed_cidrs,
+            &DefaultScanSessionFactory,
+        )
+        .await
+    }
+
+    async fn run_scan_with_factory(
+        job: &ScanJob,
+        queue: &Arc<dyn JobQueue>,
+        progress_tx: &broadcast::Sender<ProgressMessage>,
+        worker_allowed_cidrs: &[ipnetwork::IpNetwork],
+        factory: &dyn ScanSessionFactory,
+    ) -> Result<ScanResults> {
         let request = Self::options_to_request_with_worker_scope(
             &job.target,
             &job.options,
@@ -687,7 +733,7 @@ impl ScanExecutor {
         Self::report_running_progress(job, queue, progress_tx, 5, "Initializing scanner").await;
 
         // Create scanner
-        let scanner = Scanner::new(request)?;
+        let scanner = factory.create(request)?;
 
         Self::report_running_progress(job, queue, progress_tx, 10, "Resolving target").await;
 
@@ -1320,6 +1366,108 @@ mod tests {
             .expect_err("invalid targets should fail before a network scan");
 
         assert!(matches!(error, TlsError::Other(_)));
+    }
+
+    struct RecordingScanSession {
+        target: String,
+        calls: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ScanSession for RecordingScanSession {
+        async fn initialize(&self) -> Result<()> {
+            self.calls.lock().unwrap().push("initialize");
+            Ok(())
+        }
+
+        async fn run(&self) -> Result<ScanResults> {
+            self.calls.lock().unwrap().push("run");
+            Ok(ScanResults {
+                target: self.target.clone(),
+                ..ScanResults::default()
+            })
+        }
+    }
+
+    struct RecordingScanSessionFactory {
+        calls: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl ScanSessionFactory for RecordingScanSessionFactory {
+        fn create(&self, request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+            self.calls.lock().unwrap().push("create");
+            Ok(Box::new(RecordingScanSession {
+                target: request.target.unwrap_or_default(),
+                calls: Arc::clone(&self.calls),
+            }))
+        }
+    }
+
+    struct FailingScanSession;
+
+    #[async_trait::async_trait]
+    impl ScanSession for FailingScanSession {
+        async fn initialize(&self) -> Result<()> {
+            Err(TlsError::Other("scanner initialization failed".into()))
+        }
+
+        async fn run(&self) -> Result<ScanResults> {
+            unreachable!("scan must not run after initialization fails")
+        }
+    }
+
+    struct FailingScanSessionFactory;
+
+    impl ScanSessionFactory for FailingScanSessionFactory {
+        fn create(&self, _request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+            Ok(Box::new(FailingScanSession))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_scan_reports_progress_and_runs_the_injected_session() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let factory = RecordingScanSessionFactory {
+            calls: Arc::clone(&calls),
+        };
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(super::super::InMemoryJobQueue::new(1));
+        let (progress_tx, mut progress_rx) = broadcast::channel(8);
+
+        let results =
+            ScanExecutor::run_scan_with_factory(&job, &queue, &progress_tx, &[], &factory)
+                .await
+                .expect("injected scanner session should complete");
+
+        assert_eq!(results.target, "example.com:443");
+        assert_eq!(*calls.lock().unwrap(), ["create", "initialize", "run"]);
+        let progress = std::iter::from_fn(|| progress_rx.try_recv().ok())
+            .map(|message| message.progress)
+            .collect::<Vec<_>>();
+        assert_eq!(progress, [5, 10, 15, 95]);
+    }
+
+    #[tokio::test]
+    async fn run_scan_stops_progress_when_scanner_initialization_fails() {
+        let job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        let queue: Arc<dyn JobQueue> = Arc::new(super::super::InMemoryJobQueue::new(1));
+        let (progress_tx, mut progress_rx) = broadcast::channel(8);
+
+        let error = ScanExecutor::run_scan_with_factory(
+            &job,
+            &queue,
+            &progress_tx,
+            &[],
+            &FailingScanSessionFactory,
+        )
+        .await
+        .expect_err("scanner initialization errors should propagate");
+
+        assert!(error.to_string().contains("scanner initialization failed"));
+        let progress = std::iter::from_fn(|| progress_rx.try_recv().ok())
+            .map(|message| message.progress)
+            .collect::<Vec<_>>();
+        assert_eq!(progress, [5, 10]);
     }
 
     #[tokio::test]
