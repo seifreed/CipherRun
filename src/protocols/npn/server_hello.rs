@@ -194,6 +194,35 @@ fn parse_protocol_list(
 mod tests {
     use super::*;
 
+    fn server_hello(extensions: &[u8]) -> Vec<u8> {
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0; 32]);
+        body.push(0);
+        body.extend_from_slice(&[0x13, 0x01, 0]);
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(extensions);
+
+        let handshake_len = body.len();
+        let record_len = handshake_len + 4;
+        let mut response = vec![0x16, 0x03, 0x03];
+        response.extend_from_slice(&(record_len as u16).to_be_bytes());
+        response.push(0x02);
+        response.extend_from_slice(&[
+            ((handshake_len >> 16) & 0xff) as u8,
+            ((handshake_len >> 8) & 0xff) as u8,
+            (handshake_len & 0xff) as u8,
+        ]);
+        response.extend_from_slice(&body);
+        response
+    }
+
+    fn npn_extension(protocols: &[u8]) -> Vec<u8> {
+        let mut extension = vec![0x33, 0x74];
+        extension.extend_from_slice(&(protocols.len() as u16).to_be_bytes());
+        extension.extend_from_slice(protocols);
+        extension
+    }
+
     #[test]
     fn rejects_zero_length_protocol_names() {
         let mut protocols = Vec::new();
@@ -211,5 +240,103 @@ mod tests {
         parse_protocol_list(&data, 0, data.len(), &mut protocols)
             .expect("protocol list should parse");
         assert_eq!(protocols, ["h2", "http/1.1"]);
+    }
+
+    #[test]
+    fn parses_npn_serverhello_protocols_and_empty_extension_blocks() {
+        let protocols = [
+            0x02, b'h', b'2', 0x08, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',
+        ];
+        let response = server_hello(&npn_extension(&protocols));
+
+        assert!(is_parseable(&response));
+        assert_eq!(parse_npn_protocols(&response).unwrap(), ["h2", "http/1.1"]);
+
+        let response = server_hello(&[]);
+        assert!(is_parseable(&response));
+        assert!(parse_npn_protocols(&response).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_npn_serverhello_record_and_handshake_bounds() {
+        let valid = server_hello(&[]);
+        assert!(!is_parseable(&[]));
+        assert!(!is_parseable(&[0; 47]));
+        assert!(parse_npn_protocols(&valid[..43]).unwrap().is_empty());
+
+        let mut wrong_record_type = valid.clone();
+        wrong_record_type[0] = 0x15;
+        assert!(!is_parseable(&wrong_record_type));
+        assert!(parse_npn_protocols(&wrong_record_type).unwrap().is_empty());
+
+        let mut wrong_handshake_type = valid.clone();
+        wrong_handshake_type[5] = 0x01;
+        assert!(!is_parseable(&wrong_handshake_type));
+        assert!(
+            parse_npn_protocols(&wrong_handshake_type)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut truncated_record = valid.clone();
+        truncated_record[4] = truncated_record[4].saturating_sub(1);
+        assert!(!is_parseable(&truncated_record));
+        assert!(parse_npn_protocols(&truncated_record).is_err());
+
+        let mut handshake_past_record = valid;
+        handshake_past_record[8] = handshake_past_record[8].saturating_add(1);
+        assert!(!is_parseable(&handshake_past_record));
+        assert!(parse_npn_protocols(&handshake_past_record).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_npn_extension_and_protocol_lengths() {
+        let mut too_short_handshake = server_hello(&[]);
+        too_short_handshake[8] = 37;
+        assert!(parse_npn_protocols(&too_short_handshake).is_err());
+
+        let mut missing_extension_length = server_hello(&[]);
+        missing_extension_length[8] = 38;
+        assert!(
+            parse_npn_protocols(&missing_extension_length)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut extension_data_overrun = server_hello(&npn_extension(&[0x02, b'h']));
+        extension_data_overrun[52] = 0x03;
+        assert!(parse_npn_protocols(&extension_data_overrun).is_err());
+
+        let invalid_utf8 = server_hello(&npn_extension(&[0x01, 0xff]));
+        assert!(parse_npn_protocols(&invalid_utf8).is_err());
+
+        let mut extension_length_mismatch = server_hello(&npn_extension(&[0x01, b'h']));
+        extension_length_mismatch[48] = 0;
+        assert!(parse_npn_protocols(&extension_length_mismatch).is_err());
+
+        let truncated_extension_header = server_hello(&[0x33, 0x74, 0x00, 0x00, 0xaa]);
+        assert!(parse_npn_protocols(&truncated_extension_header).is_err());
+
+        let mut zero_protocol_name = Vec::from([0x00]);
+        let response = server_hello(&npn_extension(&zero_protocol_name));
+        assert!(parse_npn_protocols(&response).is_err());
+
+        zero_protocol_name[0] = 2;
+        let response = server_hello(&npn_extension(&zero_protocol_name));
+        assert!(parse_npn_protocols(&response).is_err());
+    }
+
+    #[test]
+    fn stops_parsing_protocol_names_at_the_configured_limit() {
+        let mut list = Vec::new();
+        for _ in 0..=MAX_PROTOCOLS {
+            list.extend_from_slice(&[1, b'x']);
+        }
+
+        let mut protocols = Vec::new();
+        parse_protocol_list(&list, 0, list.len(), &mut protocols)
+            .expect("protocol list should stop at its configured limit");
+
+        assert_eq!(protocols.len(), MAX_PROTOCOLS);
     }
 }
