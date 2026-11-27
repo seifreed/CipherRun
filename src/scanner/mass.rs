@@ -712,6 +712,43 @@ mod tests {
         assert_eq!(scanner.targets.len(), 2);
     }
 
+    fn invalid_target_scanner(targets: Vec<String>) -> MassScanner {
+        let mut request = ScanRequest::default();
+        request.scan.scope.all = true;
+        MassScanner::new(request, MassScanConfig::default(), targets)
+            .with_callback(Arc::new(SilentMassProgress))
+    }
+
+    #[tokio::test]
+    async fn serial_scan_reports_each_invalid_target_without_network_access() {
+        let scanner = invalid_target_scanner(vec![String::new(), "not a target".to_string()]);
+
+        let results = scanner
+            .scan_serial()
+            .await
+            .expect("per-target failures should be returned as scan results");
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(_, result)| result.is_err()));
+        assert_eq!(results[0].0, "");
+        assert_eq!(results[1].0, "not a target");
+    }
+
+    #[tokio::test]
+    async fn parallel_scan_reports_each_invalid_target_without_network_access() {
+        let scanner = invalid_target_scanner(vec![String::new(), "not a target".to_string()]);
+
+        let results = scanner
+            .scan_parallel()
+            .await
+            .expect("per-target failures should be returned as scan results");
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(_, result)| result.is_err()));
+        assert_eq!(results[0].0, "");
+        assert_eq!(results[1].0, "not a target");
+    }
+
     #[test]
     fn test_mass_scanner_from_file_parses_targets() {
         let mut path = std::env::temp_dir();
