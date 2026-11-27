@@ -4,7 +4,7 @@
 use crate::db::config::{DatabaseConfig, DatabaseType};
 use sqlx::{ConnectOptions, Pool, Postgres, Row, Sqlite};
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Sanitize a SQL identifier (table name, column name) to prevent injection.
 ///
@@ -255,35 +255,7 @@ impl DatabasePool {
 
         let pool = match config.db_type {
             DatabaseType::Postgres => {
-                let connection_string = config.connection_string()?;
-                let max_connections = config.max_connections.unwrap_or(10);
-                if max_connections == 0 {
-                    return Err(crate::TlsError::DatabaseError(
-                        "max_connections must be greater than 0".to_string(),
-                    ));
-                }
-
-                let connect_options =
-                    sqlx::postgres::PgConnectOptions::from_str(&connection_string)
-                        .map_err(|_| {
-                            crate::TlsError::DatabaseError(
-                                "PostgreSQL connection options are invalid".to_string(),
-                            )
-                        })?
-                        .disable_statement_logging();
-                let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(max_connections)
-                    .acquire_timeout(crate::constants::DB_ACQUIRE_TIMEOUT)
-                    .connect_with(connect_options)
-                    .await
-                    .map_err(|e| {
-                        crate::TlsError::DatabaseError(format!(
-                            "PostgreSQL connection failed: {}",
-                            e
-                        ))
-                    })?;
-
-                DatabasePool::Postgres(pool)
+                Self::connect_postgres(config, crate::constants::DB_ACQUIRE_TIMEOUT).await?
             }
             DatabaseType::Sqlite => {
                 let connection_string = config.connection_string()?;
@@ -338,6 +310,37 @@ impl DatabasePool {
         );
 
         Ok(pool)
+    }
+
+    async fn connect_postgres(
+        config: &DatabaseConfig,
+        acquire_timeout: Duration,
+    ) -> crate::Result<Self> {
+        let connection_string = config.connection_string()?;
+        let max_connections = config.max_connections.unwrap_or(10);
+        if max_connections == 0 {
+            return Err(crate::TlsError::DatabaseError(
+                "max_connections must be greater than 0".to_string(),
+            ));
+        }
+
+        let connect_options = sqlx::postgres::PgConnectOptions::from_str(&connection_string)
+            .map_err(|_| {
+                crate::TlsError::DatabaseError(
+                    "PostgreSQL connection options are invalid".to_string(),
+                )
+            })?
+            .disable_statement_logging();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(max_connections)
+            .acquire_timeout(acquire_timeout)
+            .connect_with(connect_options)
+            .await
+            .map_err(|e| {
+                crate::TlsError::DatabaseError(format!("PostgreSQL connection failed: {e}"))
+            })?;
+
+        Ok(Self::Postgres(pool))
     }
 
     /// Run a simple health check query (`SELECT 1`) against the database
@@ -1010,6 +1013,108 @@ mod tests {
             .unwrap();
         assert_eq!(tenantless.len(), 1);
         assert_eq!(tenantless[0].0, "public.example");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
+    async fn sqlite_pool_reports_failure_when_the_database_path_is_a_directory() {
+        let directory = tempfile::tempdir().expect("SQLite test directory should be created");
+        let config = DatabaseConfig::sqlite(directory.path().to_path_buf());
+
+        let error = match DatabasePool::new(&config).await {
+            Ok(pool) => {
+                pool.close().await;
+                panic!("a directory cannot be opened as a SQLite database file");
+            }
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, crate::TlsError::DatabaseError(_)));
+        assert!(error.to_string().contains("SQLite connection failed"));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
+    async fn postgres_pool_rejects_zero_connections_before_connecting() {
+        let mut config = DatabaseConfig::postgres(
+            "localhost".to_string(),
+            5432,
+            "cipherrun".to_string(),
+            "cipherrun".to_string(),
+            "test-only-password".to_string(),
+        );
+        config.max_connections = Some(0);
+
+        let error = match DatabasePool::new(&config).await {
+            Ok(pool) => {
+                pool.close().await;
+                panic!("zero PostgreSQL connections must be rejected");
+            }
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, crate::TlsError::DatabaseError(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("max_connections must be greater than 0")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
+    async fn postgres_pool_reports_connection_failure_without_leaking_credentials() {
+        use std::time::Duration;
+
+        let config = DatabaseConfig::postgres(
+            "127.0.0.1".to_string(),
+            1,
+            "unavailable".to_string(),
+            "test-user".to_string(),
+            "test-only-password".to_string(),
+        );
+
+        let error = match DatabasePool::connect_postgres(&config, Duration::from_millis(100)).await
+        {
+            Ok(pool) => {
+                pool.close().await;
+                panic!("an unavailable PostgreSQL port must fail pool creation");
+            }
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, crate::TlsError::DatabaseError(_)));
+        let message = error.to_string();
+        assert!(message.contains("PostgreSQL connection failed"));
+        assert!(!message.contains("test-only-password"));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-postgres")]
+    async fn postgres_pool_creation_uses_the_configured_backend_when_available() {
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let url = url::Url::parse(&url).expect("test PostgreSQL URL should be valid");
+        let config = DatabaseConfig::postgres(
+            url.host_str()
+                .expect("test PostgreSQL URL should include a host")
+                .to_string(),
+            url.port().unwrap_or(5432),
+            url.path().trim_start_matches('/').to_string(),
+            url.username().to_string(),
+            url.password().unwrap_or_default().to_string(),
+        );
+
+        let pool = DatabasePool::new(&config)
+            .await
+            .expect("configured PostgreSQL should initialize a pool");
+
+        assert_eq!(pool.db_type(), DatabaseType::Postgres);
+        pool.health_check()
+            .await
+            .expect("configured PostgreSQL pool should pass its health check");
         pool.close().await;
     }
 
