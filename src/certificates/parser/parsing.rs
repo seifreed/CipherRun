@@ -478,6 +478,37 @@ mod tests {
     use crate::certificates::revocation::cert_with_raw_extension_der;
     use crate::utils::test_support::example_com_loopback_target;
 
+    async fn local_tls_parser() -> (CertificateParser, tokio::task::JoinHandle<()>) {
+        use tokio::net::TcpListener;
+        use tokio_rustls::TlsAcceptor;
+
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = cert.cert.der().clone();
+        let key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(
+            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
+        );
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            acceptor.accept(stream).await.unwrap();
+        });
+
+        let target = Target::with_ips(
+            "localhost".to_string(),
+            port,
+            vec!["127.0.0.1".parse().unwrap()],
+        )
+        .unwrap();
+        (CertificateParser::new(target), server)
+    }
+
     #[test]
     fn test_starttls_hostname_prefers_override() {
         let parser = CertificateParser::new(example_com_loopback_target(443))
@@ -523,17 +554,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
     async fn test_get_certificate_chain() {
-        let target = Target::parse("www.google.com:443")
-            .await
-            .expect("Failed to parse target");
-        let parser = CertificateParser::new(target);
+        let (parser, server) = local_tls_parser().await;
 
         let chain = parser
             .get_certificate_chain()
             .await
-            .expect("Failed to get certificate chain");
+            .expect("loopback server should provide its certificate chain");
+        server.await.unwrap();
 
         assert!(chain.chain_length > 0);
         assert!(!chain.certificates.is_empty());
@@ -555,17 +583,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
     async fn test_get_leaf_certificate() {
-        let target = Target::parse("www.google.com:443")
-            .await
-            .expect("Failed to parse target");
-        let parser = CertificateParser::new(target);
+        let (parser, server) = local_tls_parser().await;
 
         let cert = parser
             .get_leaf_certificate()
             .await
-            .expect("Failed to get leaf certificate");
+            .expect("loopback server should provide its leaf certificate");
+        server.await.unwrap();
 
         assert!(!cert.subject.is_empty());
         assert!(!cert.issuer.is_empty());
@@ -573,17 +598,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
     async fn test_pin_sha256_calculation() {
-        let target = Target::parse("www.google.com:443")
-            .await
-            .expect("Failed to parse target");
-        let parser = CertificateParser::new(target);
+        let (parser, server) = local_tls_parser().await;
 
         let cert = parser
             .get_leaf_certificate()
             .await
-            .expect("Failed to get leaf certificate");
+            .expect("loopback server should provide its leaf certificate");
+        server.await.unwrap();
 
         // Verify that pin_sha256 was calculated
         assert!(cert.pin_sha256.is_some(), "Pin SHA256 should be calculated");
@@ -938,45 +960,5 @@ mod tests {
             .expect_err("target without addresses should fail before connecting");
 
         assert!(matches!(error, crate::TlsError::NoSocketAddresses));
-    }
-
-    #[tokio::test]
-    async fn get_leaf_certificate_parses_a_self_signed_local_tls_chain() {
-        use tokio::net::TcpListener;
-        use tokio_rustls::TlsAcceptor;
-
-        let _ = crate::utils::rustls_provider::install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-        let cert_der = cert.cert.der().clone();
-        let key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(
-            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()),
-        );
-        let config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert_der], key_der)
-            .unwrap();
-        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            acceptor.accept(stream).await.unwrap();
-        });
-
-        let target = Target::with_ips(
-            "localhost".to_string(),
-            port,
-            vec!["127.0.0.1".parse().unwrap()],
-        )
-        .unwrap();
-        let leaf = CertificateParser::new(target)
-            .get_leaf_certificate()
-            .await
-            .expect("the local TLS server should provide its certificate");
-        server.await.unwrap();
-
-        assert!(!leaf.subject.is_empty());
-        assert_eq!(leaf.public_key_algorithm, "id-ecPublicKey");
-        assert!(leaf.san.iter().any(|name| name == "localhost"));
     }
 }
