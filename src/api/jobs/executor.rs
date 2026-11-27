@@ -284,7 +284,17 @@ impl ScanExecutor {
     }
 
     /// Execute a scan job
-    async fn execute_scan(&self, queue: Arc<dyn JobQueue>, mut job: ScanJob) {
+    async fn execute_scan(&self, queue: Arc<dyn JobQueue>, job: ScanJob) {
+        self.execute_scan_with_factory(queue, job, Arc::new(DefaultScanSessionFactory))
+            .await;
+    }
+
+    async fn execute_scan_with_factory(
+        &self,
+        queue: Arc<dyn JobQueue>,
+        mut job: ScanJob,
+        scan_factory: Arc<dyn ScanSessionFactory>,
+    ) {
         match queue.get_job(&job.id).await {
             Ok(Some(current)) if matches!(current.status, ScanStatus::Cancelled) => {
                 info!(event_name = "scan_job.cancelled_before_start", job_id = %job.id, outcome = "skipped", "Skipping cancelled scan job");
@@ -333,12 +343,14 @@ impl ScanExecutor {
         let queue_for_scan = queue.clone();
         let job_for_scan = job.clone();
         let worker_allowed_cidrs = self.worker_allowed_cidrs.clone();
+        let factory_for_scan = Arc::clone(&scan_factory);
         let mut scan_task = crate::utils::task::spawn_with_current_span(async move {
-            Self::run_scan(
+            Self::run_scan_with_factory(
                 &job_for_scan,
                 &queue_for_scan,
                 &progress_tx,
                 &worker_allowed_cidrs,
+                factory_for_scan.as_ref(),
             )
             .await
         });
@@ -701,6 +713,7 @@ impl ScanExecutor {
     }
 
     /// Run the actual scan
+    #[cfg(test)]
     async fn run_scan(
         job: &ScanJob,
         queue: &Arc<dyn JobQueue>,
@@ -1055,6 +1068,7 @@ mod tests {
         routing::post,
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     #[tokio::test]
     async fn shutdown_reports_a_closed_signal_channel() {
@@ -1453,6 +1467,40 @@ mod tests {
         }
     }
 
+    struct BlockingScanSession {
+        started: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl ScanSession for BlockingScanSession {
+        async fn initialize(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn run(&self) -> Result<ScanResults> {
+            if let Some(started) = self.started.lock().await.take() {
+                let _ = started.send(());
+            }
+            self.release.notified().await;
+            Ok(ScanResults::default())
+        }
+    }
+
+    struct BlockingScanSessionFactory {
+        started: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+        release: Arc<Notify>,
+    }
+
+    impl ScanSessionFactory for BlockingScanSessionFactory {
+        fn create(&self, _request: ScanRequest) -> Result<Box<dyn ScanSession>> {
+            Ok(Box::new(BlockingScanSession {
+                started: Arc::clone(&self.started),
+                release: Arc::clone(&self.release),
+            }))
+        }
+    }
+
     #[tokio::test]
     async fn run_scan_reports_progress_and_runs_the_injected_session() {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1543,6 +1591,86 @@ mod tests {
             .map(|message| message.progress)
             .collect::<Vec<_>>();
         assert_eq!(progress, [5, 10, 15]);
+    }
+
+    #[tokio::test]
+    async fn executor_renews_lease_while_injected_scan_is_running() {
+        use tracing::instrument::WithSubscriber;
+
+        let mut job = ScanJob::new("example.com:443".to_string(), ScanOptions::full(), None);
+        job.mark_queued();
+        let queue = Arc::new(GatedJobQueue {
+            job: tokio::sync::Mutex::new(None),
+            cancelled_job: job.clone(),
+            entered: tokio::sync::Mutex::new(None),
+            release: tokio::sync::Mutex::new(None),
+            dequeue_error: false,
+            get_job_error: false,
+            get_job_panics: false,
+            cancel_on_get: false,
+            final_update_cancelled: false,
+            final_update_error: false,
+            retry_result: Ok(RetryDisposition::DeadLettered),
+            dequeue_calls: AtomicUsize::new(0),
+        });
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let release = Arc::new(Notify::new());
+        let factory: Arc<dyn ScanSessionFactory> = Arc::new(BlockingScanSessionFactory {
+            started: Arc::new(tokio::sync::Mutex::new(Some(started_tx))),
+            release: Arc::clone(&release),
+        });
+        let executor = ScanExecutor::new(queue.clone(), 1);
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log_changed = Arc::new(Notify::new());
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(CapturedOutputWithNotify(
+                output.clone(),
+                log_changed.clone(),
+            ))
+            .finish();
+        let worker = tokio::spawn(async move {
+            executor
+                .execute_scan_with_factory(queue, job, factory)
+                .with_subscriber(tracing::Dispatch::new(subscriber))
+                .await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("injected scan should start")
+            .expect("scan should signal its start");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if String::from_utf8(output.lock().unwrap().clone())
+                    .expect("captured logs should be UTF-8")
+                    .contains("scan_job.lease_renewal.skipped")
+                {
+                    break;
+                }
+                let notified = log_changed.notified();
+                tokio::select! {
+                    _ = notified => {},
+                    _ = tokio::task::yield_now() => {},
+                }
+            }
+        })
+        .await
+        .expect("executor should renew the lease while the scan runs");
+
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), worker)
+            .await
+            .expect("executor should finish after the scan is released")
+            .expect("executor task should join");
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("scan_job.lease_renewal.skipped"),
+            "{output}"
+        );
+        assert!(output.contains("lease_lost"), "{output}");
     }
 
     #[test]
@@ -2709,11 +2837,27 @@ mod tests {
 
     struct CapturedOutput(Arc<std::sync::Mutex<Vec<u8>>>);
 
+    struct CapturedOutputWithNotify(Arc<std::sync::Mutex<Vec<u8>>>, Arc<Notify>);
+
     struct CapturedWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct CapturedWriterWithNotify(Arc<std::sync::Mutex<Vec<u8>>>, Arc<Notify>);
 
     impl std::io::Write for CapturedWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl std::io::Write for CapturedWriterWithNotify {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            self.1.notify_one();
             Ok(bytes.len())
         }
 
@@ -2727,6 +2871,14 @@ mod tests {
 
         fn make_writer(&'a self) -> Self::Writer {
             CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedOutputWithNotify {
+        type Writer = CapturedWriterWithNotify;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriterWithNotify(self.0.clone(), self.1.clone())
         }
     }
 
