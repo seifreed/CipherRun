@@ -238,6 +238,14 @@ mod tests {
     }
 
     #[test]
+    fn default_scheduler_uses_new_scheduler_defaults() {
+        let scheduler = SchedulingEngine::default();
+
+        assert_eq!(scheduler.jitter_percent, 10);
+        assert_eq!(scheduler.scheduled_count(), 0);
+    }
+
+    #[test]
     fn test_custom_jitter() {
         let scheduler = SchedulingEngine::new().with_jitter(20);
         assert_eq!(scheduler.jitter_percent, 20);
@@ -487,6 +495,21 @@ mod tests {
         scheduler.schedule_immediate("immediate.com:443");
 
         assert!(scheduler.domains_due_within(i64::MIN).is_empty());
+    }
+
+    #[test]
+    fn test_domains_due_within_window_overflow_uses_window_sign() {
+        let mut scheduler = SchedulingEngine::new();
+        scheduler.schedule_immediate("immediate.com:443");
+
+        let seconds = 9_000_000_000_000;
+        let duration = Duration::try_seconds(seconds).expect("chrono can represent the duration");
+        assert!(Utc::now().checked_add_signed(duration).is_none());
+        assert_eq!(
+            scheduler.domains_due_within(seconds),
+            vec!["immediate.com:443".to_string()]
+        );
+        assert!(scheduler.domains_due_within(-seconds).is_empty());
     }
 
     #[test]
