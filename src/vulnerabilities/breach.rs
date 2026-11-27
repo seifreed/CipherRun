@@ -411,6 +411,43 @@ mod tests {
         port
     }
 
+    async fn spawn_breach_response_server(responses: Vec<&'static [u8]>) -> u16 {
+        let _ = crate::utils::rustls_provider::install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_der = rustls_pki_types::CertificateDer::from(cert.cert.der().as_ref().to_vec());
+        let key_der = rustls_pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+        let key = rustls_pki_types::PrivateKeyDer::Pkcs8(key_der);
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+
+        tokio::spawn(async move {
+            for response in responses {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let Ok(mut tls_stream) = acceptor.accept(stream).await else {
+                    return;
+                };
+                let mut request = [0u8; 4096];
+                if tls_stream.read(&mut request).await.is_err() {
+                    return;
+                }
+                if tls_stream.write_all(response).await.is_err() {
+                    return;
+                }
+                let _ = tls_stream.shutdown().await;
+            }
+        });
+
+        port
+    }
+
     #[test]
     fn test_detect_sensitive_patterns_is_case_insensitive() {
         assert!(http_analysis::detect_sensitive_patterns(
@@ -538,5 +575,30 @@ mod tests {
             .expect("compression probe should not error");
 
         assert_eq!(compression, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_all_breach_axes_classify_loopback_responses() {
+        let port = spawn_breach_response_server(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\nBREACH_TEST_MARKER_12345",
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 38\r\n\r\n<input name=\"csrf\" value=\"sample\">",
+        ])
+        .await;
+
+        let result = BreachTester::new(localhost_target(port))
+            .test()
+            .await
+            .expect("loopback BREACH probes should complete");
+
+        assert!(
+            !result.vulnerable,
+            "BREACH prerequisites are potential exposure, not proof of exploitability"
+        );
+        assert!(!result.inconclusive);
+        assert!(result.compression_enabled);
+        assert!(result.dynamic_content);
+        assert!(result.sensitive_data_reflection);
+        assert!(result.potential_exposure, "{}", result.details);
     }
 }
