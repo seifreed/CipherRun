@@ -287,6 +287,8 @@ impl ScanComparator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DatabaseConfig;
+    use std::path::PathBuf;
 
     #[test]
     fn test_cipher_info_creation() {
@@ -299,5 +301,106 @@ mod tests {
 
         assert_eq!(cipher.name, "TLS_AES_256_GCM_SHA384");
         assert!(cipher.forward_secrecy);
+    }
+
+    #[tokio::test]
+    async fn get_scan_by_id_preserves_sqlite_query_errors() {
+        let database = CipherRunDatabase::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .expect("in-memory SQLite database should initialize");
+        database
+            .pool()
+            .execute("DROP TABLE scans", Vec::new())
+            .await
+            .expect("test should remove the scans table");
+
+        let error = ScanComparator::new(Arc::new(database))
+            .get_scan_by_id(1)
+            .await
+            .expect_err("a missing SQLite scans table should fail lookup");
+
+        assert!(error.to_string().contains("Failed to fetch scan"));
+    }
+
+    #[cfg(feature = "db-postgres")]
+    #[tokio::test]
+    async fn get_scan_by_id_reads_postgres_and_preserves_query_errors() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+
+        let Ok(url) = std::env::var("CIPHERRUN_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let admin = PgPoolOptions::new()
+            .connect_with(PgConnectOptions::from_str(&url).expect("test URL should be valid"))
+            .await
+            .expect("test PostgreSQL should accept connections");
+        let schema = format!("cipherrun_scan_lookup_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be created");
+
+        let options = PgConnectOptions::from_str(&url)
+            .expect("test URL should be valid")
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("test PostgreSQL schema should accept connections");
+        sqlx::query(
+            "CREATE TABLE scans (
+                scan_id BIGINT PRIMARY KEY,
+                target_hostname TEXT NOT NULL,
+                target_port INTEGER NOT NULL,
+                scan_timestamp TIMESTAMPTZ NOT NULL,
+                overall_grade TEXT,
+                overall_score INTEGER,
+                scan_duration_ms BIGINT,
+                revocation_json TEXT,
+                scanner_version TEXT,
+                principal_id TEXT,
+                tenant_id TEXT,
+                created_by_key_id TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scans table should be created");
+        sqlx::query(
+            "INSERT INTO scans (scan_id, target_hostname, target_port, scan_timestamp) \
+             VALUES (1, 'scan.example', 443, NOW())",
+        )
+        .execute(&pool)
+        .await
+        .expect("test scan should be inserted");
+
+        let database = Arc::new(CipherRunDatabase::from_pool(DatabasePool::Postgres(
+            pool.clone(),
+        )));
+        let comparator = ScanComparator::new(database);
+        let scan = comparator
+            .get_scan_by_id(1)
+            .await
+            .expect("PostgreSQL scan lookup should succeed")
+            .expect("inserted scan should be present");
+        assert_eq!(scan.target_hostname, "scan.example");
+
+        sqlx::query("DROP TABLE scans")
+            .execute(&pool)
+            .await
+            .expect("test should remove the scans table");
+        let error = comparator
+            .get_scan_by_id(1)
+            .await
+            .expect_err("a missing PostgreSQL scans table should fail lookup");
+        assert!(error.to_string().contains("Failed to fetch scan"));
+
+        drop(comparator);
+        drop(pool);
+        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&admin)
+            .await
+            .expect("test schema should be removed");
     }
 }

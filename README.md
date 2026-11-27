@@ -342,6 +342,8 @@ The scheduler marks due domains in progress before dispatch and excludes them
 from overlapping cycles, then schedules their next scan only after completion.
 Scheduler tests also cover the `Default` constructor and windows whose duration is
 representable but whose resulting UTC timestamp overflows the calendar range.
+Scan comparison lookup tests cover SQLite query failures and exercise PostgreSQL
+lookups plus missing-table error mapping in the CI PostgreSQL service.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
