@@ -697,6 +697,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_test_skips_replay_when_tls13_server_rejects_early_data() {
+        crate::utils::insecure_tls::ensure_ring_provider();
+        let addr = spawn_tls13_server(0).await;
+        let target = localhost_target(addr.port());
+
+        let result = EarlyDataTester::new(&target)
+            .test_replay_attack()
+            .await
+            .expect("the replay probe should complete when TLS 1.3 rejects early data");
+
+        assert!(!result.tested);
+        assert!(!result.vulnerable);
+        assert!(!result.inconclusive);
+        assert!(
+            result
+                .details
+                .contains("does not advertise early_data support")
+        );
+    }
+
+    #[tokio::test]
     async fn test_early_data_inactive_target_is_inconclusive() {
         crate::utils::insecure_tls::ensure_ring_provider();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
