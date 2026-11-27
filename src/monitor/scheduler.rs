@@ -298,6 +298,23 @@ mod tests {
     }
 
     #[test]
+    fn in_progress_domain_is_not_selected_until_scan_completion() {
+        let mut scheduler = SchedulingEngine::new().with_jitter(0);
+        let domain = create_test_domain("example.com", 3600);
+        let domains = vec![domain.clone()];
+
+        assert_eq!(scheduler.get_domains_to_scan(&domains).len(), 1);
+        scheduler.mark_scan_in_progress(&domain);
+        assert!(scheduler.get_domains_to_scan(&domains).is_empty());
+
+        scheduler
+            .mark_scan_completed(&domain)
+            .expect("completion should clear the in-progress marker and schedule the next scan");
+        assert!(scheduler.get_domains_to_scan(&domains).is_empty());
+        assert_eq!(scheduler.scheduled_count(), 1);
+    }
+
+    #[test]
     fn test_schedule_next_scan() {
         let mut scheduler = SchedulingEngine::new();
 

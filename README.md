@@ -338,6 +338,8 @@ Target-validation and certificate-fetch failure events include elapsed scan
 duration and categorized errors without logging the monitored target.
 When idle, a shutdown request wakes the scheduler immediately instead of waiting
 for the next poll tick; an active scan cycle finishes before `monitor.stopped`.
+The scheduler marks due domains in progress before dispatch and excludes them
+from overlapping cycles, then schedules their next scan only after completion.
 Anycast diagnosis records DNS resolution timing/failure and per-address scan
 outcomes by index, without logging hostnames or IP addresses.
 JARM emits one `DEBUG` completion summary with probe count, inconclusive count,
