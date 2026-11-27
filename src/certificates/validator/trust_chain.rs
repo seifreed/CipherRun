@@ -409,6 +409,121 @@ mod tests {
     }
 
     #[test]
+    fn accepts_exact_self_signed_certificate_from_trusted_store() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let known_ca = CA_STORES
+            .as_ref()
+            .all_stores()
+            .iter()
+            .find_map(|store| store.certificates.first())
+            .expect("at least one trusted CA should be available");
+        let cert = crate::certificates::parser::CertificateParser::parse_certificate(&known_ca.der)
+            .expect("embedded trusted certificate should parse");
+        let chain = CertificateChain {
+            certificates: vec![cert],
+            chain_length: 1,
+            chain_size_bytes: known_ca.der.len(),
+        };
+        let mut issues = Vec::new();
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(valid);
+        assert!(ca.is_some());
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn rejects_intermediate_signature_mismatch() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let known_ca = CA_STORES
+            .as_ref()
+            .all_stores()
+            .iter()
+            .find_map(|store| store.certificates.first())
+            .expect("at least one trusted CA should be available");
+        let generated = rcgen::generate_simple_self_signed(vec!["example.com".to_string()])
+            .expect("test certificate should be generated");
+        let mut leaf = crate::certificates::parser::CertificateParser::parse_certificate(
+            generated.cert.der().as_ref(),
+        )
+        .expect("generated certificate should parse");
+        leaf.issuer = known_ca.subject.clone();
+        let issuer = CertificateInfo {
+            subject: known_ca.subject.clone(),
+            issuer: known_ca.issuer.clone(),
+            is_ca: true,
+            der_bytes: known_ca.der.clone(),
+            ..base_cert(
+                "2024-01-01 00:00:00 +0000".to_string(),
+                "2025-01-01 00:00:00 +0000".to_string(),
+            )
+        };
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+        let mut issues = Vec::new();
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues.iter().any(|issue| {
+            issue.severity == IssueSeverity::Critical
+                && issue
+                    .description
+                    .contains("Intermediate signature verification failed")
+        }));
+    }
+
+    #[test]
+    fn reports_intermediate_signature_parse_errors() {
+        let validator = CertificateValidator::new("example.com".to_string());
+        let known_ca = CA_STORES
+            .as_ref()
+            .all_stores()
+            .iter()
+            .find_map(|store| store.certificates.first())
+            .expect("at least one trusted CA should be available");
+        let mut leaf = base_cert(
+            "2024-01-01 00:00:00 +0000".to_string(),
+            "2025-01-01 00:00:00 +0000".to_string(),
+        );
+        leaf.subject = "CN=leaf.example.com".to_string();
+        leaf.issuer = known_ca.subject.clone();
+        leaf.der_bytes = vec![0x00];
+        let issuer = CertificateInfo {
+            subject: known_ca.subject.clone(),
+            issuer: known_ca.issuer.clone(),
+            is_ca: true,
+            der_bytes: known_ca.der.clone(),
+            ..base_cert(
+                "2024-01-01 00:00:00 +0000".to_string(),
+                "2025-01-01 00:00:00 +0000".to_string(),
+            )
+        };
+        let chain = CertificateChain {
+            certificates: vec![leaf, issuer],
+            chain_length: 2,
+            chain_size_bytes: 0,
+        };
+        let mut issues = Vec::new();
+
+        let (valid, ca) = validator.validate_trust_chain(&chain, &mut issues);
+
+        assert!(!valid);
+        assert!(ca.is_none());
+        assert!(issues.iter().any(|issue| {
+            issue.severity == IssueSeverity::Critical
+                && issue
+                    .description
+                    .contains("Intermediate signature verification error")
+        }));
+    }
+
+    #[test]
     fn test_validate_trust_chain_self_signed_with_missing_der_fails_strict_mode() {
         let validator = CertificateValidator::new("example.com".to_string());
         let mut issues = Vec::new();
