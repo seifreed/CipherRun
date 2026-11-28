@@ -120,7 +120,9 @@ path and the skip path when the optional test URL is absent. An injected fetch-f
 test also verifies errors from the second scan query propagate after the first succeeds.
 Database pool tests also cover malformed SQLite connection URIs and directory-path failures,
 PostgreSQL zero-pool-size validation, safe reporting for a refused PostgreSQL connection,
-and public PostgreSQL pool creation plus health checks against CI's service.
+and public PostgreSQL pool creation plus health checks against CI's service. SQLite
+top-domain reads also reject non-UTF8 names and invalid aggregate timestamps in global
+and owner-scoped queries.
 Top-domain counts come directly from SQL `COUNT(*)`, whose result is non-negative, so
 the repository no longer carries an unreachable negative-aggregate error branch.
 The same CI workflow runs weekly so moving Rust, Python, PostgreSQL, and runner

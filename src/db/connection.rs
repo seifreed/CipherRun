@@ -1006,6 +1006,73 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "db-sqlite")]
+    async fn sqlite_top_domain_queries_reject_unreadable_aggregate_fields() {
+        let pool = DatabasePool::new(&DatabaseConfig::sqlite(PathBuf::from(":memory:")))
+            .await
+            .unwrap();
+        pool.execute(
+            "CREATE TABLE scans (target_hostname, scan_timestamp, principal_id, tenant_id)",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        pool.execute(
+            "INSERT INTO scans VALUES (X'FF', datetime('now'), 'principal', 'tenant')",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        let global_domain_error = pool
+            .get_top_domains(10)
+            .await
+            .expect_err("a non-UTF8 domain value must be rejected");
+        assert!(
+            global_domain_error
+                .to_string()
+                .contains("Invalid top domain field target_hostname")
+        );
+        let owned_domain_error = pool
+            .get_top_domains_for_owner(10, "principal", Some("tenant"))
+            .await
+            .expect_err("a non-UTF8 owned domain value must be rejected");
+        assert!(
+            owned_domain_error
+                .to_string()
+                .contains("Invalid owned top domain name")
+        );
+
+        pool.execute("DELETE FROM scans", Vec::new()).await.unwrap();
+        pool.execute(
+            "INSERT INTO scans VALUES ('valid.example', 'not-a-timestamp', 'principal', 'tenant')",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        let global_timestamp_error = pool
+            .get_top_domains(10)
+            .await
+            .expect_err("an invalid aggregate timestamp must be rejected");
+        assert!(
+            global_timestamp_error
+                .to_string()
+                .contains("Invalid top domain field last_scan")
+        );
+        let owned_timestamp_error = pool
+            .get_top_domains_for_owner(10, "principal", Some("tenant"))
+            .await
+            .expect_err("an invalid owned aggregate timestamp must be rejected");
+        assert!(
+            owned_timestamp_error
+                .to_string()
+                .contains("Invalid owned top domain timestamp")
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
     async fn sqlite_pool_reports_failure_when_the_database_path_is_a_directory() {
         let directory = tempfile::tempdir().expect("SQLite test directory should be created");
         let config = DatabaseConfig::sqlite(directory.path().to_path_buf());
