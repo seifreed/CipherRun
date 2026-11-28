@@ -607,6 +607,15 @@ mod tests {
     use tracing::instrument::WithSubscriber;
     use tracing_subscriber::fmt::MakeWriter;
 
+    fn empty_streamer() -> CtStreamer {
+        CtStreamer {
+            config: CtConfig::default(),
+            source_manager: SourceManager::new(),
+            stats: StatsTracker::new(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     async fn serve_ct_source_list(body: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -763,12 +772,7 @@ mod tests {
             .without_time()
             .with_writer(output.clone())
             .finish();
-        let mut streamer = CtStreamer {
-            config: CtConfig::default(),
-            source_manager: SourceManager::new(),
-            stats: StatsTracker::new(),
-            shutdown: Arc::new(AtomicBool::new(false)),
-        };
+        let mut streamer = empty_streamer();
 
         let result = streamer
             .start()
@@ -793,6 +797,15 @@ mod tests {
         assert_eq!(event["fields"]["outcome"], "failed");
         assert!(event["fields"]["duration_ms"].is_number());
         assert!(!output.contains("https://"));
+    }
+
+    #[test]
+    fn stop_requests_shutdown_for_source_tasks() {
+        let streamer = empty_streamer();
+
+        streamer.stop();
+
+        assert!(streamer.shutdown.load(Ordering::Acquire));
     }
 
     #[tokio::test]
