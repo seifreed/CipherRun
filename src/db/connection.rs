@@ -1035,6 +1035,27 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "db-sqlite")]
+    async fn sqlite_pool_reports_malformed_connection_uri() {
+        let config = DatabaseConfig::sqlite(PathBuf::from("invalid?mode=unknown"));
+
+        let error = match DatabasePool::new(&config).await {
+            Ok(pool) => {
+                pool.close().await;
+                panic!("an unknown SQLite mode must fail connection-string parsing");
+            }
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, crate::TlsError::DatabaseError(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse SQLite connection string")
+        );
+    }
+
+    #[tokio::test]
     #[cfg(feature = "db-postgres")]
     async fn postgres_pool_rejects_zero_connections_before_connecting() {
         let mut config = DatabaseConfig::postgres(

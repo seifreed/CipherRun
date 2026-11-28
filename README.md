@@ -117,9 +117,9 @@ release reported by `eol-cli` and following future major and patch updates.
 The PostgreSQL scan-rating comparison tests cover both the configured database
 path and the skip path when the optional test URL is absent. An injected fetch-failure
 test also verifies errors from the second scan query propagate after the first succeeds.
-Database pool tests also cover the SQLite directory-path failure, PostgreSQL zero-pool-size
-validation, safe reporting for a refused PostgreSQL connection, and public PostgreSQL pool
-creation plus health checks against CI's service.
+Database pool tests also cover malformed SQLite connection URIs and directory-path failures,
+PostgreSQL zero-pool-size validation, safe reporting for a refused PostgreSQL connection,
+and public PostgreSQL pool creation plus health checks against CI's service.
 The same CI workflow runs weekly so moving Rust, Python, PostgreSQL, and runner
 aliases are revalidated even when the repository has no new commits.
 
