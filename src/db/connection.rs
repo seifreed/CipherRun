@@ -393,12 +393,6 @@ impl DatabasePool {
                                 e
                             ))
                         })?;
-                        if count < 0 {
-                            return Err(crate::TlsError::DatabaseError(format!(
-                                "Invalid top domain field scan_count: negative value {}",
-                                count
-                            )));
-                        }
                         Ok((
                             row.try_get::<String, _>("target_hostname").map_err(|e| {
                                 crate::TlsError::DatabaseError(format!(
@@ -445,12 +439,6 @@ impl DatabasePool {
                                 e
                             ))
                         })?;
-                        if count < 0 {
-                            return Err(crate::TlsError::DatabaseError(format!(
-                                "Invalid top domain field scan_count: negative value {}",
-                                count
-                            )));
-                        }
                         Ok((
                             row.try_get::<String, _>("target_hostname").map_err(|e| {
                                 crate::TlsError::DatabaseError(format!(
